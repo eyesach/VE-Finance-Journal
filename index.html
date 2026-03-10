@@ -1,0 +1,1724 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Accounting Journal</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="app-header">
+            <div class="header-title">
+                <div class="journal-name-wrapper">
+                    <input type="text" id="journalOwner" class="journal-owner-input"
+                           placeholder="Company/Name" title="Enter owner or company name">
+                    <span id="journalSuffix" class="journal-suffix">Accounting Journal</span>
+                </div>
+            </div>
+            <div class="header-actions">
+                <button id="newEntryBtn" class="btn btn-primary">+ New Entry</button>
+                <button id="addFolderEntriesBtn" class="btn btn-primary">+ Add Folder</button>
+                <button id="manageCategoriesBtn" class="btn btn-secondary">Categories</button>
+                <button id="saveDbBtn" class="btn btn-secondary">Save</button>
+                <button id="saveAsDbBtn" class="btn btn-secondary">Save As</button>
+                <button id="loadDbBtn" class="btn btn-secondary">Load</button>
+                <input type="file" id="loadDbInput" accept=".db" style="display: none;">
+                <div class="sync-wrapper">
+                    <button id="syncBtn" class="btn-icon always-visible sync-btn" title="Group Sync">
+                        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <path d="M17 1l4 4-4 4"></path>
+                            <path d="M3 11V9a4 4 0 0 1 4-4h14"></path>
+                            <path d="M7 23l-4-4 4-4"></path>
+                            <path d="M21 13v2a4 4 0 0 1-4 4H3"></path>
+                        </svg>
+                        <span id="syncStatusDot" class="sync-status-dot" style="display:none;"></span>
+                    </button>
+                </div>
+                <button id="shareBtn" class="btn-icon always-visible share-btn" title="Share View-Only Link" style="display:none;">
+                    <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <circle cx="18" cy="5" r="3"></circle>
+                        <circle cx="6" cy="12" r="3"></circle>
+                        <circle cx="18" cy="19" r="3"></circle>
+                        <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
+                        <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
+                    </svg>
+                </button>
+                <div class="gear-wrapper">
+                    <button id="gearBtn" class="btn-icon always-visible gear-btn" title="Settings">
+                        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <circle cx="12" cy="12" r="3"></circle>
+                            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                        </svg>
+                    </button>
+                    <div id="gearPopover" class="gear-popover" style="display:none;">
+                        <div class="gear-popover-section">
+                            <label class="gear-label">Theme</label>
+                            <select id="themePreset" title="Theme">
+                                <optgroup label="Color Themes">
+                                    <option value="default">Default</option>
+                                    <option value="ocean">Ocean</option>
+                                    <option value="forest">Forest</option>
+                                    <option value="sunset">Sunset</option>
+                                    <option value="midnight">Midnight</option>
+                                </optgroup>
+                                <optgroup label="Design Styles">
+                                    <option value="modern">Ultra Modern</option>
+                                    <option value="futuristic">Futuristic</option>
+                                    <option value="vintage">Vintage Ledger</option>
+                                    <option value="accounting">Accounting</option>
+                                </optgroup>
+                                <option value="custom">Custom...</option>
+                            </select>
+                        </div>
+                        <div id="customColorPicker" class="custom-color-picker" style="display:none;">
+                            <div class="color-swatch-group">
+                                <label>Primary</label>
+                                <input type="color" id="themeC1" value="#4a90a4" title="Primary">
+                            </div>
+                            <div class="color-swatch-group">
+                                <label>Accent</label>
+                                <input type="color" id="themeC2" value="#e8f0f3" title="Accent">
+                            </div>
+                            <div class="color-swatch-group">
+                                <label>Background</label>
+                                <input type="color" id="themeC3" value="#f8f9fa" title="Background">
+                            </div>
+                            <div class="color-swatch-group">
+                                <label>Surface</label>
+                                <input type="color" id="themeC4" value="#ffffff" title="Surface">
+                            </div>
+                        </div>
+                        <div class="timeline-section">
+                            <label class="gear-label">Timeline</label>
+                            <div class="timeline-field">
+                                <span class="timeline-field-label">Start</span>
+                                <div class="timeline-selects">
+                                    <select id="timelineStartMonth">
+                                        <option value="">Month...</option>
+                                        <option value="01">Jan</option>
+                                        <option value="02">Feb</option>
+                                        <option value="03">Mar</option>
+                                        <option value="04">Apr</option>
+                                        <option value="05">May</option>
+                                        <option value="06">Jun</option>
+                                        <option value="07">Jul</option>
+                                        <option value="08">Aug</option>
+                                        <option value="09">Sep</option>
+                                        <option value="10">Oct</option>
+                                        <option value="11">Nov</option>
+                                        <option value="12">Dec</option>
+                                    </select>
+                                    <select id="timelineStartYear">
+                                        <option value="">Year...</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="timeline-field">
+                                <span class="timeline-field-label">End</span>
+                                <div class="timeline-selects">
+                                    <select id="timelineEndMonth">
+                                        <option value="">Month...</option>
+                                        <option value="01">Jan</option>
+                                        <option value="02">Feb</option>
+                                        <option value="03">Mar</option>
+                                        <option value="04">Apr</option>
+                                        <option value="05">May</option>
+                                        <option value="06">Jun</option>
+                                        <option value="07">Jul</option>
+                                        <option value="08">Aug</option>
+                                        <option value="09">Sep</option>
+                                        <option value="10">Oct</option>
+                                        <option value="11">Nov</option>
+                                        <option value="12">Dec</option>
+                                    </select>
+                                    <select id="timelineEndYear">
+                                        <option value="">Year...</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="gear-reset-section">
+                            <button type="button" id="resetAllDataBtn" class="btn btn-danger btn-sm">Reset All Data</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <!-- Summary Cards -->
+        <section class="summary-section">
+            <div class="summary-card cash-balance" id="cashBalanceCard">
+                <span class="summary-label">Cash Balance</span>
+                <span class="summary-value" id="cashBalance">$0.00</span>
+                <span class="late-indicator" id="cashBalanceLate" style="display: none;"></span>
+            </div>
+            <div class="summary-card receivables" id="receivablesCard">
+                <span class="summary-label">Accounts Receivable</span>
+                <span class="summary-value" id="accountsReceivable">$0.00</span>
+            </div>
+            <div class="summary-card payables" id="payablesCard">
+                <span class="summary-label">Accounts Payable</span>
+                <span class="summary-value" id="accountsPayable">$0.00</span>
+            </div>
+        </section>
+
+        <!-- Main Tab Navigation -->
+        <nav class="main-tabs">
+            <button class="main-tab active" data-tab="journal">Journal</button>
+            <button class="main-tab" data-tab="cashflow">Cash Flow</button>
+            <button class="main-tab" data-tab="pnl">P&amp;L</button>
+            <button class="main-tab" data-tab="balancesheet">Balance Sheet</button>
+            <button class="main-tab" data-tab="assets">Assets &amp; Equity</button>
+            <button class="main-tab" data-tab="loan">Loans</button>
+            <button class="main-tab" data-tab="budget">Budget</button>
+            <button class="main-tab" data-tab="breakeven">Break-Even</button>
+            <button class="main-tab" data-tab="projectedsales">Projected Sales</button>
+            <button class="main-tab" data-tab="products">Products</button>
+        </nav>
+
+        <!-- Journal Tab -->
+        <div id="journalTab">
+            <!-- Toolbar -->
+            <section class="toolbar-section">
+                <div class="toolbar-right">
+                    <button id="exportCsvBtn" class="btn btn-secondary btn-small">Export CSV</button>
+                </div>
+            </section>
+
+        <!-- Entry Form Modal -->
+        <div id="entryModal" class="modal">
+            <div class="modal-content modal-entry">
+                <h3 id="formTitle">Add New Entry</h3>
+                <form id="entryForm" class="entry-form">
+                    <input type="hidden" id="editingId" value="">
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="entryDate">Entry Date</label>
+                            <div class="date-input-wrapper">
+                                <input type="date" id="entryDate" required>
+                                <button type="button" id="todayBtn" class="btn btn-small">Today</button>
+                            </div>
+                        </div>
+                        <div class="form-group category-group">
+                            <label for="category">Category</label>
+                            <div class="category-input-wrapper">
+                                <select id="category" required>
+                                    <option value="">Select category...</option>
+                                </select>
+                                <button type="button" id="addCategoryBtn" class="btn btn-small">+ New</button>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="amount">Amount</label>
+                            <input type="number" id="amount" step="0.01" min="0" placeholder="0.00" required>
+                        </div>
+                        <div class="form-group" id="pretaxAmountGroup" style="display: none;">
+                            <label for="pretaxAmount">Pretax Amount</label>
+                            <input type="number" id="pretaxAmount" step="0.01" min="0" placeholder="0.00">
+                        </div>
+                        <div class="form-group" id="inventoryCostGroup" style="display: none;">
+                            <label for="inventoryCost">Inventory Cost</label>
+                            <input type="number" id="inventoryCost" step="0.01" min="0" placeholder="0.00">
+                        </div>
+                        <div class="form-group" id="saleDateGroup" style="display: none;">
+                            <label>Sale Period</label>
+                            <div class="sale-date-inputs">
+                                <input type="date" id="saleDateStart" placeholder="Start">
+                                <span class="sale-date-separator">to</span>
+                                <input type="date" id="saleDateEnd" placeholder="End">
+                            </div>
+                        </div>
+                        <div class="form-group" id="paymentForGroup" style="display: none;">
+                            <label for="paymentForMonth">Payment For</label>
+                            <select id="paymentForMonth">
+                                <option value="">Select month...</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Type</label>
+                            <div class="radio-group">
+                                <label class="radio-label">
+                                    <input type="radio" name="transactionType" value="receivable" checked>
+                                    <span>Receivable</span>
+                                </label>
+                                <label class="radio-label">
+                                    <input type="radio" name="transactionType" value="payable">
+                                    <span>Payable</span>
+                                </label>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="status">Status</label>
+                            <select id="status" required>
+                                <option value="pending">Pending</option>
+                                <option value="received">Received</option>
+                                <option value="paid">Paid</option>
+                            </select>
+                        </div>
+                        <div class="form-group" id="dateProcessedGroup" style="display: none;">
+                            <label for="dateProcessed">Date Processed</label>
+                            <input type="date" id="dateProcessed">
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="monthDue">Month Due</label>
+                            <input type="month" id="monthDue" placeholder="YYYY-MM">
+                        </div>
+                        <div class="form-group" id="monthPaidGroup" style="display: none;">
+                            <label for="monthPaid">Month Paid <span class="required-indicator">*</span></label>
+                            <input type="month" id="monthPaid" placeholder="YYYY-MM">
+                        </div>
+                        <div class="form-group notes-group">
+                            <label for="notes">Notes</label>
+                            <input type="text" id="notes" placeholder="Optional notes...">
+                        </div>
+                    </div>
+
+                    <div class="form-actions">
+                        <button type="button" id="cancelEditBtn" class="btn btn-secondary">Cancel</button>
+                        <button type="submit" id="submitBtn" class="btn btn-primary">Add Entry</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Filters -->
+        <section class="filters-section">
+            <div class="filter-group sort-group">
+                <label for="sortMode">Sort by:</label>
+                <select id="sortMode">
+                    <option value="entryDate">Entry Date</option>
+                    <option value="monthDue">Month Due</option>
+                    <option value="category">Category</option>
+                </select>
+            </div>
+            <div class="filter-separator"></div>
+            <div class="filter-group">
+                <select id="filterFolder">
+                    <option value="">All Folders</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <select id="filterType">
+                    <option value="">All Types</option>
+                    <option value="receivable">Receivable</option>
+                    <option value="payable">Payable</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <select id="filterStatus">
+                    <option value="">All Status</option>
+                    <option value="pending">Pending</option>
+                    <option value="received">Received</option>
+                    <option value="paid">Paid</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <select id="filterMonth">
+                    <option value="">All Months</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <select id="filterCategory">
+                    <option value="">All Categories</option>
+                </select>
+            </div>
+        </section>
+
+        <!-- Transactions Table -->
+        <section class="transactions-section">
+            <div id="transactionsContainer">
+                <p class="empty-state">No transactions yet. Add your first entry above.</p>
+            </div>
+        </section>
+        </div><!-- /journalTab -->
+
+        <!-- Cash Flow Summary Tab -->
+        <div id="cashflowTab" style="display: none;">
+            <section class="cashflow-section">
+                <div class="cashflow-header">
+                    <h3>Cash Flow Summary</h3>
+                    <div class="ps-view-toggle" id="cfViewToggle" style="display: none;">
+                        <label class="ps-toggle-label">View:</label>
+                        <select id="cfViewMode" class="ps-toggle-select">
+                            <option value="projected">Projected</option>
+                            <option value="actual">Actual</option>
+                        </select>
+                        <label class="ps-toggle-label">As of:</label>
+                        <select id="cfAsOfMonth" class="ps-toggle-select ps-asof-select">
+                            <option value="current">Current</option>
+                        </select>
+                        <button id="cfResetProjectionsBtn" class="btn btn-small ps-reset-btn">Reset Projections</button>
+                    </div>
+                </div>
+                <div id="cashflowSpreadsheet" class="cashflow-spreadsheet-wrapper">
+                    <p class="empty-state">No completed transactions yet.</p>
+                </div>
+                <div id="cashflowSummary" class="cashflow-summary"></div>
+            </section>
+        </div>
+
+        <!-- Profit & Loss Tab -->
+        <div id="pnlTab" style="display: none;">
+            <section class="pnl-section">
+                <div class="pnl-header">
+                    <h3>Profit &amp; Loss Statement</h3>
+                    <div class="pnl-controls">
+                        <div class="ps-view-toggle" id="pnlViewToggle" style="display: none;">
+                            <label class="ps-toggle-label">View:</label>
+                            <select id="pnlViewMode" class="ps-toggle-select">
+                                <option value="projected">Projected</option>
+                                <option value="actual">Actual</option>
+                            </select>
+                            <label class="ps-toggle-label">As of:</label>
+                            <select id="pnlAsOfMonth" class="ps-toggle-select ps-asof-select">
+                                <option value="current">Current</option>
+                            </select>
+                            <button id="pnlResetProjectionsBtn" class="btn btn-small ps-reset-btn">Reset Projections</button>
+                        </div>
+                        <label for="plTaxMode">Tax Mode:</label>
+                        <select id="plTaxMode">
+                            <option value="corporate">Corporate (21%)</option>
+                            <option value="passthrough">Pass-through</option>
+                        </select>
+                    </div>
+                </div>
+                <div id="pnlSpreadsheet" class="pnl-spreadsheet-wrapper">
+                    <p class="empty-state">No completed transactions yet.</p>
+                </div>
+            </section>
+        </div>
+
+        <!-- Balance Sheet Tab -->
+        <div id="balancesheetTab" style="display: none;">
+            <section class="bs-section">
+                <div class="bs-header">
+                    <h3>Balance Sheet</h3>
+                    <div class="bs-controls">
+                        <label for="bsMonthMonth">As of:</label>
+                        <select id="bsMonthMonth">
+                            <option value="01">January</option>
+                            <option value="02">February</option>
+                            <option value="03">March</option>
+                            <option value="04">April</option>
+                            <option value="05">May</option>
+                            <option value="06">June</option>
+                            <option value="07">July</option>
+                            <option value="08">August</option>
+                            <option value="09">September</option>
+                            <option value="10">October</option>
+                            <option value="11">November</option>
+                            <option value="12">December</option>
+                        </select>
+                        <select id="bsMonthYear">
+                            <option value="">Year...</option>
+                        </select>
+                    </div>
+                </div>
+                <div id="balanceSheetContent" class="bs-content">
+                    <p class="empty-state">Select a date to view the Balance Sheet.</p>
+                </div>
+            </section>
+
+            <section class="bs-ratios-section" id="bsRatiosSection">
+                <div id="bsRatiosContent"></div>
+            </section>
+        </div>
+
+        <!-- Fixed Assets Tab -->
+        <div id="assetsTab" style="display: none;">
+            <section class="assets-section">
+                <div class="assets-header">
+                    <h3>Fixed Assets</h3>
+                    <div class="assets-controls">
+                        <button id="addAssetTabBtn" class="btn btn-primary btn-small">+ Add Asset</button>
+                    </div>
+                </div>
+                <div id="assetsSummaryCards" class="assets-summary-cards"></div>
+                <div class="assets-layout">
+                    <div id="assetsListPanel" class="assets-list-panel"></div>
+                    <div id="assetsDetailPanel" class="assets-detail-panel">
+                        <p class="empty-state">Select an asset to view its depreciation schedule.</p>
+                    </div>
+                </div>
+            </section>
+            <section class="equity-section">
+                <div class="equity-header">
+                    <h3>Stockholders' Equity</h3>
+                    <div class="equity-controls">
+                        <button id="editEquityBtn" class="btn btn-secondary btn-small">Edit Equity</button>
+                    </div>
+                </div>
+                <div id="equityDisplayPanel" class="equity-display-panel"></div>
+            </section>
+        </div>
+
+        <!-- Loans Tab -->
+        <div id="loanTab" style="display: none;">
+            <section class="loan-section">
+                <div class="loan-header">
+                    <h3>Loans</h3>
+                    <div class="loan-controls">
+                        <button id="addLoanBtn" class="btn btn-primary btn-small">+ Add Loan</button>
+                    </div>
+                </div>
+                <div class="loan-layout">
+                    <div id="loanListPanel" class="loan-list-panel"></div>
+                    <div id="loanDetailPanel" class="loan-detail-panel">
+                        <p class="empty-state">Select a loan to view its amortization schedule.</p>
+                    </div>
+                </div>
+            </section>
+        </div>
+
+        <!-- Budget Tab -->
+        <div id="budgetTab" style="display: none;">
+            <section class="budget-section">
+                <div class="budget-header">
+                    <h3>Monthly Budget</h3>
+                    <div class="budget-controls">
+                        <button id="addBudgetExpenseBtn" class="btn btn-primary btn-small">+ Add Expense</button>
+                        <button id="recordBudgetBtn" class="btn btn-secondary btn-small">Record to Journal</button>
+                    </div>
+                </div>
+                <div id="budgetSummaryCards" class="budget-summary-cards"></div>
+                <div class="budget-layout">
+                    <div id="budgetListPanel" class="budget-list-panel"></div>
+                    <div id="budgetDetailPanel" class="budget-detail-panel">
+                        <p class="empty-state">Select an expense to view its payment schedule.</p>
+                    </div>
+                </div>
+            </section>
+        </div>
+
+        <!-- Break-Even Analysis Tab -->
+        <div id="breakevenTab" style="display: none;">
+            <section class="be-section">
+                <div class="be-header">
+                    <h3>Break-Even Analysis</h3>
+                    <div class="be-controls">
+                        <button id="beConfigBtn" class="btn btn-secondary btn-small">Configure</button>
+                    </div>
+                </div>
+                <div id="beTimelineBanner" class="be-timeline-banner" style="display:none;"></div>
+                <div id="beSummaryCards" class="be-summary-cards">
+                    <p class="empty-state">Configure your break-even parameters to get started.</p>
+                </div>
+                <div id="beChannelBreakdown" class="be-channel-breakdown"></div>
+                <div class="be-charts-row">
+                    <div class="be-chart-wrapper">
+                        <h4>Break-Even Chart</h4>
+                        <canvas id="beBreakevenChart"></canvas>
+                    </div>
+                    <div class="be-chart-wrapper">
+                        <h4>Monthly Timeline</h4>
+                        <canvas id="beTimelineChart"></canvas>
+                    </div>
+                </div>
+                <div id="beDataTable" class="be-data-table-wrapper"></div>
+            </section>
+            <section class="be-section be-progress-section" id="beProgressSection" style="display:none;">
+                <div class="be-header">
+                    <h3>Break-Even Progress</h3>
+                    <div class="be-controls">
+                        <label style="font-size: 0.875rem; font-weight: 500;">As of:
+                            <select id="beProgressMonth" class="be-progress-month-select"></select>
+                        </label>
+                    </div>
+                </div>
+                <div id="beProgressCards" class="be-summary-cards">
+                    <p class="empty-state">Configure break-even parameters and add journal entries to track progress.</p>
+                </div>
+                <div class="be-charts-row">
+                    <div class="be-chart-wrapper">
+                        <h4>Revenue vs Break-Even Pace</h4>
+                        <canvas id="beProgressChart"></canvas>
+                    </div>
+                </div>
+            </section>
+        </div>
+
+        <!-- Projected Sales Tab -->
+        <div id="projectedsalesTab" style="display: none;">
+            <section class="ps-section">
+                <div class="ps-header">
+                    <h3>Projected Sales</h3>
+                    <div class="ps-controls">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="psEnabled">
+                            <span>Enable Projections</span>
+                        </label>
+                        <button id="psSaveBtn" class="btn btn-primary btn-small">Save</button>
+                    </div>
+                </div>
+
+                <div id="psConfigPanel" class="ps-config-panel" style="display: none;">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Projection Start Month</label>
+                            <div class="month-year-select">
+                                <select id="psStartMonth">
+                                    <option value="">Month...</option>
+                                    <option value="01">Jan</option><option value="02">Feb</option>
+                                    <option value="03">Mar</option><option value="04">Apr</option>
+                                    <option value="05">May</option><option value="06">Jun</option>
+                                    <option value="07">Jul</option><option value="08">Aug</option>
+                                    <option value="09">Sep</option><option value="10">Oct</option>
+                                    <option value="11">Nov</option><option value="12">Dec</option>
+                                </select>
+                                <select id="psStartYear">
+                                    <option value="">Year...</option>
+                                </select>
+                            </div>
+                            <p class="field-hint">Months from here onward use projected values. Set before current month to overwrite actuals.</p>
+                        </div>
+                        <div class="form-group">
+                            <p class="field-hint" style="margin-top: 28px;">Each tab (P&amp;L, Cash Flow) has its own Projected/Actual toggle.</p>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="psSalesTaxRate">Sales Tax Rate (%)</label>
+                            <input type="number" id="psSalesTaxRate" step="0.01" min="0" max="100" placeholder="0.00">
+                            <p class="field-hint">Applied to total projected non-B2B revenue for cashflow.</p>
+                        </div>
+                    </div>
+
+                    <fieldset class="ps-fieldset">
+                        <legend>
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="psOnlineEnabled" checked>
+                                <span>Online Sales Channel</span>
+                            </label>
+                        </legend>
+                        <div id="psOnlineFields" class="form-row">
+                            <div class="form-group">
+                                <label for="psOnlinePrice">Avg. Selling Price</label>
+                                <input type="number" id="psOnlinePrice" step="0.01" min="0" placeholder="0.00">
+                            </div>
+                            <div class="form-group">
+                                <label for="psOnlineCogs">Avg. COGS per Unit</label>
+                                <input type="number" id="psOnlineCogs" step="0.01" min="0" placeholder="0.00">
+                            </div>
+                            <div class="form-group">
+                                <label>CM / Unit</label>
+                                <span id="psOnlineCm" class="ps-cm-preview">$0.00</span>
+                            </div>
+                        </div>
+                    </fieldset>
+
+                    <fieldset class="ps-fieldset">
+                        <legend>
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="psTradeshowEnabled">
+                                <span>Tradeshow Sales Channel</span>
+                            </label>
+                        </legend>
+                        <div id="psTradeshowFields" class="form-row" style="display: none;">
+                            <div class="form-group">
+                                <label for="psTradeshowPrice">Avg. Selling Price</label>
+                                <input type="number" id="psTradeshowPrice" step="0.01" min="0" placeholder="0.00">
+                            </div>
+                            <div class="form-group">
+                                <label for="psTradeshowCogs">Avg. COGS per Unit</label>
+                                <input type="number" id="psTradeshowCogs" step="0.01" min="0" placeholder="0.00">
+                            </div>
+                            <div class="form-group">
+                                <label>CM / Unit</label>
+                                <span id="psTradeshowCm" class="ps-cm-preview">$0.00</span>
+                            </div>
+                        </div>
+                    </fieldset>
+                </div>
+
+                <div id="psSummaryCards" class="ps-summary-cards"></div>
+                <div id="psMonthlyGrid" class="ps-spreadsheet-wrapper">
+                    <p class="empty-state">Enable projections and configure channels to get started.</p>
+                </div>
+            </section>
+        </div>
+
+        <!-- Products Tab -->
+        <div id="productsTab" style="display: none;">
+            <section class="products-section">
+                <div class="products-header">
+                    <h3>Product Catalog</h3>
+                    <div class="products-controls">
+                        <button id="addProductBtn" class="btn btn-primary btn-small">+ Add Product</button>
+                    </div>
+                </div>
+                <div id="productsSummaryCards" class="products-summary-cards"></div>
+                <div id="productsTableContainer" class="products-table-container">
+                    <p class="empty-state">No products yet. Click "+ Add Product" to begin.</p>
+                </div>
+            </section>
+        </div>
+
+        <!-- Product Add/Edit Modal -->
+        <div id="productModal" class="modal">
+            <div class="modal-content">
+                <h3 id="productModalTitle">Add Product</h3>
+                <form id="productForm">
+                    <input type="hidden" id="editingProductId" value="">
+                    <div class="form-group">
+                        <label for="productName">Product Name</label>
+                        <input type="text" id="productName" required placeholder="e.g., Widget A">
+                    </div>
+                    <div class="form-group">
+                        <label for="productSku">SKU <span class="label-hint">(optional)</span></label>
+                        <input type="text" id="productSku" placeholder="e.g., WDG-001">
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="productSellingPrice">Selling Price</label>
+                            <input type="number" id="productSellingPrice" step="0.01" min="0" placeholder="0.00" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="productTaxRate">Tax Rate (%)</label>
+                            <input type="number" id="productTaxRate" step="0.01" min="0" max="100" placeholder="0.00" value="0">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="productCogs">Cost of Goods (per unit)</label>
+                        <input type="number" id="productCogs" step="0.01" min="0" placeholder="0.00" required>
+                    </div>
+                    <div class="product-preview">
+                        <div class="product-preview-row">
+                            <span>Price After Tax:</span>
+                            <span id="productPreviewAfterTax">$0.00</span>
+                        </div>
+                        <div class="product-preview-row">
+                            <span>Profit Per Unit:</span>
+                            <span id="productPreviewProfit">$0.00</span>
+                        </div>
+                        <div class="product-preview-row">
+                            <span>Gross Margin:</span>
+                            <span id="productPreviewMargin">0.0%</span>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="productNotes">Notes <span class="label-hint">(optional)</span></label>
+                        <input type="text" id="productNotes" placeholder="Optional notes">
+                    </div>
+                    <div class="form-actions">
+                        <button type="button" id="cancelProductBtn" class="btn btn-secondary">Cancel</button>
+                        <button type="submit" id="saveProductBtn" class="btn btn-primary">Add Product</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Delete Product Confirmation -->
+        <div id="deleteProductModal" class="modal">
+            <div class="modal-content">
+                <h3>Delete Product</h3>
+                <p>Are you sure you want to delete this product?</p>
+                <div class="form-actions">
+                    <button type="button" id="cancelDeleteProductBtn" class="btn btn-secondary">Cancel</button>
+                    <button type="button" id="confirmDeleteProductBtn" class="btn btn-danger">Delete</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Break-Even Config Modal -->
+        <div id="beConfigModal" class="modal">
+            <div class="modal-content modal-wide">
+                <h3>Break-Even Configuration</h3>
+                <form id="beConfigForm">
+                    <fieldset class="be-fieldset">
+                        <legend>Timeline Override</legend>
+                        <p class="field-hint">Leave blank to use global timeline from settings.</p>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Start</label>
+                                <div class="month-year-select">
+                                    <select id="beTimelineStartMonth">
+                                        <option value="">Month...</option>
+                                        <option value="01">Jan</option><option value="02">Feb</option>
+                                        <option value="03">Mar</option><option value="04">Apr</option>
+                                        <option value="05">May</option><option value="06">Jun</option>
+                                        <option value="07">Jul</option><option value="08">Aug</option>
+                                        <option value="09">Sep</option><option value="10">Oct</option>
+                                        <option value="11">Nov</option><option value="12">Dec</option>
+                                    </select>
+                                    <select id="beTimelineStartYear">
+                                        <option value="">Year...</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label>End</label>
+                                <div class="month-year-select">
+                                    <select id="beTimelineEndMonth">
+                                        <option value="">Month...</option>
+                                        <option value="01">Jan</option><option value="02">Feb</option>
+                                        <option value="03">Mar</option><option value="04">Apr</option>
+                                        <option value="05">May</option><option value="06">Jun</option>
+                                        <option value="07">Jul</option><option value="08">Aug</option>
+                                        <option value="09">Sep</option><option value="10">Oct</option>
+                                        <option value="11">Nov</option><option value="12">Dec</option>
+                                    </select>
+                                    <select id="beTimelineEndYear">
+                                        <option value="">Year...</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                        <button type="button" id="beClearTimelineBtn" class="btn btn-small btn-secondary">Clear Timeline</button>
+                    </fieldset>
+                    <fieldset class="be-fieldset">
+                        <legend>Cost Data Source</legend>
+                        <p class="field-hint">Fixed costs are pulled from your P&amp;L (OpEx + Depreciation + Loan Interest).</p>
+                        <div class="form-row">
+                            <div class="form-group" style="max-width:240px;">
+                                <label for="beDataSource">Values</label>
+                                <select id="beDataSource">
+                                    <option value="actual">Actual (historical averages)</option>
+                                    <option value="projected">Projected (forward-looking)</option>
+                                </select>
+                            </div>
+                            <div class="form-group" id="beAsOfGroup" style="max-width:200px; display:none;">
+                                <label for="beAsOfMonth">As of</label>
+                                <select id="beAsOfMonth">
+                                    <option value="current">Current</option>
+                                </select>
+                                <p class="field-hint">Months after this are projected.</p>
+                            </div>
+                        </div>
+                        <span id="bePLCostHint" class="be-cost-hint"></span>
+                        <div class="form-row" style="margin-top:8px;">
+                            <div class="form-group" style="max-width:240px;">
+                                <label for="beFixedCostOverride">Monthly Fixed Cost Override ($)</label>
+                                <input type="number" id="beFixedCostOverride" step="0.01" min="0" placeholder="Leave blank to use P&L">
+                                <p class="field-hint">Overrides the P&L-derived value when set.</p>
+                            </div>
+                        </div>
+                    </fieldset>
+                    <fieldset class="be-fieldset">
+                        <legend>
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="beConsumerEnabled" checked>
+                                <span>Consumer Sales Channel</span>
+                            </label>
+                        </legend>
+                        <div id="beConsumerFields" class="form-row">
+                            <div class="form-group">
+                                <label for="beConsumerPrice">Avg. Selling Price</label>
+                                <input type="number" id="beConsumerPrice" step="0.01" min="0" placeholder="0.00">
+                            </div>
+                            <div class="form-group">
+                                <label for="beConsumerCogs">Avg. COGS</label>
+                                <input type="number" id="beConsumerCogs" step="0.01" min="0" placeholder="0.00">
+                            </div>
+                            <div class="form-group">
+                                <label>CM / unit</label>
+                                <span id="beConsumerCmPreview" class="be-cm-preview">$0.00</span>
+                            </div>
+                        </div>
+                    </fieldset>
+                    <fieldset class="be-fieldset">
+                        <legend>
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="beB2bEnabled">
+                                <span>B2B Contract Channel</span>
+                            </label>
+                        </legend>
+                        <div id="beB2bFields" class="form-row" style="display:none;">
+                            <div class="form-group">
+                                <label for="beB2bUnits">Monthly Units</label>
+                                <input type="number" id="beB2bUnits" min="0" placeholder="0">
+                            </div>
+                            <div class="form-group">
+                                <label for="beB2bRate">Rate / Unit</label>
+                                <input type="number" id="beB2bRate" step="0.01" min="0" placeholder="0.00">
+                            </div>
+                            <div class="form-group">
+                                <label for="beB2bCogs">COGS / Unit</label>
+                                <input type="number" id="beB2bCogs" step="0.01" min="0" placeholder="0.00">
+                            </div>
+                            <div class="form-group">
+                                <label>CM / unit</label>
+                                <span id="beB2bCmPreview" class="be-cm-preview">$0.00</span>
+                            </div>
+                        </div>
+                    </fieldset>
+                    <fieldset class="be-fieldset">
+                        <legend>Chart Settings</legend>
+                        <div class="form-group" style="max-width:200px;">
+                            <label for="beUnitIncrement">Unit Axis Increment</label>
+                            <input type="number" id="beUnitIncrement" min="1" value="100" placeholder="100">
+                        </div>
+                    </fieldset>
+                    <div class="form-actions">
+                        <button type="button" id="cancelBeConfigBtn" class="btn btn-secondary">Cancel</button>
+                        <button type="submit" id="saveBeConfigBtn" class="btn btn-primary">Save &amp; Calculate</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Budget Expense Modal -->
+        <div id="budgetExpenseModal" class="modal">
+            <div class="modal-content modal-wide">
+                <h3 id="budgetExpenseModalTitle">Add Budget Expense</h3>
+                <form id="budgetExpenseForm">
+                    <input type="hidden" id="editingBudgetExpenseId" value="">
+                    <div class="form-group">
+                        <label for="budgetExpenseName">Expense Name</label>
+                        <input type="text" id="budgetExpenseName" required placeholder="e.g., Rent, Insurance">
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="budgetExpenseAmount">Monthly Amount</label>
+                            <input type="number" id="budgetExpenseAmount" step="0.01" min="0" placeholder="0.00" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="budgetExpenseCategory">Journal Category</label>
+                            <div class="budget-category-toggle">
+                                <button type="button" id="budgetCatModeExisting" class="btn btn-sm btn-toggle active">Use Existing</button>
+                                <button type="button" id="budgetCatModeNew" class="btn btn-sm btn-toggle">Create New</button>
+                            </div>
+                            <select id="budgetExpenseCategory">
+                                <option value="">None (won't record)</option>
+                            </select>
+                            <input type="text" id="budgetNewCategoryName" placeholder="New category name" style="display:none;">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Start Month</label>
+                            <div class="month-year-select">
+                                <select id="budgetStartMonth" required>
+                                    <option value="">Month...</option>
+                                    <option value="01">January</option>
+                                    <option value="02">February</option>
+                                    <option value="03">March</option>
+                                    <option value="04">April</option>
+                                    <option value="05">May</option>
+                                    <option value="06">June</option>
+                                    <option value="07">July</option>
+                                    <option value="08">August</option>
+                                    <option value="09">September</option>
+                                    <option value="10">October</option>
+                                    <option value="11">November</option>
+                                    <option value="12">December</option>
+                                </select>
+                                <select id="budgetStartYear" required>
+                                    <option value="">Year...</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>End Month <span class="label-hint">(optional)</span></label>
+                            <div class="month-year-select">
+                                <select id="budgetEndMonth">
+                                    <option value="">Indefinite</option>
+                                    <option value="01">January</option>
+                                    <option value="02">February</option>
+                                    <option value="03">March</option>
+                                    <option value="04">April</option>
+                                    <option value="05">May</option>
+                                    <option value="06">June</option>
+                                    <option value="07">July</option>
+                                    <option value="08">August</option>
+                                    <option value="09">September</option>
+                                    <option value="10">October</option>
+                                    <option value="11">November</option>
+                                    <option value="12">December</option>
+                                </select>
+                                <select id="budgetEndYear">
+                                    <option value="">—</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="budgetExpenseNotes">Notes</label>
+                        <input type="text" id="budgetExpenseNotes" placeholder="Optional notes">
+                    </div>
+                    <div class="form-actions">
+                        <button type="button" id="cancelBudgetExpenseBtn" class="btn btn-secondary">Cancel</button>
+                        <button type="submit" id="saveBudgetExpenseBtn" class="btn btn-primary">Add Expense</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Delete Budget Expense Confirmation -->
+        <div id="deleteBudgetExpenseModal" class="modal">
+            <div class="modal-content">
+                <h3>Delete Expense</h3>
+                <p>Are you sure you want to delete this budget expense?</p>
+                <div class="form-actions">
+                    <button type="button" id="cancelDeleteBudgetExpenseBtn" class="btn btn-secondary">Cancel</button>
+                    <button type="button" id="confirmDeleteBudgetExpenseBtn" class="btn btn-danger">Delete</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Record Budget to Journal Modal -->
+        <div id="recordBudgetModal" class="modal">
+            <div class="modal-content modal-wide">
+                <h3>Record Budget to Journal</h3>
+                <p class="modal-description">Create journal entries for all active budget expenses for the selected month.</p>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Month</label>
+                        <div class="month-year-select">
+                            <select id="recordBudgetMonth" required>
+                                <option value="">Month...</option>
+                                <option value="01">January</option>
+                                <option value="02">February</option>
+                                <option value="03">March</option>
+                                <option value="04">April</option>
+                                <option value="05">May</option>
+                                <option value="06">June</option>
+                                <option value="07">July</option>
+                                <option value="08">August</option>
+                                <option value="09">September</option>
+                                <option value="10">October</option>
+                                <option value="11">November</option>
+                                <option value="12">December</option>
+                            </select>
+                            <select id="recordBudgetYear" required>
+                                <option value="">Year...</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="recordBudgetDate">Date Recorded</label>
+                        <input type="date" id="recordBudgetDate" required>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="recordBudgetStatus">Status</label>
+                        <select id="recordBudgetStatus" required>
+                            <option value="pending">Pending</option>
+                            <option value="paid">Paid</option>
+                        </select>
+                    </div>
+                    <div class="form-group" id="recordBudgetDateProcessedGroup" style="display: none;">
+                        <label for="recordBudgetDateProcessed">Date Processed</label>
+                        <input type="date" id="recordBudgetDateProcessed">
+                    </div>
+                </div>
+                <div id="recordBudgetPreview" class="bulk-preview"></div>
+                <div class="form-actions">
+                    <button type="button" id="cancelRecordBudgetBtn" class="btn btn-secondary">Cancel</button>
+                    <button type="button" id="confirmRecordBudgetBtn" class="btn btn-primary" disabled>Record Entries</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Fixed Asset Modal -->
+        <div id="fixedAssetModal" class="modal">
+            <div class="modal-content modal-wide">
+                <h3 id="fixedAssetModalTitle">Add Fixed Asset</h3>
+                <form id="fixedAssetForm">
+                    <input type="hidden" id="editingAssetId" value="">
+                    <div class="form-group">
+                        <label for="assetName">Asset Name</label>
+                        <input type="text" id="assetName" required placeholder="e.g., Office Equipment">
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="assetCost">Purchase Cost</label>
+                            <input type="number" id="assetCost" step="0.01" min="0" placeholder="0.00" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="assetSalvage">Salvage Value</label>
+                            <input type="number" id="assetSalvage" step="0.01" min="0" placeholder="0.00" value="0">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="assetLife">Useful Life (months)</label>
+                            <input type="number" id="assetLife" min="0" placeholder="60">
+                        </div>
+                        <div class="form-group">
+                            <label for="assetDeprMethod">Depreciation Method</label>
+                            <select id="assetDeprMethod">
+                                <option value="straight_line">Straight-Line</option>
+                                <option value="double_declining">Double-Declining</option>
+                                <option value="none">Not Depreciable</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="assetDate">Purchase Date</label>
+                            <input type="date" id="assetDate" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="assetDeprStart">Depreciation Start Date</label>
+                            <input type="date" id="assetDeprStart" placeholder="Same as purchase date">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="assetNotes">Notes</label>
+                        <input type="text" id="assetNotes" placeholder="Optional notes">
+                    </div>
+                    <div class="form-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="assetAutoTransaction" checked>
+                            Auto-create purchase transaction
+                        </label>
+                    </div>
+                    <div class="form-actions">
+                        <button type="button" id="cancelAssetBtn" class="btn btn-secondary">Cancel</button>
+                        <button type="submit" id="saveAssetBtn" class="btn btn-primary">Add Asset</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Delete Fixed Asset Confirmation -->
+        <div id="deleteAssetModal" class="modal">
+            <div class="modal-content">
+                <h3>Delete Asset</h3>
+                <p id="deleteAssetMessage">Are you sure you want to delete this asset?</p>
+                <div class="form-actions">
+                    <button type="button" id="cancelDeleteAssetBtn" class="btn btn-secondary">Cancel</button>
+                    <button type="button" id="confirmDeleteAssetBtn" class="btn btn-danger">Delete</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Equity Config Modal -->
+        <div id="equityModal" class="modal">
+            <div class="modal-content modal-wide">
+                <h3>Stockholders' Equity</h3>
+                <form id="equityForm">
+                    <fieldset class="equity-fieldset">
+                        <legend>Seed Money (Common Stock)</legend>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="equityPar">Par Value per Share</label>
+                                <input type="number" id="equityPar" step="0.001" min="0" placeholder="0.001">
+                            </div>
+                            <div class="form-group">
+                                <label for="equityShares">Number of Shares</label>
+                                <input type="number" id="equityShares" min="0" placeholder="0">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="seedExpectedDate">Expected Date</label>
+                                <input type="date" id="seedExpectedDate">
+                            </div>
+                            <div class="form-group">
+                                <label for="seedReceivedDate">Date Received</label>
+                                <input type="date" id="seedReceivedDate">
+                            </div>
+                        </div>
+                    </fieldset>
+                    <fieldset class="equity-fieldset">
+                        <legend>Additional Paid-In Capital</legend>
+                        <div class="form-group">
+                            <label for="equityApic">APIC Amount</label>
+                            <input type="number" id="equityApic" step="0.01" min="0" placeholder="0.00">
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="apicExpectedDate">Expected Date</label>
+                                <input type="date" id="apicExpectedDate">
+                            </div>
+                            <div class="form-group">
+                                <label for="apicReceivedDate">Date Received</label>
+                                <input type="date" id="apicReceivedDate">
+                            </div>
+                        </div>
+                    </fieldset>
+                    <div class="form-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="equityAutoTransaction" checked>
+                            Auto-create journal entries when received
+                        </label>
+                    </div>
+                    <div class="form-actions">
+                        <button type="button" id="cancelEquityBtn" class="btn btn-secondary">Cancel</button>
+                        <button type="submit" id="saveEquityBtn" class="btn btn-primary">Save</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Loan Config Modal -->
+        <div id="loanConfigModal" class="modal">
+            <div class="modal-content modal-wide">
+                <h3 id="loanConfigModalTitle">Add Loan</h3>
+                <form id="loanConfigForm" class="compact-form">
+                    <input type="hidden" id="editingLoanId" value="">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="loanName">Loan Name</label>
+                            <input type="text" id="loanName" required placeholder="e.g., SBA Loan">
+                        </div>
+                        <div class="form-group">
+                            <label for="loanPrincipal">Principal Amount</label>
+                            <input type="number" id="loanPrincipal" step="0.01" min="0" placeholder="0.00" required>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="loanRate">Annual Interest Rate (%)</label>
+                            <input type="number" id="loanRate" step="0.01" min="0" placeholder="5.00" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="loanTermMonths">Term (months)</label>
+                            <input type="number" id="loanTermMonths" min="1" placeholder="60" required>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="loanPayments">Payments per Year</label>
+                            <input type="number" id="loanPayments" min="1" max="365" placeholder="12" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="loanStartDate">Loan Start Date</label>
+                            <input type="date" id="loanStartDate" required>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="loanFirstPaymentDate">First Payment Date</label>
+                            <input type="date" id="loanFirstPaymentDate" placeholder="Optional">
+                        </div>
+                        <div class="form-group">
+                            <label for="loanNotes">Notes</label>
+                            <input type="text" id="loanNotes" placeholder="Optional notes">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="loanAutoCreate" checked>
+                            Auto-create budget expense & journal category
+                        </label>
+                    </div>
+                    <div class="form-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="loanAutoCreateReceipt" checked>
+                            Auto-create loan receipt transaction
+                        </label>
+                    </div>
+                    <div id="loanReceiptFields" class="form-row" style="margin-top: 4px;">
+                        <div class="form-group">
+                            <label for="loanReceiptMonthDue">Month Due</label>
+                            <input type="month" id="loanReceiptMonthDue">
+                        </div>
+                        <div class="form-group">
+                            <label for="loanReceiptMonthPaid">Month Paid</label>
+                            <input type="month" id="loanReceiptMonthPaid">
+                        </div>
+                    </div>
+                    <div class="form-actions">
+                        <button type="button" id="cancelLoanConfigBtn" class="btn btn-secondary">Cancel</button>
+                        <button type="submit" id="saveLoanConfigBtn" class="btn btn-primary">Save</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Delete Loan Confirmation -->
+        <div id="deleteLoanModal" class="modal">
+            <div class="modal-content">
+                <h3>Delete Loan</h3>
+                <p id="deleteLoanMessage">Are you sure you want to delete this loan?</p>
+                <div class="form-actions">
+                    <button type="button" id="cancelDeleteLoanBtn" class="btn btn-secondary">Cancel</button>
+                    <button type="button" id="confirmDeleteLoanBtn" class="btn btn-danger">Delete</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Reset All Data Confirmation -->
+        <div id="resetAllDataModal" class="modal">
+            <div class="modal-content">
+                <h3>Reset All Data</h3>
+                <p>This will permanently delete all transactions, categories, loans, assets, equity data, and settings. This cannot be undone.</p>
+                <p style="margin-top:8px;font-weight:600;">Type "RESET" to confirm:</p>
+                <input type="text" id="resetConfirmInput" placeholder="Type RESET" style="margin-top:8px;width:100%;padding:8px;font-size:0.9rem;border:1px solid var(--color-border);border-radius:var(--radius-sm);">
+                <div class="form-actions">
+                    <button type="button" id="cancelResetBtn" class="btn btn-secondary">Cancel</button>
+                    <button type="button" id="confirmResetBtn" class="btn btn-danger" disabled>Reset Everything</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Category Modal (Add/Edit) -->
+        <div id="categoryModal" class="modal">
+            <div class="modal-content modal-category">
+                <h3 id="categoryModalTitle">Add New Category</h3>
+                <form id="categoryForm">
+                    <input type="hidden" id="editingCategoryId" value="">
+                    <div class="form-group">
+                        <label for="categoryName">Category Name</label>
+                        <input type="text" id="categoryName" required placeholder="e.g., Office Supplies">
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="categoryDefaultAmount">Typical Price</label>
+                            <input type="number" id="categoryDefaultAmount" step="0.01" min="0" placeholder="0.00">
+                        </div>
+                        <div class="form-group">
+                            <label for="categoryDefaultType">Typical Type</label>
+                            <select id="categoryDefaultType">
+                                <option value="">None</option>
+                                <option value="receivable">Receivable</option>
+                                <option value="payable">Payable</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="categoryDefaultStatus">Default Status</label>
+                            <select id="categoryDefaultStatus">
+                                <option value="">None</option>
+                                <option value="pending">Pending</option>
+                                <option value="paid">Paid</option>
+                                <option value="received">Received</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="categoryFolder">Folder</label>
+                        <div class="category-input-wrapper">
+                            <select id="categoryFolder">
+                                <option value="">No Folder</option>
+                            </select>
+                            <button type="button" id="addFolderFromCategoryBtn" class="btn btn-small">+ Folder</button>
+                        </div>
+                    </div>
+                    <div class="form-group checkbox-group" style="display: none;">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="categoryMonthly">
+                            <span>Monthly payment (e.g., Loan, Rent, Subscription)</span>
+                        </label>
+                    </div>
+                    <div class="form-group checkbox-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="categoryIsSales">
+                            <span>Sales</span>
+                        </label>
+                    </div>
+                    <div class="form-group checkbox-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="categoryShowOnPl">
+                            <span>Hide from Profit &amp; Loss</span>
+                        </label>
+                    </div>
+                    <div class="form-group checkbox-group">
+                        <label class="checkbox-label" style="padding-left: 24px;">
+                            <input type="checkbox" id="categoryCogs">
+                            <span>Cost of Goods Sold</span>
+                        </label>
+                        <label class="checkbox-label" style="padding-left: 24px; display: none;">
+                            <input type="checkbox" id="categoryDepreciation">
+                            <span>Depreciation</span>
+                        </label>
+                        <label class="checkbox-label" style="padding-left: 24px;">
+                            <input type="checkbox" id="categorySalesTax">
+                            <span>Sales Tax</span>
+                        </label>
+                        <label class="checkbox-label" style="padding-left: 24px;">
+                            <input type="checkbox" id="categoryB2b">
+                            <span>B2B Sales</span>
+                        </label>
+                    </div>
+                    <div class="form-actions">
+                        <button type="button" id="cancelCategoryBtn" class="btn btn-secondary">Cancel</button>
+                        <button type="submit" id="saveCategoryBtn" class="btn btn-primary">Add Category</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Manage Categories Modal -->
+        <div id="manageCategoriesModal" class="modal">
+            <div class="modal-content modal-wide">
+                <h3>Manage Categories</h3>
+                <div id="categoriesList" class="categories-list"></div>
+                <div class="form-actions">
+                    <button type="button" id="closeManageCategoriesBtn" class="btn btn-secondary">Close</button>
+                    <button type="button" id="addNewFolderBtn" class="btn btn-secondary">+ Folder</button>
+                    <button type="button" id="addNewCategoryFromManageBtn" class="btn btn-primary">+ Category</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Folder Modal (Add/Edit) -->
+        <div id="folderModal" class="modal">
+            <div class="modal-content">
+                <h3 id="folderModalTitle">Add New Folder</h3>
+                <form id="folderForm">
+                    <input type="hidden" id="editingFolderId" value="">
+                    <div class="form-group">
+                        <label for="folderName">Folder Name</label>
+                        <input type="text" id="folderName" required placeholder="e.g., Sales">
+                    </div>
+                    <div class="form-group">
+                        <label>Folder Type</label>
+                        <div class="radio-group">
+                            <label class="radio-label">
+                                <input type="radio" name="folderType" value="none" checked>
+                                <span>None</span>
+                            </label>
+                            <label class="radio-label">
+                                <input type="radio" name="folderType" value="payable">
+                                <span>Payable</span>
+                            </label>
+                            <label class="radio-label">
+                                <input type="radio" name="folderType" value="receivable">
+                                <span>Receivable</span>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="form-actions">
+                        <button type="button" id="cancelFolderBtn" class="btn btn-secondary">Cancel</button>
+                        <button type="submit" id="saveFolderBtn" class="btn btn-primary">Add Folder</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Delete Folder Confirmation Modal -->
+        <div id="deleteFolderModal" class="modal">
+            <div class="modal-content">
+                <h3>Delete Folder</h3>
+                <p id="deleteFolderMessage">Are you sure? Categories in this folder will become unfiled.</p>
+                <div class="form-actions">
+                    <button type="button" id="cancelDeleteFolderBtn" class="btn btn-secondary">Cancel</button>
+                    <button type="button" id="confirmDeleteFolderBtn" class="btn btn-danger">Delete</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Delete Category Confirmation Modal -->
+        <div id="deleteCategoryModal" class="modal">
+            <div class="modal-content">
+                <h3>Delete Category</h3>
+                <p id="deleteCategoryMessage">Are you sure you want to delete this category?</p>
+                <div class="form-actions">
+                    <button type="button" id="cancelDeleteCategoryBtn" class="btn btn-secondary">Cancel</button>
+                    <button type="button" id="confirmDeleteCategoryBtn" class="btn btn-danger">Delete</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Delete Transaction Confirmation Modal -->
+        <div id="deleteModal" class="modal">
+            <div class="modal-content">
+                <h3>Confirm Delete</h3>
+                <p>Are you sure you want to delete this transaction?</p>
+                <div class="form-actions">
+                    <button type="button" id="cancelDeleteBtn" class="btn btn-secondary">Cancel</button>
+                    <button type="button" id="confirmDeleteBtn" class="btn btn-danger">Delete</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Load Confirmation Modal -->
+        <div id="loadConfirmModal" class="modal">
+            <div class="modal-content">
+                <h3>Load Database</h3>
+                <p>Loading a database will replace all current data. Continue?</p>
+                <div class="form-actions">
+                    <button type="button" id="cancelLoadBtn" class="btn btn-secondary">Cancel</button>
+                    <button type="button" id="confirmLoadBtn" class="btn btn-primary">Load</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Save As Modal (fallback for browsers without File System Access API) -->
+        <div id="saveAsModal" class="modal">
+            <div class="modal-content">
+                <h3>Save Journal As</h3>
+                <div class="form-group">
+                    <label for="saveAsName">File Name</label>
+                    <div class="save-as-input">
+                        <input type="text" id="saveAsName" placeholder="my_journal" required>
+                        <span class="file-extension">.db</span>
+                    </div>
+                </div>
+                <div class="form-actions">
+                    <button type="button" id="cancelSaveAsBtn" class="btn btn-secondary">Cancel</button>
+                    <button type="button" id="confirmSaveAsBtn" class="btn btn-primary">Save</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Month Paid Prompt Modal (for inline status changes) -->
+        <div id="monthPaidPromptModal" class="modal">
+            <div class="modal-content">
+                <h3 id="monthPaidPromptTitle">Month Paid</h3>
+                <p>Select the date this was processed:</p>
+                <div class="form-group">
+                    <input type="date" id="promptDateProcessed" placeholder="YYYY-MM-DD">
+                </div>
+                <button type="button" id="paidTodayBtn" class="btn btn-primary" style="width:100%; margin-bottom: 12px;">Paid Today</button>
+                <div class="form-actions">
+                    <button type="button" id="cancelMonthPaidPromptBtn" class="btn btn-secondary">Cancel</button>
+                    <button type="button" id="confirmMonthPaidPromptBtn" class="btn btn-primary">Confirm</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Add Folder Entries Modal -->
+        <div id="addFolderEntriesModal" class="modal">
+            <div class="modal-content modal-wide">
+                <h3>Add Folder Entries</h3>
+                <p class="modal-description">Create entries for all categories in a folder at once. You can edit them afterwards.</p>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="bulkFolder">Folder</label>
+                        <select id="bulkFolder" required>
+                            <option value="">Select folder...</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="bulkMonthDue">Month Due</label>
+                        <input type="month" id="bulkMonthDue" required placeholder="YYYY-MM">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="bulkEntryDate">Date Recorded</label>
+                        <input type="date" id="bulkEntryDate" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="bulkStatus">Status</label>
+                        <select id="bulkStatus" required>
+                            <option value="pending">Pending</option>
+                        </select>
+                    </div>
+                    <div class="form-group" id="bulkDateProcessedGroup" style="display: none;">
+                        <label for="bulkDateProcessed">Date Processed</label>
+                        <input type="date" id="bulkDateProcessed">
+                    </div>
+                    <div class="form-group" id="bulkMonthPaidGroup" style="display: none;">
+                        <label id="bulkMonthPaidLabel" for="bulkMonthPaid">Month Paid</label>
+                        <input type="month" id="bulkMonthPaid" placeholder="YYYY-MM">
+                    </div>
+                </div>
+                <div id="bulkPreview" class="bulk-preview"></div>
+                <div class="form-actions">
+                    <button type="button" id="cancelBulkBtn" class="btn btn-secondary">Cancel</button>
+                    <button type="button" id="confirmBulkBtn" class="btn btn-primary" disabled>Add Entries</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Notes Tooltip (for hover display) -->
+        <div id="notesTooltip" class="notes-tooltip"></div>
+
+        <!-- Sync Menu Modal -->
+        <div id="syncMenuModal" class="modal">
+            <div class="modal-content">
+                <h3>Group Sync</h3>
+                <div id="syncDisconnectedPanel">
+                    <p style="margin-bottom: 12px; color: var(--color-text-muted); font-size: 0.85rem;">Share this journal with others. Create a new group or join an existing one.</p>
+                    <div class="sync-tabs">
+                        <button type="button" class="sync-tab active" data-tab="create">Create</button>
+                        <button type="button" class="sync-tab" data-tab="join">Join</button>
+                    </div>
+                    <div id="syncCreateTab" class="sync-tab-content active">
+                        <form id="createGroupForm">
+                            <div class="form-group">
+                                <label for="syncCreateName">Your Display Name</label>
+                                <input type="text" id="syncCreateName" class="form-control" required placeholder="e.g., Alice">
+                            </div>
+                            <div class="form-group">
+                                <label for="syncCreatePassword">Password</label>
+                                <input type="password" id="syncCreatePassword" class="form-control" required placeholder="Choose a password" minlength="4">
+                            </div>
+                            <div class="form-group">
+                                <label for="newGroupName">Group Name</label>
+                                <input type="text" id="newGroupName" class="form-control" required placeholder="e.g., Q1 2026 Journal">
+                            </div>
+                            <div class="form-group">
+                                <label for="supabaseUrl">Supabase Project URL</label>
+                                <input type="url" id="supabaseUrl" class="form-control" required placeholder="https://your-project.supabase.co">
+                            </div>
+                            <div class="form-group">
+                                <label for="supabaseAnonKey">Supabase Anon Key</label>
+                                <input type="text" id="supabaseAnonKey" class="form-control" required placeholder="eyJ...">
+                            </div>
+                            <button type="submit" class="btn btn-primary" style="width:100%; margin-top: 4px;">Create Group</button>
+                        </form>
+                    </div>
+                    <div id="syncJoinTab" class="sync-tab-content">
+                        <div class="sync-subtabs">
+                            <button type="button" class="sync-subtab active" data-join-mode="rejoin">I have an account</button>
+                            <button type="button" class="sync-subtab" data-join-mode="new">New member</button>
+                        </div>
+                        <form id="joinGroupForm">
+                            <div class="form-group">
+                                <label for="syncJoinName" id="syncJoinNameLabel">Username</label>
+                                <input type="text" id="syncJoinName" class="form-control" required placeholder="Enter your username">
+                            </div>
+                            <div class="form-group">
+                                <label for="syncJoinPassword" id="syncJoinPasswordLabel">Password</label>
+                                <input type="password" id="syncJoinPassword" class="form-control" required placeholder="Enter your password" minlength="4">
+                            </div>
+                            <div class="form-group">
+                                <label for="joinGroupCode">Invite Code</label>
+                                <input type="text" id="joinGroupCode" class="form-control" required placeholder="Paste invite code from group creator...">
+                            </div>
+                            <button type="submit" class="btn btn-primary" style="width:100%; margin-top: 4px;">Join Group</button>
+                        </form>
+                    </div>
+                </div>
+                <div id="syncConnectedPanel" style="display:none;">
+                    <div class="sync-info">
+                        <div class="sync-info-row">
+                            <span class="sync-info-label">Group</span>
+                            <span id="syncGroupName" class="sync-info-value">--</span>
+                        </div>
+                        <div class="sync-info-row">
+                            <span class="sync-info-label">Invite Code</span>
+                            <span id="syncInviteCode" class="sync-info-value sync-group-id" style="max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">--</span>
+                            <button type="button" id="syncCopyIdBtn" class="btn btn-small" title="Copy invite code">Copy</button>
+                        </div>
+                        <div class="sync-info-row">
+                            <span class="sync-info-label">User</span>
+                            <span id="syncCurrentUser" class="sync-info-value">--</span>
+                        </div>
+                        <div class="sync-info-row">
+                            <span class="sync-info-label">Role</span>
+                            <span id="syncCurrentRole" class="sync-info-value">--</span>
+                        </div>
+                        <div class="sync-info-row">
+                            <span class="sync-info-label">Version</span>
+                            <span id="syncVersion" class="sync-info-value">--</span>
+                        </div>
+                        <div class="sync-info-row">
+                            <span class="sync-info-label">Status</span>
+                            <span id="syncStatusText" class="sync-info-value">Connected</span>
+                        </div>
+                    </div>
+                    <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 16px;">
+                        <button type="button" id="syncPullBtn" class="btn btn-secondary" style="width:100%;">Pull Latest</button>
+                        <button type="button" id="syncHistoryBtn" class="btn btn-secondary" style="width:100%;">Version History</button>
+                        <button type="button" id="syncMembersBtn" class="btn btn-secondary" style="width:100%; display:none;">Members</button>
+                        <button type="button" id="syncDisconnectBtn" class="btn btn-danger" style="width:100%;">Disconnect</button>
+                    </div>
+                </div>
+                <div class="form-actions" style="margin-top: 12px;">
+                    <button type="button" id="closeSyncMenuBtn" class="btn btn-secondary">Close</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Group Created Modal -->
+        <div id="groupCreatedModal" class="modal">
+            <div class="modal-content">
+                <h3>Group Created!</h3>
+                <p style="margin-bottom: 12px; color: var(--color-text-muted); font-size: 0.85rem;">Share this invite code with others so they can join:</p>
+                <div class="invite-code-display">
+                    <code id="inviteCodeDisplay">--</code>
+                    <button type="button" id="copyInviteCodeBtn" class="btn btn-small">Copy</button>
+                </div>
+                <div class="form-actions">
+                    <button type="button" id="closeGroupCreatedBtn" class="btn btn-primary">Done</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Version History Modal -->
+        <div id="versionHistoryModal" class="modal">
+            <div class="modal-content modal-wide">
+                <h3>Version History</h3>
+                <div id="versionHistoryList" class="version-history-list">
+                    <p class="empty-state">Loading...</p>
+                </div>
+                <div class="form-actions">
+                    <button type="button" id="closeVersionHistoryBtn" class="btn btn-secondary">Close</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Rollback Confirmation Modal -->
+        <div id="rollbackModal" class="modal">
+            <div class="modal-content">
+                <h3>Rollback to Version</h3>
+                <p id="rollbackMessage" style="margin-bottom: 16px;">This will replace your current data. Continue?</p>
+                <div class="form-actions">
+                    <button type="button" id="cancelRollbackBtn" class="btn btn-secondary">Cancel</button>
+                    <button type="button" id="confirmRollbackBtn" class="btn btn-danger">Rollback</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Members Modal (admin) -->
+        <div id="membersModal" class="modal">
+            <div class="modal-content modal-wide">
+                <h3>Group Members</h3>
+                <div id="membersList" class="members-list">
+                    <p class="empty-state">Loading...</p>
+                </div>
+                <div class="form-actions">
+                    <button type="button" id="closeMembersBtn" class="btn btn-secondary">Close</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Remove Member Confirmation Modal -->
+        <div id="removeMemberModal" class="modal">
+            <div class="modal-content">
+                <h3>Remove Member</h3>
+                <p id="removeMemberMessage" style="margin-bottom: 16px;">Remove this member from the group?</p>
+                <div class="form-actions">
+                    <button type="button" id="cancelRemoveMemberBtn" class="btn btn-secondary">Cancel</button>
+                    <button type="button" id="confirmRemoveMemberBtn" class="btn btn-danger">Remove</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Share View-Only Link Modal -->
+        <div id="shareModal" class="modal">
+            <div class="modal-content">
+                <h3>Share View-Only Link</h3>
+                <p id="shareStatus" class="share-status"></p>
+                <div id="shareUrlSection" style="display:none;">
+                    <div class="form-group">
+                        <label>Share URL</label>
+                        <div class="share-url-row">
+                            <input type="text" id="shareUrlDisplay" class="form-control share-url-input" readonly>
+                            <button type="button" id="copyShareUrlBtn" class="btn btn-small">Copy</button>
+                        </div>
+                    </div>
+                    <div id="shareQrCode" class="share-qr-container"></div>
+                    <p id="shareExpiry" class="share-expiry"></p>
+                </div>
+                <div class="form-actions">
+                    <button type="button" id="closeShareBtn" class="btn btn-secondary">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/sql-wasm.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
+    <script src="js/utils.js"></script>
+    <script src="js/database.js"></script>
+    <script src="js/ui.js"></script>
+    <script src="js/sync.js"></script>
+    <script src="js/supabase-adapter.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
