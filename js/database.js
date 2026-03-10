@@ -193,20 +193,6 @@ const Database = {
             )
         `);
 
-        this.db.run(`
-            CREATE TABLE IF NOT EXISTS products (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                selling_price DECIMAL(10,2) NOT NULL DEFAULT 0,
-                tax_rate DECIMAL(8,4) NOT NULL DEFAULT 0,
-                cost_of_goods DECIMAL(10,2) NOT NULL DEFAULT 0,
-                is_discontinued INTEGER NOT NULL DEFAULT 0,
-                sku TEXT,
-                notes TEXT,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-        `);
-
         // Create default "Monthly Expenses" folder
         this.db.run('INSERT OR IGNORE INTO category_folders (name, folder_type, sort_order) VALUES (?, ?, ?)', ['Monthly Expenses', 'payable', 0]);
 
@@ -503,25 +489,6 @@ const Database = {
                 FOREIGN KEY (category_id) REFERENCES categories(id)
             )
         `);
-
-        // === Create products table ===
-        this.db.run(`
-            CREATE TABLE IF NOT EXISTS products (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                selling_price DECIMAL(10,2) NOT NULL DEFAULT 0,
-                tax_rate DECIMAL(8,4) NOT NULL DEFAULT 0,
-                cost_of_goods DECIMAL(10,2) NOT NULL DEFAULT 0,
-                is_discontinued INTEGER NOT NULL DEFAULT 0,
-                sku TEXT,
-                notes TEXT,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-        `);
-
-        // === Add is_discontinued column to products ===
-        try { this.db.exec('SELECT is_discontinued FROM products LIMIT 1'); }
-        catch (e) { this.db.run('ALTER TABLE products ADD COLUMN is_discontinued INTEGER NOT NULL DEFAULT 0'); }
     },
 
     // ==================== FOLDER OPERATIONS ====================
@@ -1745,8 +1712,6 @@ const Database = {
         this.db.run('DELETE FROM loans WHERE id = ?', [id]);
         this.db.run('DELETE FROM loan_skipped_payments WHERE loan_id = ?', [id]);
         this.db.run('DELETE FROM loan_payment_overrides WHERE loan_id = ?', [id]);
-        // Remove all auto-created loan transactions (payables and receipt)
-        this.db.run("DELETE FROM transactions WHERE source_type IN ('loan_payable', 'loan_receipt') AND source_id = ?", [id]);
         this.autoSave();
     },
 
@@ -1845,17 +1810,6 @@ const Database = {
         return result;
     },
 
-    /**
-     * Check if a loan_payable transaction already exists for a loan in a given month
-     */
-    hasLoanPayableForMonth(loanId, month) {
-        const result = this.db.exec(
-            "SELECT 1 FROM transactions WHERE source_type = 'loan_payable' AND source_id = ? AND month_due = ? LIMIT 1",
-            [loanId, month]
-        );
-        return result.length > 0 && result[0].values.length > 0;
-    },
-
     // ==================== BUDGET EXPENSES ====================
 
     /**
@@ -1951,50 +1905,6 @@ const Database = {
         `, [month, month]);
         if (results.length === 0) return [];
         return this.rowsToObjects(results[0]);
-    },
-
-    /**
-     * Sync the "Monthly Expenses" folder with active budget expenses.
-     * Active budget expenses with a linked category → category placed in the folder.
-     * Inactive or unlinked budget expenses → category removed from the folder.
-     */
-    syncMonthlyExpensesFolder() {
-        // Find the "Monthly Expenses" folder
-        const folderResults = this.db.exec("SELECT id FROM category_folders WHERE name = 'Monthly Expenses'");
-        if (folderResults.length === 0) return;
-        const folderId = folderResults[0].values[0][0];
-
-        const now = new Date();
-        const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-
-        // Get all budget expenses with linked categories
-        const allBudget = this.getBudgetExpenses();
-
-        // Collect category IDs that should be in the folder (active + has category)
-        const activeCatIds = new Set();
-        const allBudgetCatIds = new Set();
-        for (const exp of allBudget) {
-            if (!exp.category_id) continue;
-            allBudgetCatIds.add(exp.category_id);
-            const isActive = exp.start_month <= currentMonth && (!exp.end_month || exp.end_month >= currentMonth);
-            if (isActive) {
-                activeCatIds.add(exp.category_id);
-            }
-        }
-
-        // Move active budget categories into the folder
-        for (const catId of activeCatIds) {
-            this.db.run('UPDATE categories SET folder_id = ? WHERE id = ? AND (folder_id IS NULL OR folder_id != ?)', [folderId, catId, folderId]);
-        }
-
-        // Remove inactive budget categories from the folder (only if they're budget-linked)
-        for (const catId of allBudgetCatIds) {
-            if (!activeCatIds.has(catId)) {
-                this.db.run('UPDATE categories SET folder_id = NULL WHERE id = ? AND folder_id = ?', [catId, folderId]);
-            }
-        }
-
-        this.autoSave();
     },
 
     // ==================== BREAK-EVEN CONFIG ====================
@@ -2860,48 +2770,6 @@ const Database = {
     },
 
     // ==================== HELPERS ====================
-
-    // ==================== PRODUCT OPERATIONS ====================
-
-    getProducts() {
-        const results = this.db.exec('SELECT * FROM products ORDER BY name ASC');
-        if (results.length === 0) return [];
-        return this.rowsToObjects(results[0]);
-    },
-
-    getProductById(id) {
-        const results = this.db.exec('SELECT * FROM products WHERE id = ?', [id]);
-        if (results.length === 0) return null;
-        return this.rowsToObjects(results[0])[0];
-    },
-
-    addProduct(name, sellingPrice, taxRate, costOfGoods, sku, notes) {
-        this.db.run(
-            'INSERT INTO products (name, selling_price, tax_rate, cost_of_goods, sku, notes) VALUES (?, ?, ?, ?, ?, ?)',
-            [name.trim(), sellingPrice, taxRate, costOfGoods, sku || null, notes || null]
-        );
-        const result = this.db.exec('SELECT last_insert_rowid() as id');
-        this.autoSave();
-        return result[0].values[0][0];
-    },
-
-    updateProduct(id, name, sellingPrice, taxRate, costOfGoods, sku, notes) {
-        this.db.run(
-            'UPDATE products SET name = ?, selling_price = ?, tax_rate = ?, cost_of_goods = ?, sku = ?, notes = ? WHERE id = ?',
-            [name.trim(), sellingPrice, taxRate, costOfGoods, sku || null, notes || null, id]
-        );
-        this.autoSave();
-    },
-
-    deleteProduct(id) {
-        this.db.run('DELETE FROM products WHERE id = ?', [id]);
-        this.autoSave();
-    },
-
-    toggleProductDiscontinued(id) {
-        this.db.run('UPDATE products SET is_discontinued = CASE WHEN is_discontinued = 1 THEN 0 ELSE 1 END WHERE id = ?', [id]);
-        this.autoSave();
-    },
 
     /**
      * Convert sql.js result rows to objects

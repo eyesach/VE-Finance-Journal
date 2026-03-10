@@ -9,7 +9,6 @@ const App = {
     deleteAssetTargetId: null,
     deleteLoanTargetId: null,
     deleteBudgetExpenseTargetId: null,
-    deleteProductTargetId: null,
     selectedAssetId: null,
     selectedLoanId: null,
     selectedBudgetExpenseId: null,
@@ -106,8 +105,6 @@ const App = {
      * Refresh all UI components
      */
     refreshAll() {
-        Database.syncMonthlyExpensesFolder();
-        this.syncLoanPayableEntries();
         this.refreshCategories();
         this.refreshTransactions();
         this.refreshSummary();
@@ -142,11 +139,6 @@ const App = {
         const beTab = document.getElementById('breakevenTab');
         if (beTab && beTab.style.display !== 'none') {
             this.refreshBreakeven();
-        }
-        // Refresh Products tab if visible
-        const productsTab = document.getElementById('productsTab');
-        if (productsTab && productsTab.style.display !== 'none') {
-            this.refreshProducts();
         }
     },
 
@@ -707,7 +699,7 @@ const App = {
             btn.classList.toggle('active', btn.dataset.tab === tab);
         });
 
-        const tabs = ['journalTab', 'cashflowTab', 'pnlTab', 'balancesheetTab', 'assetsTab', 'loanTab', 'budgetTab', 'breakevenTab', 'projectedsalesTab', 'productsTab'];
+        const tabs = ['journalTab', 'cashflowTab', 'pnlTab', 'balancesheetTab', 'assetsTab', 'loanTab', 'budgetTab', 'breakevenTab', 'projectedsalesTab'];
         tabs.forEach(id => {
             const el = document.getElementById(id);
             if (el) el.style.display = 'none';
@@ -737,9 +729,6 @@ const App = {
         } else if (tab === 'projectedsales') {
             document.getElementById('projectedsalesTab').style.display = 'block';
             this.refreshProjectedSales();
-        } else if (tab === 'products') {
-            document.getElementById('productsTab').style.display = 'block';
-            this.refreshProducts();
         } else {
             document.getElementById('journalTab').style.display = 'block';
         }
@@ -1456,22 +1445,6 @@ const App = {
         });
         document.getElementById('cancelLoanConfigBtn').addEventListener('click', () => UI.hideModal('loanConfigModal'));
 
-        // Loan receipt checkbox toggle
-        document.getElementById('loanAutoCreateReceipt').addEventListener('change', (e) => {
-            document.getElementById('loanReceiptFields').style.display = e.target.checked ? '' : 'none';
-        });
-
-        // Sync receipt month defaults when start date changes
-        document.getElementById('loanStartDate').addEventListener('change', (e) => {
-            if (e.target.value && document.getElementById('loanAutoCreateReceipt').checked) {
-                const m = e.target.value.substring(0, 7);
-                const dueFld = document.getElementById('loanReceiptMonthDue');
-                const paidFld = document.getElementById('loanReceiptMonthPaid');
-                if (!dueFld.value) dueFld.value = m;
-                if (!paidFld.value) paidFld.value = m;
-            }
-        });
-
         // Delete loan modal
         document.getElementById('confirmDeleteLoanBtn').addEventListener('click', () => this.confirmDeleteLoan());
         document.getElementById('cancelDeleteLoanBtn').addEventListener('click', () => {
@@ -1586,10 +1559,6 @@ const App = {
         });
         document.getElementById('cancelBudgetExpenseBtn').addEventListener('click', () => UI.hideModal('budgetExpenseModal'));
 
-        // Budget category mode toggle (existing vs new)
-        document.getElementById('budgetCatModeExisting').addEventListener('click', () => this._setBudgetCatMode('existing'));
-        document.getElementById('budgetCatModeNew').addEventListener('click', () => this._setBudgetCatMode('new'));
-
         // Delete budget expense modal
         document.getElementById('confirmDeleteBudgetExpenseBtn').addEventListener('click', () => this.confirmDeleteBudgetExpense());
         document.getElementById('cancelDeleteBudgetExpenseBtn').addEventListener('click', () => {
@@ -1703,45 +1672,6 @@ const App = {
                 document.getElementById('psTradeshowCm').textContent = Utils.formatCurrency(price - cogs);
             });
         });
-        // ==================== PRODUCTS TAB ====================
-        document.getElementById('addProductBtn').addEventListener('click', () => this.openProductModal());
-        document.getElementById('productForm').addEventListener('submit', (e) => {
-            e.preventDefault();
-            this.handleSaveProduct();
-        });
-        document.getElementById('cancelProductBtn').addEventListener('click', () => UI.hideModal('productModal'));
-        document.getElementById('confirmDeleteProductBtn').addEventListener('click', () => this.confirmDeleteProduct());
-        document.getElementById('cancelDeleteProductBtn').addEventListener('click', () => {
-            UI.hideModal('deleteProductModal');
-            this.deleteProductTargetId = null;
-        });
-
-        // Live preview updates in product modal
-        ['productSellingPrice', 'productTaxRate', 'productCogs'].forEach(id => {
-            document.getElementById(id).addEventListener('input', () => this._updateProductPreview());
-        });
-
-        // Products table click delegation
-        document.getElementById('productsTableContainer').addEventListener('click', (e) => {
-            const toggleBtn = e.target.closest('.toggle-product-btn');
-            const editBtn = e.target.closest('.edit-product-btn');
-            const deleteBtn = e.target.closest('.delete-product-btn');
-            if (toggleBtn) {
-                Database.toggleProductDiscontinued(parseInt(toggleBtn.dataset.id));
-                this.refreshProducts();
-                return;
-            }
-            if (editBtn) {
-                this.handleEditProduct(parseInt(editBtn.dataset.id));
-                return;
-            }
-            if (deleteBtn) {
-                this.deleteProductTargetId = parseInt(deleteBtn.dataset.id);
-                UI.showModal('deleteProductModal');
-                return;
-            }
-        });
-
         // Per-tab view mode toggles (P&L and Cashflow each have their own)
         const pnlViewMode = document.getElementById('pnlViewMode');
         if (pnlViewMode) {
@@ -3260,27 +3190,13 @@ const App = {
             document.getElementById('loanStartDate').value = Utils.getTodayDate();
         }
 
-        // Show auto-create options only for new loans
+        // Show auto-create checkbox only for new loans
         const autoCreateGroup = document.getElementById('loanAutoCreate').closest('.form-group');
-        const autoCreateReceiptGroup = document.getElementById('loanAutoCreateReceipt').closest('.form-group');
-        const receiptFields = document.getElementById('loanReceiptFields');
         if (editId) {
             autoCreateGroup.style.display = 'none';
-            autoCreateReceiptGroup.style.display = 'none';
-            receiptFields.style.display = 'none';
         } else {
             autoCreateGroup.style.display = '';
             document.getElementById('loanAutoCreate').checked = true;
-            autoCreateReceiptGroup.style.display = '';
-            document.getElementById('loanAutoCreateReceipt').checked = true;
-            receiptFields.style.display = '';
-            // Default receipt months from start date
-            const startVal = document.getElementById('loanStartDate').value;
-            if (startVal) {
-                const m = startVal.substring(0, 7);
-                document.getElementById('loanReceiptMonthDue').value = m;
-                document.getElementById('loanReceiptMonthPaid').value = m;
-            }
         }
 
         UI.showModal('loanConfigModal');
@@ -3313,9 +3229,6 @@ const App = {
             this.selectedLoanId = loanId;
             if (document.getElementById('loanAutoCreate').checked) {
                 this._autoCreateLoanBudgetAndCategory(loanId, name, params);
-            }
-            if (document.getElementById('loanAutoCreateReceipt').checked) {
-                this._autoCreateLoanReceiptTransaction(loanId, name, params);
             }
             UI.showNotification('Loan added', 'success');
         }
@@ -3383,97 +3296,9 @@ const App = {
         );
     },
 
-    /**
-     * Auto-create a receivable transaction for receiving the loan principal
-     */
-    _autoCreateLoanReceiptTransaction(loanId, loanName, params) {
-        const monthDue = document.getElementById('loanReceiptMonthDue').value || params.start_date.substring(0, 7);
-        const monthPaid = document.getElementById('loanReceiptMonthPaid').value || null;
-
-        // Find or create a category for the loan (reuse if already created by budget auto-create)
-        let categories = Database.getCategories();
-        let cat = categories.find(c => c.name === loanName);
-        let catId;
-        if (!cat) {
-            catId = Database.addCategory(loanName, false, null, 'receivable');
-        } else {
-            catId = cat.id;
-        }
-
-        const status = monthPaid ? 'received' : 'pending';
-
-        Database.addTransaction({
-            entry_date: params.start_date,
-            category_id: catId,
-            item_description: `${loanName} - Loan Principal`,
-            amount: params.principal,
-            transaction_type: 'receivable',
-            status: status,
-            date_processed: status === 'received' ? params.start_date : null,
-            month_due: monthDue,
-            month_paid: monthPaid,
-            source_type: 'loan_receipt',
-            source_id: loanId,
-            notes: `Auto-created from loan: ${loanName}`
-        });
-    },
-
-    /**
-     * Sync loan payable entries for all months up to and including the current month.
-     * For each active loan, creates any missing loan_payable transactions for past and current months.
-     */
-    syncLoanPayableEntries() {
-        const loans = Database.getLoans();
-        if (loans.length === 0) return;
-
-        const currentMonth = Utils.getTodayDate().substring(0, 7);
-
-        for (const loan of loans) {
-            const skipped = Database.getSkippedPayments(loan.id);
-            const overrides = Database.getLoanPaymentOverrides(loan.id);
-            const schedule = Utils.computeAmortizationSchedule(
-                { principal: loan.principal, annual_rate: loan.annual_rate,
-                  payments_per_year: loan.payments_per_year, term_months: loan.term_months,
-                  start_date: loan.start_date, first_payment_date: loan.first_payment_date },
-                skipped, overrides
-            );
-
-            // Find or create category (once per loan)
-            let categories = Database.getCategories();
-            let cat = categories.find(c => c.name === loan.name);
-            let catId;
-            if (!cat) {
-                const firstPmt = schedule.find(p => !p.skipped);
-                catId = Database.addCategory(loan.name, true, firstPmt ? firstPmt.payment : 0, 'payable');
-            } else {
-                catId = cat.id;
-            }
-
-            for (const pmt of schedule) {
-                if (pmt.month > currentMonth) break;
-                if (pmt.skipped) continue;
-                if (Database.hasLoanPayableForMonth(loan.id, pmt.month)) continue;
-
-                Database.addTransaction({
-                    entry_date: pmt.month + '-01',
-                    category_id: catId,
-                    item_description: `${loan.name} Loan Payable`,
-                    amount: pmt.payment,
-                    transaction_type: 'payable',
-                    status: 'pending',
-                    month_due: pmt.month,
-                    source_type: 'loan_payable',
-                    source_id: loan.id,
-                    notes: `Auto-created from loan — Payment ${pmt.number}`
-                });
-            }
-        }
-    },
-
     // ==================== BUDGET HANDLERS ====================
 
     refreshBudget() {
-        Database.syncMonthlyExpensesFolder();
         const expenses = Database.getBudgetExpenses();
         UI.renderBudgetTab(expenses, this.selectedBudgetExpenseId);
     },
@@ -3483,9 +3308,6 @@ const App = {
         document.getElementById('editingBudgetExpenseId').value = '';
         document.getElementById('budgetExpenseModalTitle').textContent = 'Add Budget Expense';
         document.getElementById('saveBudgetExpenseBtn').textContent = 'Add Expense';
-
-        // Reset category mode to existing
-        this._setBudgetCatMode('existing');
 
         // Populate category dropdown
         const catSelect = document.getElementById('budgetExpenseCategory');
@@ -3502,46 +3324,13 @@ const App = {
         this._populateBudgetYearDropdowns();
 
         if (!editId) {
-            // Auto-populate start/end from global timeline settings
-            const timeline = Database.getTimeline();
-            if (timeline.start) {
-                const [sYear, sMonth] = timeline.start.split('-');
-                document.getElementById('budgetStartMonth').value = sMonth;
-                document.getElementById('budgetStartYear').value = sYear;
-            } else {
-                const [year, month] = Utils.getCurrentMonth().split('-');
-                document.getElementById('budgetStartMonth').value = month;
-                document.getElementById('budgetStartYear').value = year;
-            }
-            if (timeline.end) {
-                const [eYear, eMonth] = timeline.end.split('-');
-                document.getElementById('budgetEndMonth').value = eMonth;
-                document.getElementById('budgetEndYear').value = eYear;
-            }
+            const [year, month] = Utils.getCurrentMonth().split('-');
+            document.getElementById('budgetStartMonth').value = month;
+            document.getElementById('budgetStartYear').value = year;
         }
 
         UI.showModal('budgetExpenseModal');
         document.getElementById('budgetExpenseName').focus();
-    },
-
-    _setBudgetCatMode(mode) {
-        const existingBtn = document.getElementById('budgetCatModeExisting');
-        const newBtn = document.getElementById('budgetCatModeNew');
-        const catSelect = document.getElementById('budgetExpenseCategory');
-        const newInput = document.getElementById('budgetNewCategoryName');
-        if (mode === 'new') {
-            existingBtn.classList.remove('active');
-            newBtn.classList.add('active');
-            catSelect.style.display = 'none';
-            newInput.style.display = '';
-            newInput.value = '';
-        } else {
-            newBtn.classList.remove('active');
-            existingBtn.classList.add('active');
-            catSelect.style.display = '';
-            newInput.style.display = 'none';
-            newInput.value = '';
-        }
     },
 
     _populateBudgetYearDropdowns() {
@@ -3568,25 +3357,9 @@ const App = {
         const startYear = document.getElementById('budgetStartYear').value;
         const endMonth = document.getElementById('budgetEndMonth').value;
         const endYear = document.getElementById('budgetEndYear').value;
+        const categoryId = document.getElementById('budgetExpenseCategory').value || null;
         const notes = document.getElementById('budgetExpenseNotes').value.trim() || null;
         const editingId = document.getElementById('editingBudgetExpenseId').value;
-
-        // Determine category: existing selection or create new
-        const isNewCatMode = document.getElementById('budgetCatModeNew').classList.contains('active');
-        let categoryId = null;
-        if (isNewCatMode) {
-            const newCatName = document.getElementById('budgetNewCategoryName').value.trim();
-            if (newCatName) {
-                try {
-                    categoryId = Database.addCategory(newCatName, true, amount, 'payable');
-                } catch (err) {
-                    UI.showNotification('Failed to create category: ' + err.message, 'error');
-                    return;
-                }
-            }
-        } else {
-            categoryId = document.getElementById('budgetExpenseCategory').value || null;
-        }
 
         if (!name || isNaN(amount) || amount <= 0) {
             UI.showNotification('Please enter a name and valid amount', 'error');
@@ -5632,93 +5405,6 @@ const App = {
             console.error('Failed to remove member:', err);
             UI.showNotification('Failed to remove member: ' + err.message, 'error');
         }
-    },
-
-    // ==================== PRODUCTS TAB ====================
-
-    refreshProducts() {
-        const products = Database.getProducts();
-        UI.renderProductsTab(products);
-    },
-
-    openProductModal(editId) {
-        document.getElementById('productForm').reset();
-        document.getElementById('editingProductId').value = '';
-        document.getElementById('productModalTitle').textContent = 'Add Product';
-        document.getElementById('saveProductBtn').textContent = 'Add Product';
-        document.getElementById('productTaxRate').value = '0';
-        this._updateProductPreview();
-        UI.showModal('productModal');
-    },
-
-    handleEditProduct(id) {
-        const product = Database.getProductById(id);
-        if (!product) return;
-
-        this.openProductModal(id);
-        document.getElementById('editingProductId').value = product.id;
-        document.getElementById('productName').value = product.name;
-        document.getElementById('productSku').value = product.sku || '';
-        document.getElementById('productSellingPrice').value = product.selling_price;
-        document.getElementById('productTaxRate').value = product.tax_rate || 0;
-        document.getElementById('productCogs').value = product.cost_of_goods;
-        document.getElementById('productNotes').value = product.notes || '';
-        document.getElementById('productModalTitle').textContent = 'Edit Product';
-        document.getElementById('saveProductBtn').textContent = 'Save Changes';
-        this._updateProductPreview();
-    },
-
-    handleSaveProduct() {
-        const name = document.getElementById('productName').value.trim();
-        const sellingPrice = parseFloat(document.getElementById('productSellingPrice').value) || 0;
-        const taxRate = parseFloat(document.getElementById('productTaxRate').value) || 0;
-        const cogs = parseFloat(document.getElementById('productCogs').value) || 0;
-        const sku = document.getElementById('productSku').value.trim();
-        const notes = document.getElementById('productNotes').value.trim();
-        const editingId = document.getElementById('editingProductId').value;
-
-        if (!name) {
-            UI.showNotification('Product name is required', 'error');
-            return;
-        }
-
-        try {
-            if (editingId) {
-                Database.updateProduct(parseInt(editingId), name, sellingPrice, taxRate, cogs, sku, notes);
-                UI.showNotification('Product updated', 'success');
-            } else {
-                Database.addProduct(name, sellingPrice, taxRate, cogs, sku, notes);
-                UI.showNotification('Product added', 'success');
-            }
-            UI.hideModal('productModal');
-            this.refreshProducts();
-        } catch (error) {
-            UI.showNotification('Failed to save product', 'error');
-        }
-    },
-
-    confirmDeleteProduct() {
-        if (this.deleteProductTargetId) {
-            Database.deleteProduct(this.deleteProductTargetId);
-            this.deleteProductTargetId = null;
-            UI.hideModal('deleteProductModal');
-            UI.showNotification('Product deleted', 'success');
-            this.refreshProducts();
-        }
-    },
-
-    _updateProductPreview() {
-        const price = parseFloat(document.getElementById('productSellingPrice').value) || 0;
-        const taxRate = parseFloat(document.getElementById('productTaxRate').value) || 0;
-        const cogs = parseFloat(document.getElementById('productCogs').value) || 0;
-
-        const afterTax = price * (1 + taxRate / 100);
-        const profit = price - cogs;
-        const margin = price > 0 ? (profit / price) * 100 : 0;
-
-        document.getElementById('productPreviewAfterTax').textContent = Utils.formatCurrency(afterTax);
-        document.getElementById('productPreviewProfit').textContent = Utils.formatCurrency(profit);
-        document.getElementById('productPreviewMargin').textContent = margin.toFixed(1) + '%';
     },
 
     copyToClipboard(text) {

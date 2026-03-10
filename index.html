@@ -178,7 +178,6 @@
             <button class="main-tab" data-tab="budget">Budget</button>
             <button class="main-tab" data-tab="breakeven">Break-Even</button>
             <button class="main-tab" data-tab="projectedsales">Projected Sales</button>
-            <button class="main-tab" data-tab="products">Products</button>
         </nav>
 
         <!-- Journal Tab -->
@@ -650,88 +649,6 @@
             </section>
         </div>
 
-        <!-- Products Tab -->
-        <div id="productsTab" style="display: none;">
-            <section class="products-section">
-                <div class="products-header">
-                    <h3>Product Catalog</h3>
-                    <div class="products-controls">
-                        <button id="addProductBtn" class="btn btn-primary btn-small">+ Add Product</button>
-                    </div>
-                </div>
-                <div id="productsSummaryCards" class="products-summary-cards"></div>
-                <div id="productsTableContainer" class="products-table-container">
-                    <p class="empty-state">No products yet. Click "+ Add Product" to begin.</p>
-                </div>
-            </section>
-        </div>
-
-        <!-- Product Add/Edit Modal -->
-        <div id="productModal" class="modal">
-            <div class="modal-content">
-                <h3 id="productModalTitle">Add Product</h3>
-                <form id="productForm">
-                    <input type="hidden" id="editingProductId" value="">
-                    <div class="form-group">
-                        <label for="productName">Product Name</label>
-                        <input type="text" id="productName" required placeholder="e.g., Widget A">
-                    </div>
-                    <div class="form-group">
-                        <label for="productSku">SKU <span class="label-hint">(optional)</span></label>
-                        <input type="text" id="productSku" placeholder="e.g., WDG-001">
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="productSellingPrice">Selling Price</label>
-                            <input type="number" id="productSellingPrice" step="0.01" min="0" placeholder="0.00" required>
-                        </div>
-                        <div class="form-group">
-                            <label for="productTaxRate">Tax Rate (%)</label>
-                            <input type="number" id="productTaxRate" step="0.01" min="0" max="100" placeholder="0.00" value="0">
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label for="productCogs">Cost of Goods (per unit)</label>
-                        <input type="number" id="productCogs" step="0.01" min="0" placeholder="0.00" required>
-                    </div>
-                    <div class="product-preview">
-                        <div class="product-preview-row">
-                            <span>Price After Tax:</span>
-                            <span id="productPreviewAfterTax">$0.00</span>
-                        </div>
-                        <div class="product-preview-row">
-                            <span>Profit Per Unit:</span>
-                            <span id="productPreviewProfit">$0.00</span>
-                        </div>
-                        <div class="product-preview-row">
-                            <span>Gross Margin:</span>
-                            <span id="productPreviewMargin">0.0%</span>
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label for="productNotes">Notes <span class="label-hint">(optional)</span></label>
-                        <input type="text" id="productNotes" placeholder="Optional notes">
-                    </div>
-                    <div class="form-actions">
-                        <button type="button" id="cancelProductBtn" class="btn btn-secondary">Cancel</button>
-                        <button type="submit" id="saveProductBtn" class="btn btn-primary">Add Product</button>
-                    </div>
-                </form>
-            </div>
-        </div>
-
-        <!-- Delete Product Confirmation -->
-        <div id="deleteProductModal" class="modal">
-            <div class="modal-content">
-                <h3>Delete Product</h3>
-                <p>Are you sure you want to delete this product?</p>
-                <div class="form-actions">
-                    <button type="button" id="cancelDeleteProductBtn" class="btn btn-secondary">Cancel</button>
-                    <button type="button" id="confirmDeleteProductBtn" class="btn btn-danger">Delete</button>
-                </div>
-            </div>
-        </div>
-
         <!-- Break-Even Config Modal -->
         <div id="beConfigModal" class="modal">
             <div class="modal-content modal-wide">
@@ -886,14 +803,9 @@
                         </div>
                         <div class="form-group">
                             <label for="budgetExpenseCategory">Journal Category</label>
-                            <div class="budget-category-toggle">
-                                <button type="button" id="budgetCatModeExisting" class="btn btn-sm btn-toggle active">Use Existing</button>
-                                <button type="button" id="budgetCatModeNew" class="btn btn-sm btn-toggle">Create New</button>
-                            </div>
                             <select id="budgetExpenseCategory">
                                 <option value="">None (won't record)</option>
                             </select>
-                            <input type="text" id="budgetNewCategoryName" placeholder="New category name" style="display:none;">
                         </div>
                     </div>
                     <div class="form-row">
@@ -1207,22 +1119,6 @@
                             <input type="checkbox" id="loanAutoCreate" checked>
                             Auto-create budget expense & journal category
                         </label>
-                    </div>
-                    <div class="form-group">
-                        <label class="checkbox-label">
-                            <input type="checkbox" id="loanAutoCreateReceipt" checked>
-                            Auto-create loan receipt transaction
-                        </label>
-                    </div>
-                    <div id="loanReceiptFields" class="form-row" style="margin-top: 4px;">
-                        <div class="form-group">
-                            <label for="loanReceiptMonthDue">Month Due</label>
-                            <input type="month" id="loanReceiptMonthDue">
-                        </div>
-                        <div class="form-group">
-                            <label for="loanReceiptMonthPaid">Month Paid</label>
-                            <input type="month" id="loanReceiptMonthPaid">
-                        </div>
                     </div>
                     <div class="form-actions">
                         <button type="button" id="cancelLoanConfigBtn" class="btn btn-secondary">Cancel</button>
