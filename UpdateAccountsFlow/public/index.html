@@ -1,0 +1,873 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VE Sales Dashboard</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #f8f9fa; color: #212529; padding: 24px;
+  }
+  .container { max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 1.6rem; margin-bottom: 4px; color: #4a90a4; }
+  .subtitle { color: #6c757d; margin-bottom: 20px; font-size: 0.9rem; }
+
+  /* Controls */
+  .controls {
+    display: flex; flex-wrap: wrap; gap: 12px; align-items: center;
+    margin-bottom: 20px; padding: 16px; background: #fff;
+    border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  }
+  .control-group { display: flex; flex-direction: column; gap: 4px; }
+  .control-group label { font-size: 0.75rem; text-transform: uppercase; color: #6c757d; letter-spacing: 0.5px; font-weight: 600; }
+  .controls select, .controls input[type="date"] {
+    padding: 6px 10px; border: 1px solid #dee2e6; border-radius: 4px; font-size: 0.85rem;
+    background: #fff;
+  }
+  .controls select:focus, .controls input:focus { outline: none; border-color: #4a90a4; }
+  .spacer { flex: 1; }
+
+  /* Summary cards */
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 20px; }
+  .card {
+    background: #fff; border-radius: 8px; padding: 18px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1); text-align: center;
+  }
+  .card .label { font-size: 0.75rem; text-transform: uppercase; color: #6c757d; letter-spacing: 0.5px; margin-bottom: 6px; }
+  .card .value { font-size: 1.4rem; font-weight: 700; }
+  .card .value.pretax { color: #4a90a4; }
+  .card .value.tax { color: #dc3545; }
+  .card .value.total { color: #28a745; }
+  .card .sub { font-size: 0.7rem; color: #6c757d; margin-top: 4px; }
+
+  /* Source breakdown */
+  .source-breakdown { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 20px; }
+  .source-card {
+    background: #fff; border-radius: 8px; padding: 14px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  }
+  .source-card h3 { font-size: 0.85rem; color: #4a90a4; margin-bottom: 8px; }
+  .source-card .stat { display: flex; justify-content: space-between; padding: 3px 0; font-size: 0.82rem; }
+  .source-card .stat .label { color: #6c757d; }
+
+  /* Scrape section */
+  .scrape-section {
+    background: #fff; border-radius: 8px; padding: 16px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 20px;
+  }
+  .scrape-section h2 { font-size: 1rem; color: #333; margin-bottom: 10px; }
+  .scrape-stats { font-size: 0.85rem; color: #6c757d; margin-bottom: 10px; }
+  .scrape-btn, .refresh-btn {
+    background: #4a90a4; color: #fff; border: none; padding: 10px 24px;
+    border-radius: 6px; font-size: 0.9rem; cursor: pointer; font-weight: 600;
+  }
+  .scrape-btn:hover, .refresh-btn:hover { background: #3d7a8e; }
+  .scrape-btn:disabled, .refresh-btn:disabled { background: #a0c4d0; cursor: not-allowed; }
+  .refresh-btn { background: #6c757d; padding: 6px 14px; font-size: 0.8rem; }
+  .refresh-btn:hover { background: #565e64; }
+  .refresh-btn.spinning::before { content: ''; display: inline-block; width: 12px; height: 12px; border: 2px solid #fff; border-top-color: transparent; border-radius: 50%; animation: spin 0.6s linear infinite; margin-right: 6px; vertical-align: middle; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .progress-bar-container {
+    margin-top: 10px; background: #eef0f2; border-radius: 4px; height: 8px;
+    display: none; overflow: hidden;
+  }
+  .progress-bar-container.active { display: block; }
+  .progress-bar { height: 100%; background: #4a90a4; border-radius: 4px; width: 0%; transition: width 0.3s; }
+  .scrape-log {
+    margin-top: 8px; max-height: 150px; overflow-y: auto; font-size: 0.78rem;
+    color: #6c757d; font-family: monospace; display: none;
+  }
+  .scrape-log.active { display: block; }
+
+  /* Tables */
+  .section { margin-bottom: 24px; }
+  .section h2 {
+    font-size: 1rem; margin-bottom: 10px; color: #333;
+    border-bottom: 2px solid #4a90a4; padding-bottom: 5px;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .section h2 .count { font-size: 0.8rem; color: #6c757d; font-weight: 400; }
+  table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+  th {
+    background: #4a90a4; color: #fff; padding: 9px 12px; text-align: left;
+    font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.5px; cursor: pointer; user-select: none;
+    white-space: nowrap;
+  }
+  th:hover { background: #3d7a8e; }
+  th .sort-arrow { margin-left: 4px; font-size: 0.65rem; }
+  td { padding: 8px 12px; border-bottom: 1px solid #eef0f2; font-size: 0.85rem; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: #f0f4f8; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .source-badge {
+    display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 0.7rem; font-weight: 600;
+  }
+  .source-badge.online { background: #d4edda; color: #155724; }
+  .source-badge.tradeshow { background: #cce5ff; color: #004085; }
+  .total-row td { font-weight: 700; background: #eef0f2 !important; }
+  .muted { color: #6c757d; font-style: italic; }
+  .product-num { font-size: 0.7rem; color: #6c757d; }
+  .inferred-badge { font-size: 0.65rem; color: #856404; background: #fff3cd; padding: 1px 5px; border-radius: 3px; margin-left: 4px; }
+  .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+  .status-dot.scraped { background: #28a745; }
+  .status-dot.inferred { background: #ffc107; }
+  .status-dot.unknown { background: #dc3545; }
+
+  /* Product group rows */
+  .group-header td { background: #e8f0f4 !important; font-weight: 600; cursor: pointer; }
+  .group-header td:first-child::before { content: '\25BC '; font-size: 0.65rem; color: #4a90a4; }
+  .group-header.collapsed td:first-child::before { content: '\25B6 '; }
+  .group-child td { padding-left: 28px; }
+  .group-child td:first-child { font-size: 0.8rem; color: #555; }
+  .price-variant { font-size: 0.7rem; color: #6c757d; margin-left: 4px; }
+
+  /* Config tab */
+  .tab-bar { display: flex; gap: 0; margin-bottom: 0; border-bottom: 2px solid #4a90a4; }
+  .tab-btn { padding: 8px 20px; background: #e8f0f4; border: none; cursor: pointer; font-size: 0.85rem; font-weight: 600; color: #4a90a4; border-radius: 6px 6px 0 0; }
+  .tab-btn.active { background: #4a90a4; color: #fff; }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+  .config-section { background: #fff; border-radius: 0 0 8px 8px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 24px; }
+  .group-config-item { display: flex; align-items: center; gap: 10px; padding: 10px; border: 1px solid #eef0f2; border-radius: 6px; margin-bottom: 8px; }
+  .group-config-item .group-name { font-weight: 600; min-width: 180px; }
+  .group-config-item .group-members { flex: 1; font-size: 0.8rem; color: #555; }
+  .group-config-item .group-actions { display: flex; gap: 6px; }
+  .group-config-item .group-actions button { padding: 4px 10px; font-size: 0.75rem; border: 1px solid #dee2e6; border-radius: 4px; cursor: pointer; background: #fff; }
+  .group-config-item .group-actions button:hover { background: #f0f4f8; }
+  .group-config-item .group-actions button.delete { color: #dc3545; border-color: #dc3545; }
+  .btn-primary { padding: 8px 16px; background: #4a90a4; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85rem; }
+  .btn-primary:hover { background: #3d7a8e; }
+  .modal-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.4); z-index: 100; justify-content: center; align-items: center; }
+  .modal-overlay.active { display: flex; }
+  .modal-box { background: #fff; border-radius: 8px; padding: 24px; max-width: 550px; width: 90%; max-height: 80vh; overflow-y: auto; }
+  .modal-box h3 { margin-bottom: 16px; color: #333; }
+  .modal-box label { display: block; font-size: 0.8rem; font-weight: 600; color: #6c757d; margin-bottom: 4px; margin-top: 12px; text-transform: uppercase; }
+  .modal-box input[type="text"] { width: 100%; padding: 8px 10px; border: 1px solid #dee2e6; border-radius: 4px; font-size: 0.85rem; }
+  .modal-box .member-list { margin-top: 8px; }
+  .modal-box .member-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid #eef0f2; border-radius: 4px; margin-bottom: 4px; font-size: 0.82rem; }
+  .modal-box .member-item .remove-member { color: #dc3545; cursor: pointer; font-weight: 700; margin-left: auto; }
+  .modal-box .add-member-row { display: flex; gap: 8px; margin-top: 8px; }
+  .modal-box .add-member-row select { flex: 1; padding: 6px; border: 1px solid #dee2e6; border-radius: 4px; font-size: 0.82rem; }
+  .modal-box .add-member-row button { padding: 6px 12px; }
+  .modal-box .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
+  .modal-box .modal-actions button { padding: 8px 16px; border-radius: 4px; cursor: pointer; font-size: 0.85rem; }
+  .modal-box .modal-actions .btn-cancel { background: #fff; border: 1px solid #dee2e6; }
+  .modal-box .modal-actions .btn-save { background: #4a90a4; color: #fff; border: none; }
+
+  @media (max-width: 768px) {
+    .cards { grid-template-columns: 1fr; }
+    .source-breakdown { grid-template-columns: 1fr; }
+    .controls { flex-direction: column; }
+    body { padding: 12px; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>VE Sales Dashboard</h1>
+  <div class="subtitle" id="subtitle">Loading...</div>
+
+  <!-- Filters -->
+  <div class="controls">
+    <div class="control-group">
+      <label>Source</label>
+      <select id="filterSource">
+        <option value="both">Both</option>
+        <option value="online">Online (Store Manager)</option>
+        <option value="tradeshow">Trade Show (POS)</option>
+      </select>
+    </div>
+    <div class="control-group">
+      <label>From</label>
+      <input type="date" id="filterFrom">
+    </div>
+    <div class="control-group">
+      <label>To</label>
+      <input type="date" id="filterTo">
+    </div>
+    <div class="control-group">
+      <label>&nbsp;</label>
+      <select id="filterPreset">
+        <option value="">Date preset...</option>
+        <option value="all">All time</option>
+        <option value="thisMonth">This month</option>
+        <option value="lastMonth">Last month</option>
+        <option value="thisQuarter">This quarter</option>
+      </select>
+    </div>
+    <div class="spacer"></div>
+    <div class="control-group">
+      <label>Sort by</label>
+      <select id="sortBy">
+        <option value="date-desc">Date (newest)</option>
+        <option value="date-asc">Date (oldest)</option>
+        <option value="total-desc">Total (high)</option>
+        <option value="total-asc">Total (low)</option>
+        <option value="txno">Transaction No</option>
+      </select>
+    </div>
+    <div class="control-group">
+      <label>&nbsp;</label>
+      <button class="refresh-btn" id="refreshBtn" title="Download fresh Excel files from VE Hub">Update Data</button>
+    </div>
+  </div>
+
+  <!-- Summary Cards -->
+  <div class="cards">
+    <div class="card">
+      <div class="label">Pretax Total</div>
+      <div class="value pretax" id="cardPretax">$0.00</div>
+      <div class="sub" id="cardCount">0 transactions</div>
+    </div>
+    <div class="card">
+      <div class="label">Sales Tax</div>
+      <div class="value tax" id="cardTax">$0.00</div>
+    </div>
+    <div class="card">
+      <div class="label">Post-Tax Total</div>
+      <div class="value total" id="cardTotal">$0.00</div>
+      <div class="sub" id="cardExtra"></div>
+    </div>
+  </div>
+
+  <!-- Source Breakdown -->
+  <div class="source-breakdown" id="sourceBreakdown"></div>
+
+  <!-- Smart Scrape Section -->
+  <div class="scrape-section">
+    <h2>Product Data</h2>
+    <div class="scrape-stats" id="scrapeStats">Loading...</div>
+    <button class="scrape-btn" id="scrapeBtn" disabled>Smart Scrape</button>
+    <div class="progress-bar-container" id="progressContainer">
+      <div class="progress-bar" id="progressBar"></div>
+    </div>
+    <div class="scrape-log" id="scrapeLog"></div>
+  </div>
+
+  <!-- Product Breakdown with Tabs -->
+  <div class="section">
+    <h2>Product Breakdown <span class="count" id="productCount"></span>
+      <label style="font-size:0.75rem;font-weight:400;cursor:pointer;display:flex;align-items:center;gap:4px;">
+        <input type="checkbox" id="highlightDupes"> Highlight similar
+      </label>
+    </h2>
+    <table id="productTable">
+      <thead>
+        <tr>
+          <th data-psort="name">Product <span class="sort-arrow"></span></th>
+          <th class="num" data-psort="qty">Qty Sold <span class="sort-arrow"></span></th>
+          <th class="num" data-psort="price">Unit Price <span class="sort-arrow"></span></th>
+          <th class="num" data-psort="revenue">Total Revenue <span class="sort-arrow"></span></th>
+          <th class="num" data-psort="tax">Tax (est.) <span class="sort-arrow"></span></th>
+        </tr>
+      </thead>
+      <tbody id="productBody"></tbody>
+    </table>
+  </div>
+
+  <!-- Transaction Table -->
+  <div class="section">
+    <h2>Transactions <span class="count" id="txCount"></span></h2>
+    <table id="txTable">
+      <thead>
+        <tr>
+          <th data-sort="txno">Tx No <span class="sort-arrow"></span></th>
+          <th data-sort="date">Date <span class="sort-arrow"></span></th>
+          <th data-sort="source">Source <span class="sort-arrow"></span></th>
+          <th>Customer</th>
+          <th class="num" data-sort="subtotal">Subtotal <span class="sort-arrow"></span></th>
+          <th class="num" data-sort="tax">Tax <span class="sort-arrow"></span></th>
+          <th class="num" data-sort="total">Total <span class="sort-arrow"></span></th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody id="txBody"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+// --- State ---
+let allSales = [];
+let cache = {};
+let filtered = [];
+let productSortCol = 'qty', productSortDir = 'desc';
+
+// --- Helpers ---
+function fmt(n) {
+  return '$' + n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+function fmtDate(isoStr) {
+  const d = new Date(isoStr);
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+// --- Data Loading ---
+async function loadData() {
+  const [salesRes, cacheRes] = await Promise.all([
+    fetch('/api/sales').then(r => r.json()),
+    fetch('/api/cache').then(r => r.json()),
+  ]);
+  allSales = salesRes;
+  cache = cacheRes;
+  applyFilters();
+  updateScrapeStats();
+}
+
+// --- Filtering ---
+function applyFilters() {
+  const source = document.getElementById('filterSource').value;
+  const from = document.getElementById('filterFrom').value;
+  const to = document.getElementById('filterTo').value;
+
+  filtered = allSales.filter(s => {
+    if (source !== 'both' && s.source !== source) return false;
+    if (from && s.date < from + 'T00:00:00') return false;
+    if (to && s.date > to + 'T23:59:59.999') return false;
+    return true;
+  });
+
+  applySorting();
+  renderAll();
+}
+
+function applySorting() {
+  const sortBy = document.getElementById('sortBy').value;
+  filtered.sort((a, b) => {
+    switch (sortBy) {
+      case 'date-desc': return new Date(b.date) - new Date(a.date);
+      case 'date-asc': return new Date(a.date) - new Date(b.date);
+      case 'total-desc': return b.total - a.total;
+      case 'total-asc': return a.total - b.total;
+      case 'txno': return String(a.transactionNo).localeCompare(String(b.transactionNo));
+      default: return 0;
+    }
+  });
+}
+
+// --- Rendering ---
+function renderAll() {
+  renderSummary();
+  renderSourceBreakdown();
+  renderTransactions();
+  renderProducts();
+}
+
+function renderSummary() {
+  let subtotal = 0, tax = 0, total = 0, shipping = 0, discount = 0;
+  for (const s of filtered) {
+    subtotal += s.subtotal;
+    tax += s.tax;
+    total += s.total;
+    shipping += s.shipping;
+    discount += s.discount;
+  }
+  document.getElementById('cardPretax').textContent = fmt(subtotal);
+  document.getElementById('cardTax').textContent = fmt(tax);
+  document.getElementById('cardTotal').textContent = fmt(total);
+  document.getElementById('cardCount').textContent = `${filtered.length} transaction${filtered.length !== 1 ? 's' : ''}`;
+
+  const extras = [];
+  if (shipping > 0) extras.push(`Shipping: ${fmt(shipping)}`);
+  if (discount > 0) extras.push(`Discounts: -${fmt(discount)}`);
+  document.getElementById('cardExtra').textContent = extras.join(' | ');
+
+  document.getElementById('subtitle').textContent = `${allSales.length} total transactions loaded`;
+}
+
+function renderSourceBreakdown() {
+  const online = filtered.filter(s => s.source === 'online');
+  const tradeshow = filtered.filter(s => s.source === 'tradeshow');
+  const container = document.getElementById('sourceBreakdown');
+
+  let html = '';
+  if (online.length > 0) {
+    const t = calcTotals(online);
+    html += `<div class="source-card">
+      <h3>Online Sales (Store Manager)</h3>
+      <div class="stat"><span class="label">Transactions</span><span>${t.count}</span></div>
+      <div class="stat"><span class="label">Pretax</span><span>${fmt(t.subtotal)}</span></div>
+      <div class="stat"><span class="label">Tax</span><span>${fmt(t.tax)}</span></div>
+      <div class="stat"><span class="label">Total</span><span>${fmt(t.total)}</span></div>
+    </div>`;
+  }
+  if (tradeshow.length > 0) {
+    const t = calcTotals(tradeshow);
+    html += `<div class="source-card">
+      <h3>Trade Show Sales (POS)</h3>
+      <div class="stat"><span class="label">Transactions</span><span>${t.count}</span></div>
+      <div class="stat"><span class="label">Pretax</span><span>${fmt(t.subtotal)}</span></div>
+      <div class="stat"><span class="label">Tax</span><span>${fmt(t.tax)}</span></div>
+      <div class="stat"><span class="label">Total</span><span>${fmt(t.total)}</span></div>
+    </div>`;
+  }
+  container.innerHTML = html;
+}
+
+function calcTotals(sales) {
+  let subtotal = 0, tax = 0, total = 0;
+  for (const s of sales) { subtotal += s.subtotal; tax += s.tax; total += s.total; }
+  return { subtotal, tax, total, count: sales.length };
+}
+
+function renderTransactions() {
+  const tbody = document.getElementById('txBody');
+  document.getElementById('txCount').textContent = `(${filtered.length})`;
+
+  if (filtered.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#6c757d;padding:20px;">No transactions match filters</td></tr>';
+    return;
+  }
+
+  let html = '';
+  for (const s of filtered) {
+    const items = cache[s.transactionNo];
+    let statusHtml = '';
+    if (items && items.noItems) {
+      statusHtml = '<span class="status-dot scraped"></span>No Items';
+    } else if (items && items.length > 0) {
+      const isInferred = items.some(i => i.inferred);
+      statusHtml = isInferred
+        ? '<span class="status-dot inferred"></span>Inferred'
+        : '<span class="status-dot scraped"></span>Scraped';
+    } else {
+      statusHtml = '<span class="status-dot unknown"></span>Unknown';
+    }
+
+    html += `<tr>
+      <td>${escapeHtml(s.transactionNo)}</td>
+      <td>${fmtDate(s.date)}</td>
+      <td><span class="source-badge ${s.source}">${s.source === 'online' ? 'Online' : 'Trade Show'}</span></td>
+      <td>${escapeHtml(s.billingName)}</td>
+      <td class="num">${fmt(s.subtotal)}</td>
+      <td class="num">${fmt(s.tax)}</td>
+      <td class="num">${fmt(s.total)}</td>
+      <td>${statusHtml}</td>
+    </tr>`;
+  }
+  tbody.innerHTML = html;
+}
+
+function renderProducts() {
+  const tbody = document.getElementById('productBody');
+
+  // Build products keyed by name + price (each unique combo = one row)
+  const map = new Map();
+  let unscrapedSubtotal = 0, unscrapedTax = 0, unscrapedCount = 0;
+  let noItemsSubtotal = 0, noItemsTax = 0, noItemsCount = 0;
+
+  for (const s of filtered) {
+    const items = cache[s.transactionNo];
+    if (items && items.noItems) {
+      noItemsSubtotal += s.subtotal; noItemsTax += s.tax; noItemsCount++;
+    } else if (items && items.length > 0) {
+      for (const item of items) {
+        const price = item.price || 0;
+        const key = (item.name || 'Unknown').toLowerCase().trim() + '|' + price.toFixed(2);
+        if (!map.has(key)) {
+          map.set(key, {
+            name: item.name || 'Unknown',
+            productNumber: item.productNumber || null,
+            price, totalQty: 0, totalRevenue: 0, totalTax: 0,
+            hasInferred: false,
+          });
+        }
+        const entry = map.get(key);
+        entry.totalQty += item.quantity || 1;
+        entry.totalRevenue += item.amount || 0;
+        if (s.subtotal > 0) {
+          entry.totalTax += s.tax * ((item.amount || 0) / s.subtotal);
+        }
+        if (item.inferred) entry.hasInferred = true;
+        if (item.productNumber && !entry.productNumber) entry.productNumber = item.productNumber;
+      }
+    } else {
+      unscrapedSubtotal += s.subtotal; unscrapedTax += s.tax; unscrapedCount++;
+    }
+  }
+
+  const products = [...map.values()];
+  const dir = productSortDir === 'asc' ? 1 : -1;
+  products.sort((a, b) => {
+    switch (productSortCol) {
+      case 'name': return dir * a.name.localeCompare(b.name);
+      case 'qty': return dir * (a.totalQty - b.totalQty);
+      case 'price': return dir * (a.price - b.price);
+      case 'revenue': return dir * (a.totalRevenue - b.totalRevenue);
+      case 'tax': return dir * (a.totalTax - b.totalTax);
+      default: return dir * (a.totalQty - b.totalQty);
+    }
+  });
+
+  // Build highlight color map for similar product names
+  const highlightOn = document.getElementById('highlightDupes').checked;
+  const colorMap = new Map(); // product index → color
+  if (highlightOn) {
+    const palette = [
+      '#fce4ec','#e8f5e9','#e3f2fd','#fff3e0','#f3e5f5',
+      '#e0f7fa','#fff9c4','#fbe9e7','#e8eaf6','#f1f8e9',
+      '#ffe0b2','#b2ebf2','#c8e6c9','#d1c4e9','#ffccbc',
+    ];
+    // Group by name prefix (first 12 chars lowercase)
+    const prefixGroups = new Map();
+    for (let i = 0; i < products.length; i++) {
+      const prefix = products[i].name.toLowerCase().trim().substring(0, 12);
+      if (!prefixGroups.has(prefix)) prefixGroups.set(prefix, []);
+      prefixGroups.get(prefix).push(i);
+    }
+    // Assign colors and build sort-order: grouped items first, then ungrouped
+    const productOrder = new Map(); // index → {group rank, color}
+    let colorIdx = 0;
+    let groupRank = 0;
+    for (const [prefix, indices] of prefixGroups) {
+      if (indices.length > 1) {
+        const color = palette[colorIdx % palette.length];
+        for (const i of indices) {
+          colorMap.set(i, color);
+          productOrder.set(i, groupRank);
+        }
+        colorIdx++;
+        groupRank++;
+      }
+    }
+    // Re-sort: grouped items at top (by group rank, then name), ungrouped below
+    const indexed = products.map((p, i) => ({ p, i }));
+    indexed.sort((a, b) => {
+      const aGrouped = productOrder.has(a.i);
+      const bGrouped = productOrder.has(b.i);
+      if (aGrouped && !bGrouped) return -1;
+      if (!aGrouped && bGrouped) return 1;
+      if (aGrouped && bGrouped) {
+        const rankDiff = productOrder.get(a.i) - productOrder.get(b.i);
+        if (rankDiff !== 0) return rankDiff;
+        return a.p.name.localeCompare(b.p.name);
+      }
+      return 0; // keep existing sort for ungrouped
+    });
+    // Rebuild products array and remap colorMap indices
+    const newColorMap = new Map();
+    const reordered = [];
+    for (let ni = 0; ni < indexed.length; ni++) {
+      reordered.push(indexed[ni].p);
+      if (colorMap.has(indexed[ni].i)) newColorMap.set(ni, colorMap.get(indexed[ni].i));
+    }
+    products.length = 0;
+    products.push(...reordered);
+    colorMap.clear();
+    for (const [k, v] of newColorMap) colorMap.set(k, v);
+  }
+
+  let totalQty = 0, totalRev = 0, totalTax = 0;
+  let html = '';
+
+  for (let i = 0; i < products.length; i++) {
+    const p = products[i];
+    const inferBadge = p.hasInferred ? '<span class="inferred-badge">inferred</span>' : '';
+    const prodNum = p.productNumber ? `<br><span class="product-num">${escapeHtml(p.productNumber)}</span>` : '';
+    const bgStyle = colorMap.has(i) ? ` style="background:${colorMap.get(i)}"` : '';
+    html += `<tr${bgStyle}>
+      <td>${escapeHtml(p.name)}${prodNum} ${inferBadge}</td>
+      <td class="num">${p.totalQty}</td>
+      <td class="num">${fmt(p.price)}</td>
+      <td class="num">${fmt(p.totalRevenue)}</td>
+      <td class="num">${fmt(p.totalTax)}</td>
+    </tr>`;
+    totalQty += p.totalQty;
+    totalRev += p.totalRevenue;
+    totalTax += p.totalTax;
+  }
+
+  if (unscrapedCount > 0) {
+    html += `<tr>
+      <td><span class="muted">Unscraped Orders (${unscrapedCount})</span></td>
+      <td class="num">${unscrapedCount}</td><td class="num"></td>
+      <td class="num">${fmt(unscrapedSubtotal)}</td><td class="num">${fmt(unscrapedTax)}</td>
+    </tr>`;
+    totalQty += unscrapedCount; totalRev += unscrapedSubtotal; totalTax += unscrapedTax;
+  }
+  if (noItemsCount > 0) {
+    html += `<tr>
+      <td><span class="muted">No Items Found (${noItemsCount})</span></td>
+      <td class="num">${noItemsCount}</td><td class="num"></td>
+      <td class="num">${fmt(noItemsSubtotal)}</td><td class="num">${fmt(noItemsTax)}</td>
+    </tr>`;
+    totalQty += noItemsCount; totalRev += noItemsSubtotal; totalTax += noItemsTax;
+  }
+
+  html += `<tr class="total-row">
+    <td>Total</td><td class="num">${totalQty}</td><td class="num"></td>
+    <td class="num">${fmt(totalRev)}</td><td class="num">${fmt(totalTax)}</td>
+  </tr>`;
+
+  tbody.innerHTML = html;
+  document.getElementById('productCount').textContent = `(${products.length} products)`;
+}
+
+// --- Scrape Stats ---
+function updateScrapeStats() {
+  const totalCount = allSales.length;
+  let scrapedCount = 0, inferredCount = 0, noItemsCount = 0;
+  for (const items of Object.values(cache)) {
+    if (items && items.noItems) { noItemsCount++; continue; }
+    if (!Array.isArray(items) || items.length === 0) continue;
+    if (items.some(i => i.inferred)) inferredCount++;
+    else scrapedCount++;
+  }
+  const uncached = totalCount - allSales.filter(s => {
+    const items = cache[s.transactionNo];
+    return (items && items.noItems) || (Array.isArray(items) && items.length > 0);
+  }).length;
+
+  const statsEl = document.getElementById('scrapeStats');
+  let statsHtml = `
+    <span class="status-dot scraped"></span> <strong>${scrapedCount}</strong> scraped &nbsp;
+    <span class="status-dot inferred"></span> <strong>${inferredCount}</strong> inferred &nbsp;`;
+  if (noItemsCount > 0) statsHtml += `<span class="status-dot scraped"></span> <strong>${noItemsCount}</strong> no items &nbsp;`;
+  statsHtml += `<span class="status-dot unknown"></span> <strong>${uncached}</strong> unknown`;
+  statsEl.innerHTML = statsHtml;
+
+  const btn = document.getElementById('scrapeBtn');
+  btn.disabled = uncached === 0;
+  btn.textContent = uncached === 0 ? 'All Matched' : `Smart Scrape (${uncached} remaining)`;
+}
+
+// --- Smart Scrape ---
+function startScrape() {
+  const btn = document.getElementById('scrapeBtn');
+  btn.disabled = true;
+  btn.textContent = 'Scraping...';
+
+  const progressContainer = document.getElementById('progressContainer');
+  const progressBar = document.getElementById('progressBar');
+  const logEl = document.getElementById('scrapeLog');
+  progressContainer.classList.add('active');
+  logEl.classList.add('active');
+  logEl.innerHTML = '';
+  progressBar.style.width = '0%';
+
+  const evtSource = new EventSource('/api/scrape/start');
+  let totalToScrape = 0;
+  let scraped = 0;
+
+  evtSource.addEventListener('progress', (e) => {
+    const data = JSON.parse(e.data);
+    const line = document.createElement('div');
+    line.textContent = data.message;
+    logEl.appendChild(line);
+    logEl.scrollTop = logEl.scrollHeight;
+
+    // Update progress bar from scraping messages
+    const match = data.message.match(/\[(\d+)\/(\d+)\]/);
+    if (match) {
+      scraped = parseInt(match[1]);
+      totalToScrape = parseInt(match[2]);
+      progressBar.style.width = ((scraped / totalToScrape) * 100) + '%';
+    }
+  });
+
+  evtSource.addEventListener('match-complete', (e) => {
+    const data = JSON.parse(e.data);
+    const line = document.createElement('div');
+    line.textContent = `Matched ${data.matched} by price, ${data.unmatched} need scraping`;
+    line.style.fontWeight = '600';
+    logEl.appendChild(line);
+    totalToScrape = data.unmatched;
+  });
+
+  evtSource.addEventListener('scrape-start', (e) => {
+    const data = JSON.parse(e.data);
+    totalToScrape = data.count;
+  });
+
+  evtSource.addEventListener('complete', async (e) => {
+    evtSource.close();
+    progressBar.style.width = '100%';
+
+    const line = document.createElement('div');
+    line.textContent = 'Complete!';
+    line.style.fontWeight = '600';
+    line.style.color = '#28a745';
+    logEl.appendChild(line);
+
+    // Reload data
+    await loadData();
+    btn.disabled = false;
+  });
+
+  evtSource.addEventListener('error', (e) => {
+    if (e.data) {
+      const data = JSON.parse(e.data);
+      const line = document.createElement('div');
+      line.textContent = 'Error: ' + data.message;
+      line.style.color = '#dc3545';
+      logEl.appendChild(line);
+      evtSource.close();
+      btn.disabled = false;
+      btn.textContent = 'Smart Scrape (retry)';
+    }
+    // Don't close on generic errors — let EventSource auto-reconnect
+  });
+
+  let errorCount = 0;
+  evtSource.onerror = () => {
+    errorCount++;
+    // Allow a few reconnect attempts before giving up
+    if (errorCount > 5) {
+      evtSource.close();
+      btn.disabled = false;
+      btn.textContent = 'Smart Scrape (retry)';
+      const line = document.createElement('div');
+      line.textContent = 'Connection lost. Scraping may still be running server-side. Try refreshing the page.';
+      line.style.color = '#e67e22';
+      logEl.appendChild(line);
+    }
+  };
+}
+
+// --- Date Presets ---
+function applyPreset() {
+  const preset = document.getElementById('filterPreset').value;
+  const fromEl = document.getElementById('filterFrom');
+  const toEl = document.getElementById('filterTo');
+  const now = new Date();
+
+  switch (preset) {
+    case 'all':
+      fromEl.value = '';
+      toEl.value = '';
+      break;
+    case 'thisMonth': {
+      const y = now.getFullYear(), m = String(now.getMonth() + 1).padStart(2, '0');
+      fromEl.value = `${y}-${m}-01`;
+      const lastDay = new Date(y, now.getMonth() + 1, 0).getDate();
+      toEl.value = `${y}-${m}-${String(lastDay).padStart(2, '0')}`;
+      break;
+    }
+    case 'lastMonth': {
+      const last = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const y = last.getFullYear(), m = String(last.getMonth() + 1).padStart(2, '0');
+      fromEl.value = `${y}-${m}-01`;
+      const lastDay = new Date(y, last.getMonth() + 1, 0).getDate();
+      toEl.value = `${y}-${m}-${String(lastDay).padStart(2, '0')}`;
+      break;
+    }
+    case 'thisQuarter': {
+      const qMonth = Math.floor(now.getMonth() / 3) * 3;
+      const y = now.getFullYear();
+      fromEl.value = `${y}-${String(qMonth + 1).padStart(2, '0')}-01`;
+      const lastQMonth = qMonth + 2;
+      const lastDay = new Date(y, lastQMonth + 1, 0).getDate();
+      toEl.value = `${y}-${String(lastQMonth + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+      break;
+    }
+  }
+  applyFilters();
+}
+
+// --- Column Sort (click headers) ---
+function setupColumnSort() {
+  document.querySelectorAll('#txTable th[data-sort]').forEach(th => {
+    th.addEventListener('click', () => {
+      const col = th.dataset.sort;
+      const select = document.getElementById('sortBy');
+      const current = select.value;
+
+      // Toggle direction
+      if (current === col + '-desc' || current === col) {
+        select.value = col + '-asc';
+      } else {
+        select.value = col + '-desc';
+      }
+      // Fallback for cols without -desc/-asc options
+      if (!select.value) select.value = col;
+      applyFilters();
+    });
+  });
+}
+
+// --- Product Sort (click headers) ---
+function setupProductSort() {
+  document.querySelectorAll('#productTable th[data-psort]').forEach(th => {
+    th.style.cursor = 'pointer';
+    th.addEventListener('click', () => {
+      const col = th.dataset.psort;
+      if (productSortCol === col) {
+        productSortDir = productSortDir === 'desc' ? 'asc' : 'desc';
+      } else {
+        productSortCol = col;
+        productSortDir = col === 'name' ? 'asc' : 'desc';
+      }
+      // Update arrows
+      document.querySelectorAll('#productTable th[data-psort] .sort-arrow').forEach(el => el.textContent = '');
+      th.querySelector('.sort-arrow').textContent = productSortDir === 'asc' ? '\u25B2' : '\u25BC';
+      renderProducts();
+    });
+  });
+  // Set initial arrow
+  const initTh = document.querySelector('#productTable th[data-psort="qty"]');
+  if (initTh) initTh.querySelector('.sort-arrow').textContent = '\u25BC';
+}
+
+// --- Refresh Excel ---
+async function refreshExcel() {
+  const btn = document.getElementById('refreshBtn');
+  btn.disabled = true;
+  btn.classList.add('spinning');
+  btn.textContent = 'Updating...';
+
+  try {
+    // Pass current date filters to set the date range on the VE site before downloading
+    const fromDate = document.getElementById('filterFrom').value || '';
+    const toDate = document.getElementById('filterTo').value || '';
+    const params = new URLSearchParams();
+    if (fromDate) params.set('fromDate', fromDate);
+    if (toDate) params.set('toDate', toDate);
+    const url = '/api/refresh' + (params.toString() ? '?' + params.toString() : '');
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 300000); // 5 min timeout
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timeoutId);
+
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Refresh failed');
+    await loadData();
+    btn.textContent = 'Updated!';
+    setTimeout(() => { btn.textContent = 'Update Data'; }, 2000);
+  } catch (err) {
+    btn.textContent = 'Failed';
+    const msg = err.name === 'AbortError'
+      ? 'Request timed out (5 min). A browser window may still be open — check your taskbar.'
+      : err.message;
+    alert('Update failed: ' + msg + '\n\nIf your session expired, restart the server with: npm run serve:login');
+    setTimeout(() => { btn.textContent = 'Update Data'; }, 2000);
+  } finally {
+    btn.disabled = false;
+    btn.classList.remove('spinning');
+  }
+}
+
+// --- Init ---
+document.getElementById('filterSource').addEventListener('change', applyFilters);
+document.getElementById('filterFrom').addEventListener('change', applyFilters);
+document.getElementById('filterTo').addEventListener('change', applyFilters);
+document.getElementById('sortBy').addEventListener('change', applyFilters);
+document.getElementById('filterPreset').addEventListener('change', applyPreset);
+document.getElementById('scrapeBtn').addEventListener('click', startScrape);
+document.getElementById('refreshBtn').addEventListener('click', refreshExcel);
+document.getElementById('highlightDupes').addEventListener('change', renderProducts);
+setupColumnSort();
+setupProductSort();
+loadData();
+</script>
+</body>
+</html>
