@@ -30,7 +30,7 @@
   .spacer { flex: 1; }
 
   /* Summary cards */
-  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 20px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 14px; margin-bottom: 20px; }
   .card {
     background: #fff; border-radius: 8px; padding: 18px;
     box-shadow: 0 1px 3px rgba(0,0,0,0.1); text-align: center;
@@ -40,7 +40,10 @@
   .card .value.pretax { color: #4a90a4; }
   .card .value.tax { color: #dc3545; }
   .card .value.total { color: #28a745; }
+  .card .value.discount { color: #e67e22; }
+  .card .value.shipping { color: #6f42c1; }
   .card .sub { font-size: 0.7rem; color: #6c757d; margin-top: 4px; }
+  .card.hidden { display: none; }
 
   /* Source breakdown */
   .source-breakdown { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 20px; }
@@ -157,7 +160,7 @@
   .modal-box .modal-actions .btn-save { background: #4a90a4; color: #fff; border: none; }
 
   @media (max-width: 768px) {
-    .cards { grid-template-columns: 1fr; }
+    .cards { grid-template-columns: 1fr 1fr; }
     .source-breakdown { grid-template-columns: 1fr; }
     .controls { flex-direction: column; }
     body { padding: 12px; }
@@ -228,7 +231,16 @@
     <div class="card">
       <div class="label">Post-Tax Total</div>
       <div class="value total" id="cardTotal">$0.00</div>
-      <div class="sub" id="cardExtra"></div>
+    </div>
+    <div class="card hidden" id="discountCard">
+      <div class="label">Discounts</div>
+      <div class="value discount" id="cardDiscount">-$0.00</div>
+      <div class="sub" id="cardDiscountCount"></div>
+    </div>
+    <div class="card hidden" id="shippingCard">
+      <div class="label">Shipping</div>
+      <div class="value shipping" id="cardShipping">$0.00</div>
+      <div class="sub" id="cardShippingCount"></div>
     </div>
   </div>
 
@@ -376,10 +388,27 @@ function renderSummary() {
   document.getElementById('cardTotal').textContent = fmt(total);
   document.getElementById('cardCount').textContent = `${filtered.length} transaction${filtered.length !== 1 ? 's' : ''}`;
 
-  const extras = [];
-  if (shipping > 0) extras.push(`Shipping: ${fmt(shipping)}`);
-  if (discount > 0) extras.push(`Discounts: -${fmt(discount)}`);
-  document.getElementById('cardExtra').textContent = extras.join(' | ');
+  // Discount card — show only when discounts exist
+  const discountCard = document.getElementById('discountCard');
+  if (discount > 0) {
+    discountCard.classList.remove('hidden');
+    document.getElementById('cardDiscount').textContent = '-' + fmt(discount);
+    const discountTx = filtered.filter(s => s.discount > 0).length;
+    document.getElementById('cardDiscountCount').textContent = `${discountTx} order${discountTx !== 1 ? 's' : ''} with discounts`;
+  } else {
+    discountCard.classList.add('hidden');
+  }
+
+  // Shipping card — show only when shipping exists
+  const shippingCard = document.getElementById('shippingCard');
+  if (shipping > 0) {
+    shippingCard.classList.remove('hidden');
+    document.getElementById('cardShipping').textContent = fmt(shipping);
+    const shippingTx = filtered.filter(s => s.shipping > 0).length;
+    document.getElementById('cardShippingCount').textContent = `${shippingTx} order${shippingTx !== 1 ? 's' : ''} with shipping`;
+  } else {
+    shippingCard.classList.add('hidden');
+  }
 
   document.getElementById('subtitle').textContent = `${allSales.length} total transactions loaded`;
 }

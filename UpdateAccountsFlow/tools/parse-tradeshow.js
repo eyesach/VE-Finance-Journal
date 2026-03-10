@@ -59,7 +59,7 @@ export async function parseTradeshowExcel(filePath) {
       subtotal: subtotal || 0,
       tax: tax || 0,
       shipping: shipping || 0,
-      discount: discount || 0,
+      discount: Math.abs(discount || 0),
       total: total || 0,
       source: 'tradeshow',
     });
