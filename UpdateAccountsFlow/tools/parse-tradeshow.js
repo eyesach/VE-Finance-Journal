@@ -66,7 +66,49 @@ export async function parseTradeshowExcel(filePath) {
   });
 
   console.log(`  Parsed ${sales.length} trade show sales from POS.`);
-  return sales;
+
+  // Parse line items from "Sales line items" sheet
+  const itemsSheet = workbook.worksheets.find(s =>
+    s.name.toLowerCase().includes('item') || s.name.toLowerCase().includes('line')
+  );
+  const lineItems = new Map(); // transactionNo → LineItem[]
+  if (itemsSheet) {
+    const itemHeaders = {};
+    itemsSheet.getRow(1).eachCell((cell, col) => {
+      itemHeaders[String(cell.value || '').trim().toLowerCase()] = col;
+    });
+
+    const txCol = findCol(itemHeaders, ['transaction no', 'transaction_no', 'transactionno']);
+    const nameCol = findCol(itemHeaders, ['product name', 'item name', 'name', 'product', 'item']);
+    const numCol = findCol(itemHeaders, ['product number', 'item number', 'product no', 'item no']);
+    const priceCol = findCol(itemHeaders, ['price', 'unit price']);
+    const qtyCol = findCol(itemHeaders, ['quantity', 'qty']);
+    const taxableCol = findCol(itemHeaders, ['taxable']);
+    const amountCol = findCol(itemHeaders, ['amount', 'total', 'line total']);
+
+    if (txCol && nameCol) {
+      itemsSheet.eachRow((row, rowNumber) => {
+        if (rowNumber === 1) return;
+        const txNo = String(getCellValue(row, txCol) || '').trim();
+        if (!txNo) return;
+
+        const item = {
+          name: String(getCellValue(row, nameCol) || 'Unknown').trim(),
+          productNumber: numCol ? String(getCellValue(row, numCol) || '').trim() || null : null,
+          price: parseNumber(getCellValue(row, priceCol)),
+          quantity: parseInt(getCellValue(row, qtyCol) || '1', 10) || 1,
+          taxable: taxableCol ? String(getCellValue(row, taxableCol) || '').toLowerCase() === 'yes' : false,
+          amount: parseNumber(getCellValue(row, amountCol)),
+        };
+
+        if (!lineItems.has(txNo)) lineItems.set(txNo, []);
+        lineItems.get(txNo).push(item);
+      });
+      console.log(`  Parsed ${lineItems.size} transactions with line items from Excel.`);
+    }
+  }
+
+  return { sales, lineItems };
 }
 
 function resolveColumns(headers) {

@@ -7,7 +7,7 @@ import { launchBrowser, authenticate, navigateToMarketplace } from './tools/auth
 import { downloadExcelFiles } from './tools/download.js';
 import { parseStoreExcel } from './tools/parse-store.js';
 import { parseTradeshowExcel } from './tools/parse-tradeshow.js';
-import { scrapeTransactionItems, loadCache } from './tools/scrape-items.js';
+import { scrapeTransactionItems, loadCache, saveCache } from './tools/scrape-items.js';
 import { generateReport } from './tools/report.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -127,19 +127,31 @@ async function main() {
   // --- Parse Phase ---
   console.log(`[${step}/${totalSteps}] Parsing Excel files...`);
   let allSales = [];
+  const excelLineItems = new Map();
   if (argv.source !== 'tradeshow') {
-    const storeSales = await parseStoreExcel(storeFile);
-    allSales.push(...storeSales);
+    const { sales, lineItems } = await parseStoreExcel(storeFile);
+    allSales.push(...sales);
+    for (const [txNo, items] of lineItems) excelLineItems.set(txNo, items);
   }
   if (argv.source !== 'online') {
-    const tradeshowSales = await parseTradeshowExcel(tradeshowFile);
-    allSales.push(...tradeshowSales);
+    const { sales, lineItems } = await parseTradeshowExcel(tradeshowFile);
+    allSales.push(...sales);
+    for (const [txNo, items] of lineItems) excelLineItems.set(txNo, items);
   }
   console.log(`  Total: ${allSales.length} transactions (${sourceLabel}).\n`);
   step++;
 
-  // --- Scrape Phase (optional) ---
+  // --- Populate cache from Excel line items ---
   let itemsCache = loadCache();
+  if (excelLineItems.size > 0) {
+    for (const [txNo, items] of excelLineItems) {
+      itemsCache.set(txNo, items);
+    }
+    saveCache(itemsCache);
+    console.log(`  Loaded ${excelLineItems.size} transactions with product data from Excel.\n`);
+  }
+
+  // --- Scrape Phase (optional, for any remaining unmatched) ---
   if (needsScraping) {
     console.log(`[${step}/${totalSteps}] Scraping transaction details for product info...`);
 

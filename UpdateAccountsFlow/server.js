@@ -57,19 +57,33 @@ async function parseExcelFiles() {
 
   console.log('Parsing Excel files...');
   allSales = [];
+  const excelLineItems = new Map();
 
   if (fs.existsSync(storeFile)) {
-    const storeSales = await parseStoreExcel(storeFile);
-    allSales.push(...storeSales);
+    const { sales, lineItems } = await parseStoreExcel(storeFile);
+    allSales.push(...sales);
+    for (const [txNo, items] of lineItems) excelLineItems.set(txNo, items);
   }
   if (fs.existsSync(tradeshowFile)) {
-    const tradeshowSales = await parseTradeshowExcel(tradeshowFile);
-    allSales.push(...tradeshowSales);
+    const { sales, lineItems } = await parseTradeshowExcel(tradeshowFile);
+    allSales.push(...sales);
+    for (const [txNo, items] of lineItems) excelLineItems.set(txNo, items);
   }
 
   console.log(`Total: ${allSales.length} transactions loaded.`);
+
+  // Load existing scrape cache, then overlay Excel line items as the primary source
   itemsCache = loadCache();
-  console.log(`Cache: ${itemsCache.size} transactions with product data.`);
+  let excelOverrides = 0;
+  for (const [txNo, items] of excelLineItems) {
+    // Excel data is authoritative — overwrite inferred/scraped data
+    if (!itemsCache.has(txNo) || !Array.isArray(itemsCache.get(txNo))) {
+      excelOverrides++;
+    }
+    itemsCache.set(txNo, items);
+  }
+  saveCache(itemsCache);
+  console.log(`Cache: ${itemsCache.size} transactions with product data (${excelLineItems.size} from Excel).`);
 }
 
 async function downloadFreshExcel({ fromDate, toDate } = {}) {

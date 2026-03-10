@@ -40,6 +40,7 @@
   .card .value.pretax { color: #4a90a4; }
   .card .value.tax { color: #dc3545; }
   .card .value.total { color: #28a745; }
+  .card .value.net-pretax { color: #17a2b8; }
   .card .value.discount { color: #e67e22; }
   .card .value.shipping { color: #6f42c1; }
   .card .sub { font-size: 0.7rem; color: #6c757d; margin-top: 4px; }
@@ -237,6 +238,10 @@
       <div class="value discount" id="cardDiscount">-$0.00</div>
       <div class="sub" id="cardDiscountCount"></div>
     </div>
+    <div class="card hidden" id="netPretaxCard">
+      <div class="label">Pretax After Discounts</div>
+      <div class="value net-pretax" id="cardNetPretax">$0.00</div>
+    </div>
     <div class="card hidden" id="shippingCard">
       <div class="label">Shipping</div>
       <div class="value shipping" id="cardShipping">$0.00</div>
@@ -397,6 +402,15 @@ function renderSummary() {
     document.getElementById('cardDiscountCount').textContent = `${discountTx} order${discountTx !== 1 ? 's' : ''} with discounts`;
   } else {
     discountCard.classList.add('hidden');
+  }
+
+  // Pretax after discounts card — show only when discounts exist
+  const netPretaxCard = document.getElementById('netPretaxCard');
+  if (discount > 0) {
+    netPretaxCard.classList.remove('hidden');
+    document.getElementById('cardNetPretax').textContent = fmt(subtotal - discount);
+  } else {
+    netPretaxCard.classList.add('hidden');
   }
 
   // Shipping card — show only when shipping exists
