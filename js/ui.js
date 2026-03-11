@@ -2858,7 +2858,6 @@ const UI = {
                 <th class="pc-col-num">COGS</th>
                 <th class="pc-col-num">Margin $</th>
                 <th class="pc-col-num">Margin %</th>
-                <th>Notes</th>
                 <th class="pc-col-actions">Actions</th>
             </tr></thead><tbody>`;
 
@@ -2867,25 +2866,28 @@ const UI = {
             const marginPct = p.price > 0 ? (margin / p.price) * 100 : 0;
             const marginClass = margin >= 0 ? 'pc-margin-positive' : 'pc-margin-negative';
             const rowClass = p.is_discontinued ? 'pc-row-discontinued' : '';
-            const toggleLabel = p.is_discontinued ? 'Reactivate' : 'Discontinue';
-            const toggleClass = p.is_discontinued ? 'btn-success' : 'btn-warning';
+            const toggleTitle = p.is_discontinued ? 'Reactivate' : 'Discontinue';
+            const toggleIcon = p.is_discontinued
+                ? `<svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="10"/></svg>`
+                : `<svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/></svg>`;
+            const toggleClass = p.is_discontinued ? 'pc-icon-btn pc-icon-btn-reactivate' : 'pc-icon-btn pc-icon-btn-discontinue';
             const linkedBadge = linkedIds.has(p.id) ? '<span class="pc-linked-badge">linked</span>' : '';
+            const notesIcon = p.notes ? `<span class="notes-indicator pc-notes-indicator" data-notes="${Utils.escapeHtml(p.notes)}"><svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg></span>` : '';
 
             html += `<tr class="${rowClass}">
-                <td>${Utils.escapeHtml(p.name)}${linkedBadge}</td>
-                <td>${p.sku ? Utils.escapeHtml(p.sku) : '<span style="color:var(--color-text-muted)">—</span>'}</td>
+                <td class="pc-col-name"><span class="pc-name-text">${Utils.escapeHtml(p.name)}</span>${linkedBadge}${notesIcon}</td>
+                <td class="pc-col-sku">${p.sku ? Utils.escapeHtml(p.sku) : '<span style="color:var(--color-text-muted)">—</span>'}</td>
                 <td class="pc-col-num">${fmtAmt(p.price)}</td>
                 <td class="pc-col-num">${p.tax_rate ? p.tax_rate.toFixed(2) + '%' : '—'}</td>
                 <td class="pc-col-num">${fmtAmt(p.cogs || 0)}</td>
                 <td class="pc-col-num ${marginClass}">${fmtAmt(margin)}</td>
                 <td class="pc-col-num ${marginClass}">${marginPct.toFixed(1)}%</td>
-                <td>${p.notes ? '<span class="pc-notes" title="' + Utils.escapeHtml(p.notes) + '">' + Utils.escapeHtml(p.notes) + '</span>' : ''}</td>
                 <td class="pc-col-actions">
                     <div class="pc-actions">
-                        <button class="btn btn-primary btn-small manage-links-btn" data-id="${p.id}">Manage Links</button>
+                        <button class="btn btn-primary btn-small manage-links-btn" data-id="${p.id}">Links</button>
                         <button class="btn btn-secondary btn-small edit-product-btn" data-id="${p.id}">Edit</button>
-                        <button class="btn ${toggleClass} btn-small discontinue-product-btn" data-id="${p.id}">${toggleLabel}</button>
-                        <button class="btn btn-danger btn-small delete-product-btn" data-id="${p.id}">Delete</button>
+                        <button class="${toggleClass} discontinue-product-btn" data-id="${p.id}" title="${toggleTitle}">${toggleIcon}</button>
+                        <button class="pc-icon-btn pc-icon-btn-delete delete-product-btn" data-id="${p.id}" title="Delete"><svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg></button>
                     </div>
                 </td>
             </tr>`;
