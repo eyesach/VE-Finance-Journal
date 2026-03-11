@@ -1,0 +1,43 @@
+name,sku,price,cogs,tax_rate,notes
+Kids Water Bottle (16 oz),WB-01,62.99,36.97,0,Bottles - Sub Category 1A
+Medium Water Bottle (24 oz),WB-02,65.99,38.65,0,Bottles - Sub Category 1A
+Large Water Bottle (32 oz),WB-03,67.99,39.49,0,Bottles - Sub Category 1A
+Sports Water Bottle (50 oz),WB-04,68.99,39.49,0,Bottles - Sub Category 1A
+Monthly Subscription,SA-01,29.99,0,0,Hydration App - Daily hydration tracking / reminders / Bluetooth sync
+Yearly Subscription,SA-02,99.99,0,0,Hydration App - Premium; personalized insights / adaptive goals / Apple Health + Fitbit integration
+3-Year Subscription,SA-03,199.99,0,0,Hydration App - Add on; up to 3 bottles / shared dashboard / team challenges
+Citrus Chillin' - Lemon Lime (10 pk),SP-01,49.99,16.38,0,Single Pack 12g/pk - Vitamin C & Magnesium
+Mango Citrus - Orange Mango (10 pk),SP-02,49.99,14.74,0,Single Pack 12g/pk - Vitamin D & Calcium
+StrawberryAde - Strawberry Lemonade (10 pk),SP-03,49.99,16.30,0,Single Pack 12g/pk - Vitamin E & Iron
+Island Honey - Honey Passionfruit (10 pk),SP-04,49.99,14.43,0,Single Pack 12g/pk - Dietary Fiber
+Pineapple Berry - Pineapple Strawberry (10 pk),SP-05,49.99,21.32,0,Single Pack 12g/pk - Vitamin A & C
+Banapple Dream - Apple Banana (10 pk),SP-06,49.99,16.25,0,Single Pack 12g/pk - B12
+Tidal Breeze - Watermelon Coconut (10 pk),SP-07,49.99,15.73,0,Single Pack 12g/pk - Sodium & Potassium
+Crisped Delight - Apple Pomegranate (10 pk),SP-08,49.99,18.33,0,Single Pack 12g/pk - B12 & Iron & Fiber
+Raspberry Refresh - Raspberry Salt (10 pk),SP-09,49.99,14.43,0,Single Pack 12g/pk - Potassium
+Any Flavor Powder 120 pk,SP-10,149.99,16.43,0,120 pk of powder - any current cycle flavor
+Tropical Citrus Bundle - Lemon Lime + Orange Mango,BP-01,74.99,31.12,0,Bundled Pack 10 of each flavor 12g/pk
+Strawberry Surprise Bundle - Strawberry Lemonade + Pineapple Strawberry,BP-02,74.99,37.62,0,Bundled Pack 10 of each flavor 12g/pk
+Apple Ascent Bundle - Apple Banana + Apple Pomegranate,BP-03,74.99,30.68,0,Bundled Pack 10 of each flavor 12g/pk
+Island Breeze Bundle - Honey Passionfruit + Pineapple Peach,BP-04,74.99,30.68,0,Bundled Pack 10 of each flavor 12g/pk
+Aquatic Allure Bundle - Watermelon Coconut + Pineapple Strawberry,BP-05,74.99,35.75,0,Bundled Pack 10 of each flavor 12g/pk
+Sun & Salt Bundle - Orange Mango + Raspberry Salt,BP-06,74.99,29.17,0,Bundled Pack 10 of each flavor 12g/pk
+Lucky Lemon-Lime Kids Pack,KP-01,19.99,8.19,0,Kids Pack 10 pk 6g/pk - Vitamin C & Magnesium
+Tropical Dream Kids Pack,KP-02,19.99,7.37,0,Kids Pack 10 pk 6g/pk - Vitamin D & Calcium
+Berry Burst Lemonade Kids Pack,KP-03,19.99,8.15,0,Kids Pack 10 pk 6g/pk - Vitamin E & Iron
+Watermelon Cove Kids Pack,KP-04,19.99,7.87,0,Kids Pack 10 pk 6g/pk - Sodium & Potassium
+Shining Apple Kids Pack,KP-05,19.99,9.17,0,Kids Pack 10 pk 6g/pk - B12 & Iron & Fiber
+Tropical Tango Kids Pack,KP-06,19.99,8.13,0,Kids Pack 10 pk 6g/pk - Choline & Vitamin K2 & C
+Starter Pack A - 2x24oz + 90 Orange Mango packs + App,BN-01,460.99,154.15,0,Starter Bundle - 2x 24oz water bottles / 90 powder packs / app subscription
+Starter Pack B - 2x32oz + 90 Orange Mango packs + App,BN-02,464.99,155.60,0,Starter Bundle - 2x 32oz water bottles / 90 powder packs / app subscription
+Starter Pack C - 2x50oz + 90 Orange Mango packs + App,BN-03,466.05,199.82,0,Starter Bundle - 2x 50oz water bottles / 90 powder packs / app subscription
+Office Day Pack - 24oz + 1yr sub + 30 pk Orange Mango,BN-04,215.65,82.88,0,Starter Bundle - 24oz bottle / 1-year subscription / 30 powder packs
+Workout Pack - 32oz + 1yr sub + 30 pk Apple Pomegranate,BN-05,217.99,94.48,0,Starter Bundle - 32oz bottle / 1-year subscription / 30 powder packs
+Peak Performance Pack - 50oz + 1yr sub + 30 pk Orange Mango,BN-06,218.65,83.72,0,Starter Bundle - 50oz bottle / 1-year subscription / 30 powder packs
+Couple Pack - 2x32oz + 2x 1yr sub + 60 pk Honey Passionfruit,BN-07,435.96,165.57,0,Starter Bundle - 2x 32oz bottles / 2x 1-year subscriptions / 60 powder packs
+Athlete Pair Pack - 2x50oz + 2x 1yr sub + 60 pk Honey Passionfruit,BN-09,437.96,165.57,0,Starter Bundle - 2x 50oz bottles / 2x 1-year subscriptions / 60 powder packs
+Winter Sports Bundle - 50oz + 60 Raspberry + 1yr sub,BN-11,259.99,149.47,0,Seasonal Bundle - 1x 50oz bottle / 60 Raspberry Ripple packs / 1-year subscription
+Sips and Snowflakes - 2x32oz + 60 Pink Lemonade + 1yr sub,BN-12,359.99,165.75,0,Seasonal Bundle - 2x 32oz bottles / 60 Pink Lemonade packs / 1-year subscription
+Siply Sub-Zero - 2x50oz + 90 Pine Berry + 1yr sub,BN-13,599.99,208.86,0,Seasonal Bundle - 2x 50oz bottles / 90 Pine Berry packs / 1-year subscription
+Personal Resolution Pack - 50oz + 1yr sub + 30 pk Orange Mango,BN-14,218.98,83.72,0,Starter Bundle - 50oz bottle / 1-year subscription / 30 powder packs
+New Years Resolution Pack - 4 bottles + 4 yr subs + 120 pk each,BN-014,868.92,376.25,0,Starter Bundle - 1x50oz + 1x32oz + 2x24oz / 4x 1-year subscriptions / 120 packs each / Apple Pomegranate

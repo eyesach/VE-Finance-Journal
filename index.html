@@ -754,6 +754,13 @@
                             <option value="thisQuarter">This quarter</option>
                         </select>
                     </div>
+                    <div class="pc-analytics-filter-group pc-analytics-toggle">
+                        <label>&nbsp;</label>
+                        <label class="pc-toggle-label">
+                            <input type="checkbox" id="pcShowCharts" checked>
+                            <span>Show Charts</span>
+                        </label>
+                    </div>
                 </div>
 
                 <div class="pc-analytics-section" id="pcAnalyticsSection" style="display:none;">
@@ -765,6 +772,16 @@
                         <div class="pc-analytics-chart-card">
                             <div class="pc-analytics-chart-title">Revenue by Product</div>
                             <canvas id="pcChartRevenueCanvas"></canvas>
+                        </div>
+                    </div>
+                    <div class="pc-analytics-charts pc-analytics-charts--bars">
+                        <div class="pc-analytics-chart-card pc-analytics-chart-card--bar">
+                            <div class="pc-analytics-chart-title">All Products &mdash; Units Sold</div>
+                            <canvas id="pcBarUnitsCanvas"></canvas>
+                        </div>
+                        <div class="pc-analytics-chart-card pc-analytics-chart-card--bar">
+                            <div class="pc-analytics-chart-title">All Products &mdash; Revenue</div>
+                            <canvas id="pcBarRevenueCanvas"></canvas>
                         </div>
                     </div>
                     <div class="pc-analytics-cogs" id="pcCogsTableWrapper"></div>
@@ -1193,9 +1210,12 @@
                         </div>
                         <div class="form-group">
                             <label for="budgetExpenseCategory">Journal Category</label>
-                            <select id="budgetExpenseCategory">
-                                <option value="">None (won't record)</option>
-                            </select>
+                            <div class="category-input-wrapper">
+                                <select id="budgetExpenseCategory">
+                                    <option value="">None (won't record)</option>
+                                </select>
+                                <button type="button" id="addCategoryFromBudgetBtn" class="btn btn-small">+ New</button>
+                            </div>
                         </div>
                     </div>
                     <div class="form-row">

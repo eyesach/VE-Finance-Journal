@@ -8,6 +8,8 @@ import { parseStoreExcel } from './tools/parse-store.js';
 import { parseTradeshowExcel } from './tools/parse-tradeshow.js';
 import { loadCache, saveCache, smartMatch, scrapeSpecificTransactions } from './tools/scrape-items.js';
 import { launchBrowser, authenticate, navigateToMarketplace } from './tools/auth.js';
+import { generateExcelReport } from './tools/export-excel.js';
+import { generateHtmlReport } from './tools/export-html.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TMP_DIR = path.join(__dirname, '.tmp');
@@ -186,6 +188,48 @@ app.get('/api/export', (req, res) => {
     res.json(exportData);
   } catch (err) {
     console.error('Export error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// API: Export as Excel workbook (one sheet per month)
+app.get('/api/export-excel', async (req, res) => {
+  try {
+    const { from, to, source } = req.query;
+    let filtered = allSales;
+    if (source && source !== 'both') {
+      filtered = filtered.filter(s => s.source === source);
+    }
+    if (from) filtered = filtered.filter(s => s.date >= new Date(from + 'T00:00:00'));
+    if (to) filtered = filtered.filter(s => s.date <= new Date(to + 'T23:59:59.999'));
+
+    const buffer = await generateExcelReport(filtered, itemsCache);
+    res.setHeader('Content-Disposition', 'attachment; filename="VE Sales Report.xlsx"');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(Buffer.from(buffer));
+  } catch (err) {
+    console.error('Excel export error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// API: Export as interactive HTML report
+app.get('/api/export-html', (req, res) => {
+  try {
+    const { from, to, source } = req.query;
+    let filtered = allSales;
+    if (source && source !== 'both') {
+      filtered = filtered.filter(s => s.source === source);
+    }
+    if (from) filtered = filtered.filter(s => s.date >= new Date(from + 'T00:00:00'));
+    if (to) filtered = filtered.filter(s => s.date <= new Date(to + 'T23:59:59.999'));
+
+    const html = generateHtmlReport(filtered, itemsCache);
+    res.setHeader('Content-Disposition', 'attachment; filename="VE Sales Report.html"');
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(html);
+  } catch (err) {
+    console.error('HTML export error:', err);
     res.status(500).json({ error: err.message });
   }
 });

@@ -1356,6 +1356,8 @@ const Database = {
             AND t.transaction_type = 'receivable'
             AND c.is_cogs = 0
             AND c.show_on_pl != 1
+            AND (c.is_b2b = 1 OR c.is_sales = 1)
+            AND COALESCE(t.source_type, '') NOT IN ('loan_receivable', 'loan_payment')
             GROUP BY t.month_due
         `);
         const map = {};
@@ -1383,6 +1385,8 @@ const Database = {
             WHERE t.month_due IS NOT NULL
             AND t.transaction_type = 'receivable'
             AND c.is_cogs = 0 AND c.show_on_pl != 1
+            AND (c.is_b2b = 1 OR c.is_sales = 1)
+            AND COALESCE(t.source_type, '') NOT IN ('loan_receivable', 'loan_payment')
             GROUP BY c.id, t.month_due
         `);
 
@@ -1464,6 +1468,8 @@ const Database = {
             AND t.transaction_type = 'receivable'
             AND c.is_cogs = 0
             AND c.show_on_pl != 1
+            AND (c.is_b2b = 1 OR c.is_sales = 1)
+            AND COALESCE(t.source_type, '') NOT IN ('loan_receivable', 'loan_payment')
             GROUP BY c.id, t.month_due
             ORDER BY c.cashflow_sort_order ASC, c.name ASC
         `);
@@ -1485,7 +1491,7 @@ const Database = {
         `);
         const cogs = cogsResult.length > 0 ? this.rowsToObjects(cogsResult[0]) : [];
 
-        // OpEx: all payable categories that are not COGS, not depreciation, not sales tax, not hidden, accrual basis
+        // OpEx: all payable categories that are not COGS, not depreciation, not sales tax, not hidden, not loan payments, accrual basis
         const opexResult = this.db.exec(`
             SELECT c.id as category_id, c.name as category_name,
                    t.month_due as month,
@@ -1498,6 +1504,7 @@ const Database = {
             AND c.is_depreciation = 0
             AND c.is_sales_tax = 0
             AND c.show_on_pl != 1
+            AND COALESCE(t.source_type, '') NOT IN ('loan_payment', 'loan_receivable')
             GROUP BY c.id, t.month_due
             ORDER BY c.cashflow_sort_order ASC, c.name ASC
         `);
@@ -2721,6 +2728,8 @@ const Database = {
             WHERE t.month_due IS NOT NULL AND t.month_due <= ?
             AND t.transaction_type = 'receivable'
             AND c.is_cogs = 0 AND c.show_on_pl != 1
+            AND (c.is_b2b = 1 OR c.is_sales = 1)
+            AND COALESCE(t.source_type, '') NOT IN ('loan_receivable', 'loan_payment')
             GROUP BY c.id, t.month_due
         `, [asOfMonth]);
         const revenue = revenueResult.length > 0 ? this.rowsToObjects(revenueResult[0]) : [];
@@ -2736,7 +2745,7 @@ const Database = {
         `, [asOfMonth]);
         const cogs = cogsResult.length > 0 ? this.rowsToObjects(cogsResult[0]) : [];
 
-        // OpEx (non-COGS, non-depreciation, non-sales-tax payables)
+        // OpEx (non-COGS, non-depreciation, non-sales-tax, non-loan payables)
         const opexResult = this.db.exec(`
             SELECT c.id as category_id, t.month_due as month, SUM(t.amount) as total
             FROM transactions t
@@ -2744,6 +2753,7 @@ const Database = {
             WHERE t.month_due IS NOT NULL AND t.month_due <= ?
             AND t.transaction_type = 'payable'
             AND c.is_cogs = 0 AND c.is_depreciation = 0 AND c.is_sales_tax = 0 AND c.show_on_pl != 1
+            AND COALESCE(t.source_type, '') NOT IN ('loan_payment', 'loan_receivable')
             GROUP BY c.id, t.month_due
         `, [asOfMonth]);
         const opex = opexResult.length > 0 ? this.rowsToObjects(opexResult[0]) : [];
@@ -2877,6 +2887,8 @@ const Database = {
             WHERE t.month_due IS NOT NULL AND t.month_due <= ?
             AND t.transaction_type = 'receivable'
             AND c.is_cogs = 0 AND c.show_on_pl != 1
+            AND (c.is_b2b = 1 OR c.is_sales = 1)
+            AND COALESCE(t.source_type, '') NOT IN ('loan_receivable', 'loan_payment')
             GROUP BY c.id, t.month_due
         `, [asOfMonth]);
         const revenue = revenueResult.length > 0 ? this.rowsToObjects(revenueResult[0]) : [];
@@ -2898,6 +2910,7 @@ const Database = {
             WHERE t.month_due IS NOT NULL AND t.month_due <= ?
             AND t.transaction_type = 'payable'
             AND c.is_cogs = 0 AND c.is_depreciation = 0 AND c.is_sales_tax = 0 AND c.show_on_pl != 1
+            AND COALESCE(t.source_type, '') NOT IN ('loan_payment', 'loan_receivable')
             GROUP BY c.id, t.month_due
         `, [asOfMonth]);
         const opex = opexResult.length > 0 ? this.rowsToObjects(opexResult[0]) : [];

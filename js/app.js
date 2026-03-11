@@ -1012,8 +1012,15 @@ const App = {
 
         // ==================== CATEGORIES ====================
 
-        // Add category button (from form)
+        // Add category button (from entry form)
         document.getElementById('addCategoryBtn').addEventListener('click', () => {
+            this._categoryModalOrigin = 'entry';
+            this.openCategoryModal();
+        });
+
+        // Add category button (from budget expense form)
+        document.getElementById('addCategoryFromBudgetBtn').addEventListener('click', () => {
+            this._categoryModalOrigin = 'budget';
             this.openCategoryModal();
         });
 
@@ -1028,6 +1035,7 @@ const App = {
             const wasEditing = !!document.getElementById('editingCategoryId').value;
             UI.hideModal('categoryModal');
             this.resetCategoryForm();
+            this._categoryModalOrigin = null;
             if (wasEditing) {
                 this.openManageCategories();
             }
@@ -1747,6 +1755,12 @@ const App = {
         document.getElementById('pcDateFrom').addEventListener('change', () => this.refreshProducts());
         document.getElementById('pcDateTo').addEventListener('change',   () => this.refreshProducts());
         document.getElementById('pcDatePreset').addEventListener('change', () => this._pcApplyDatePreset());
+        document.getElementById('pcShowCharts').addEventListener('change', (e) => {
+            const section = document.getElementById('pcAnalyticsSection');
+            if (!section) return;
+            const chartsRows = section.querySelectorAll('.pc-analytics-charts');
+            chartsRows.forEach(el => el.style.display = e.target.checked ? '' : 'none');
+        });
 
         // Product CSV Import
         document.getElementById('pcImportToggle').addEventListener('click', () => {
@@ -2243,9 +2257,24 @@ const App = {
             } else {
                 // Add new category
                 const newId = Database.addCategory(name, isMonthly, defaultAmount, defaultType, folderId, showOnPl, isCogs, isDepreciation, isSalesTax, isB2b, defaultStatus, isSales);
-                // Select the new category in the dropdown
                 this.refreshCategories();
-                document.getElementById('category').value = newId;
+
+                // Select the new category in the appropriate dropdown
+                if (this._categoryModalOrigin === 'budget') {
+                    // Repopulate budget expense category dropdown
+                    const catSelect = document.getElementById('budgetExpenseCategory');
+                    catSelect.innerHTML = '<option value="">None (won\'t record)</option>';
+                    const cats = Database.getCategories();
+                    cats.forEach(cat => {
+                        const opt = document.createElement('option');
+                        opt.value = cat.id;
+                        opt.textContent = cat.name;
+                        catSelect.appendChild(opt);
+                    });
+                    catSelect.value = newId;
+                } else {
+                    document.getElementById('category').value = newId;
+                }
 
                 if (isMonthly) {
                     UI.togglePaymentForMonth(true, name);
@@ -2258,6 +2287,7 @@ const App = {
             UI.hideModal('categoryModal');
             this.resetCategoryForm();
             this.refreshCategories();
+            this._categoryModalOrigin = null;
 
             // If we were editing (came from manage modal), re-open manage categories
             if (wasEditing || document.getElementById('manageCategoriesModal').classList.contains('active')) {
@@ -3460,7 +3490,7 @@ const App = {
         let cat = categories.find(c => c.name === loanName);
         let catId;
         if (!cat) {
-            catId = Database.addCategory(loanName, true, monthlyPayment, 'payable');
+            catId = Database.addCategory(loanName, true, monthlyPayment, 'payable', null, true);
         } else {
             catId = cat.id;
         }
@@ -3490,24 +3520,32 @@ const App = {
     _syncLoanJournalEntries(loanId, params) {
         const { name, principal, annual_rate, term_months, payments_per_year, start_date, first_payment_date } = params;
 
-        // --- Category: Loan Proceeds (receivable) ---
+        // --- Category: Loan Proceeds (receivable, hidden from P&L) ---
         let categories = Database.getCategories();
         let proceedsCat = categories.find(c => c.name === 'Loan Proceeds' && c.default_type === 'receivable');
         let proceedsCatId;
         if (!proceedsCat) {
-            proceedsCatId = Database.addCategory('Loan Proceeds', false, null, 'receivable');
+            proceedsCatId = Database.addCategory('Loan Proceeds', false, null, 'receivable', null, true);
         } else {
             proceedsCatId = proceedsCat.id;
+            // Ensure existing Loan Proceeds category is hidden from P&L
+            if (!proceedsCat.show_on_pl) {
+                Database.db.run('UPDATE categories SET show_on_pl = 1 WHERE id = ?', [proceedsCatId]);
+            }
         }
 
-        // --- Category: loan name (payable, for payments) ---
+        // --- Category: loan name (payable, hidden from P&L — only interest belongs on P&L) ---
         categories = Database.getCategories();
         let paymentCat = categories.find(c => c.name === name);
         let paymentCatId;
         if (!paymentCat) {
-            paymentCatId = Database.addCategory(name, true, null, 'payable');
+            paymentCatId = Database.addCategory(name, true, null, 'payable', null, true);
         } else {
             paymentCatId = paymentCat.id;
+            // Ensure existing loan payment category is hidden from P&L
+            if (!paymentCat.show_on_pl) {
+                Database.db.run('UPDATE categories SET show_on_pl = 1 WHERE id = ?', [paymentCatId]);
+            }
         }
 
         // --- Upsert receivable ---
@@ -4283,54 +4321,209 @@ const App = {
     },
 
     _destroyPcCharts() {
-        if (this._pvmChartUnits)   { this._pvmChartUnits.destroy();   this._pvmChartUnits   = null; }
-        if (this._pvmChartRevenue) { this._pvmChartRevenue.destroy(); this._pvmChartRevenue = null; }
+        if (this._pvmChartUnits)      { this._pvmChartUnits.destroy();      this._pvmChartUnits      = null; }
+        if (this._pvmChartRevenue)    { this._pvmChartRevenue.destroy();    this._pvmChartRevenue    = null; }
+        if (this._pvmBarUnits)        { this._pvmBarUnits.destroy();        this._pvmBarUnits        = null; }
+        if (this._pvmBarRevenue)      { this._pvmBarRevenue.destroy();      this._pvmBarRevenue      = null; }
     },
 
     _renderPcChartsAndAnalytics(analytics) {
         document.getElementById('pcAnalyticsSection').style.display = 'block';
 
+        // --- Cohesive color palette (blue-teal-green gradient + accents) ---
         const palette = [
-            '#4a90a4','#5ba85c','#e67e22','#8e6abf','#d64f4f',
-            '#2d9c8a','#c0a010','#3d7db8','#b05090','#7a8c40',
-            '#e08060','#6080e0','#a0b060','#e060a0','#60a0b0'
+            '#2d6a8a','#3a8f6e','#e6913e','#7c5cbf','#d14d4d',
+            '#1fa5a5','#c49b1c','#4a7fd9','#b84f8a','#6a9e3a',
+            '#e07850','#5878d8','#8eb04a','#d85090','#4a9eb0'
         ];
-        const labels  = analytics.byProduct.map(p => p.name);
-        const units   = analytics.byProduct.map(p => p.units_sold);
-        const revenue = analytics.byProduct.map(p => p.revenue);
-        const colors  = labels.map((_, i) => palette[i % palette.length]);
+        const otherColor = '#b0b8c0';
 
-        const chartOpts = {
+        const TOP_N = 6;
+        const truncate = (s, n = 30) => s.length > n ? s.slice(0, n - 1) + '\u2026' : s;
+
+        // Full data for bar charts
+        const allLabels  = analytics.byProduct.map(p => p.name);
+        const allUnits   = analytics.byProduct.map(p => p.units_sold);
+        const allRevenue = analytics.byProduct.map(p => p.revenue);
+        const allColors  = allLabels.map((_, i) => palette[i % palette.length]);
+
+        // --- Group into Top N + "Other" for donuts ---
+        const sortedByUnits = analytics.byProduct.slice().sort((a, b) => b.units_sold - a.units_sold);
+        const sortedByRev   = analytics.byProduct.slice().sort((a, b) => b.revenue - a.revenue);
+
+        const buildGrouped = (sorted, valKey) => {
+            const top   = sorted.slice(0, TOP_N);
+            const rest  = sorted.slice(TOP_N);
+            const labels = top.map(p => truncate(p.name));
+            const data   = top.map(p => p[valKey]);
+            const colors = top.map((_, i) => palette[i % palette.length]);
+            const otherItems = rest.map(p => ({ name: p.name, value: p[valKey] }));
+            if (rest.length > 0) {
+                const otherTotal = rest.reduce((s, p) => s + p[valKey], 0);
+                labels.push(`Other (${rest.length})`);
+                data.push(otherTotal);
+                colors.push(otherColor);
+            }
+            return { labels, data, colors, otherItems };
+        };
+
+        const gUnits = buildGrouped(sortedByUnits, 'units_sold');
+        const gRev   = buildGrouped(sortedByRev, 'revenue');
+
+        // --- Inline percentage label plugin ---
+        const pctLabelPlugin = {
+            id: 'pctLabels',
+            afterDatasetsDraw(chart) {
+                const { ctx } = chart;
+                const meta = chart.getDatasetMeta(0);
+                const total = meta.total || chart.data.datasets[0].data.reduce((a, b) => a + b, 0);
+                meta.data.forEach((arc, i) => {
+                    const val = chart.data.datasets[0].data[i];
+                    const pct = total > 0 ? (val / total * 100) : 0;
+                    if (pct < 5) return; // skip tiny slices
+                    const { x, y } = arc.tooltipPosition();
+                    ctx.save();
+                    ctx.fillStyle = '#fff';
+                    ctx.font = 'bold 11px system-ui, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.shadowColor = 'rgba(0,0,0,0.4)';
+                    ctx.shadowBlur = 3;
+                    ctx.fillText(pct.toFixed(0) + '%', x, y);
+                    ctx.restore();
+                });
+            }
+        };
+
+        // --- Donut chart options builder ---
+        const donutOpts = (otherItems, isRevenue) => ({
             responsive: true,
             maintainAspectRatio: true,
+            cutout: '50%',
             plugins: {
-                legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 }, padding: 10 } },
+                legend: {
+                    position: 'bottom',
+                    labels: { boxWidth: 12, font: { size: 11 }, padding: 8 }
+                },
                 tooltip: {
                     callbacks: {
                         label: (ctx) => {
                             const val = ctx.raw;
-                            if (ctx.dataset.label === 'revenue') return ` ${Utils.formatCurrency(val)}`;
-                            return ` ${val.toLocaleString()} units`;
+                            const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
+                            const pct = total > 0 ? (val / total * 100).toFixed(1) : 0;
+                            const formatted = isRevenue ? Utils.formatCurrency(val) : val.toLocaleString() + ' units';
+                            return ` ${formatted} (${pct}%)`;
+                        },
+                        afterBody: (items) => {
+                            const ctx = items[0];
+                            if (!ctx || !ctx.label.startsWith('Other')) return '';
+                            const lines = ['\n--- Breakdown ---'];
+                            const sorted = otherItems.slice().sort((a, b) => b.value - a.value);
+                            for (const item of sorted) {
+                                const val = isRevenue ? Utils.formatCurrency(item.value) : item.value.toLocaleString() + ' units';
+                                lines.push(`  ${truncate(item.name, 35)}: ${val}`);
+                            }
+                            return lines;
                         }
                     }
                 }
             }
-        };
+        });
 
+        // --- Render donuts ---
         const uCanvas = document.getElementById('pcChartUnitsCanvas');
         const rCanvas = document.getElementById('pcChartRevenueCanvas');
         if (uCanvas && typeof Chart !== 'undefined') {
             this._pvmChartUnits = new Chart(uCanvas, {
                 type: 'doughnut',
-                data: { labels, datasets: [{ label: 'units', data: units, backgroundColor: colors, borderWidth: 1 }] },
-                options: chartOpts
+                data: { labels: gUnits.labels, datasets: [{ data: gUnits.data, backgroundColor: gUnits.colors, borderWidth: 2, borderColor: '#fff' }] },
+                options: donutOpts(gUnits.otherItems, false),
+                plugins: [pctLabelPlugin]
             });
         }
         if (rCanvas && typeof Chart !== 'undefined') {
             this._pvmChartRevenue = new Chart(rCanvas, {
                 type: 'doughnut',
-                data: { labels, datasets: [{ label: 'revenue', data: revenue, backgroundColor: colors, borderWidth: 1 }] },
-                options: chartOpts
+                data: { labels: gRev.labels, datasets: [{ data: gRev.data, backgroundColor: gRev.colors, borderWidth: 2, borderColor: '#fff' }] },
+                options: donutOpts(gRev.otherItems, true),
+                plugins: [pctLabelPlugin]
+            });
+        }
+
+        // --- Horizontal bar charts (all products, sorted desc) ---
+        const barSortedUnits = analytics.byProduct.slice().sort((a, b) => b.units_sold - a.units_sold);
+        const barSortedRev   = analytics.byProduct.slice().sort((a, b) => b.revenue - a.revenue);
+
+        const barOpts = (isRevenue) => ({
+            indexAxis: 'y',
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label: (ctx) => isRevenue ? ` ${Utils.formatCurrency(ctx.raw)}` : ` ${ctx.raw.toLocaleString()} units`
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    beginAtZero: true,
+                    grid: { color: 'rgba(0,0,0,0.05)' },
+                    ticks: {
+                        callback: (v) => isRevenue ? '$' + (v >= 1000 ? (v / 1000).toFixed(0) + 'k' : v) : v.toLocaleString(),
+                        font: { size: 10 }
+                    }
+                },
+                y: {
+                    grid: { display: false },
+                    ticks: {
+                        font: { size: 10 },
+                        callback: function(val) {
+                            const label = this.getLabelForValue(val);
+                            return truncate(label, 28);
+                        }
+                    }
+                }
+            }
+        });
+
+        const barHeight = Math.max(200, analytics.byProduct.length * 28 + 40);
+
+        const buCanvas = document.getElementById('pcBarUnitsCanvas');
+        const brCanvas = document.getElementById('pcBarRevenueCanvas');
+        if (buCanvas && typeof Chart !== 'undefined') {
+            buCanvas.parentElement.style.height = barHeight + 'px';
+            buCanvas.style.maxHeight = barHeight + 'px';
+            this._pvmBarUnits = new Chart(buCanvas, {
+                type: 'bar',
+                data: {
+                    labels: barSortedUnits.map(p => p.name),
+                    datasets: [{
+                        data: barSortedUnits.map(p => p.units_sold),
+                        backgroundColor: barSortedUnits.map((_, i) => palette[i % palette.length]),
+                        borderRadius: 3,
+                        barThickness: 18
+                    }]
+                },
+                options: barOpts(false)
+            });
+        }
+        if (brCanvas && typeof Chart !== 'undefined') {
+            brCanvas.parentElement.style.height = barHeight + 'px';
+            brCanvas.style.maxHeight = barHeight + 'px';
+            this._pvmBarRevenue = new Chart(brCanvas, {
+                type: 'bar',
+                data: {
+                    labels: barSortedRev.map(p => p.name),
+                    datasets: [{
+                        data: barSortedRev.map(p => p.revenue),
+                        backgroundColor: barSortedRev.map((_, i) => palette[i % palette.length]),
+                        borderRadius: 3,
+                        barThickness: 18
+                    }]
+                },
+                options: barOpts(true)
             });
         }
 

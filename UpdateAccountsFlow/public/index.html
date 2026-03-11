@@ -216,6 +216,8 @@
       <label>&nbsp;</label>
       <button class="refresh-btn" id="refreshBtn" title="Download fresh Excel files from VE Hub">Update Data</button>
       <button class="refresh-btn" id="exportBtn" title="Export all data as JSON for import into Accounting Journal" style="background:#28a745;">Export JSON</button>
+      <button class="refresh-btn" id="exportExcelBtn" title="Export filtered data as Excel workbook (one sheet per month)" style="background:#0d6efd;">Export Excel</button>
+      <button class="refresh-btn" id="exportHtmlBtn" title="Export interactive HTML report with filters and sorting — shareable, opens in any browser" style="background:#6f42c1;">Export Report</button>
     </div>
   </div>
 
@@ -931,6 +933,84 @@ async function exportJson() {
   }
 }
 
+// --- Export Excel ---
+async function exportExcel() {
+  const btn = document.getElementById('exportExcelBtn');
+  btn.disabled = true;
+  btn.textContent = 'Exporting...';
+  try {
+    const params = new URLSearchParams();
+    const source = document.getElementById('filterSource').value;
+    const from = document.getElementById('filterFrom').value;
+    const to = document.getElementById('filterTo').value;
+    if (source && source !== 'both') params.set('source', source);
+    if (from) params.set('from', from);
+    if (to) params.set('to', to);
+
+    const url = '/api/export-excel' + (params.toString() ? '?' + params.toString() : '');
+    const res = await fetch(url);
+    if (!res.ok) {
+      let msg = 'Export failed';
+      try { const body = await res.json(); msg = body.error || msg; } catch {}
+      throw new Error(msg);
+    }
+    const blob = await res.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'VE Sales Report.xlsx';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(a.href);
+    btn.textContent = 'Exported!';
+    setTimeout(() => { btn.textContent = 'Export Excel'; }, 2000);
+  } catch (err) {
+    alert('Excel export failed: ' + err.message);
+    btn.textContent = 'Export Excel';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// --- Export HTML Report ---
+async function exportHtml() {
+  const btn = document.getElementById('exportHtmlBtn');
+  btn.disabled = true;
+  btn.textContent = 'Exporting...';
+  try {
+    const params = new URLSearchParams();
+    const source = document.getElementById('filterSource').value;
+    const from = document.getElementById('filterFrom').value;
+    const to = document.getElementById('filterTo').value;
+    if (source && source !== 'both') params.set('source', source);
+    if (from) params.set('from', from);
+    if (to) params.set('to', to);
+
+    const url = '/api/export-html' + (params.toString() ? '?' + params.toString() : '');
+    const res = await fetch(url);
+    if (!res.ok) {
+      let msg = 'Export failed';
+      try { const body = await res.json(); msg = body.error || msg; } catch {}
+      throw new Error(msg);
+    }
+    const blob = await res.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'VE Sales Report.html';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(a.href);
+    btn.textContent = 'Exported!';
+    setTimeout(() => { btn.textContent = 'Export Report'; }, 2000);
+  } catch (err) {
+    alert('HTML export failed: ' + err.message);
+    btn.textContent = 'Export Report';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 // --- Init ---
 document.getElementById('filterSource').addEventListener('change', applyFilters);
 document.getElementById('filterFrom').addEventListener('change', applyFilters);
@@ -940,6 +1020,8 @@ document.getElementById('filterPreset').addEventListener('change', applyPreset);
 document.getElementById('scrapeBtn').addEventListener('click', startScrape);
 document.getElementById('refreshBtn').addEventListener('click', refreshExcel);
 document.getElementById('exportBtn').addEventListener('click', exportJson);
+document.getElementById('exportExcelBtn').addEventListener('click', exportExcel);
+document.getElementById('exportHtmlBtn').addEventListener('click', exportHtml);
 document.getElementById('highlightDupes').addEventListener('change', renderProducts);
 setupColumnSort();
 setupProductSort();
