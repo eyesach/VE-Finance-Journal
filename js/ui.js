@@ -2802,6 +2802,88 @@ const UI = {
         html += '</tbody></table>';
         container.innerHTML = html;
     },
+
+    // ==================== PRODUCTS TAB ====================
+
+    renderProductsTab(products, showDiscontinued) {
+        const fmtAmt = (amt) => Utils.formatCurrency(amt);
+
+        // Filter products based on discontinued toggle
+        const visible = showDiscontinued ? products : products.filter(p => !p.is_discontinued);
+        const activeProducts = products.filter(p => !p.is_discontinued);
+
+        // Summary cards
+        const summaryEl = document.getElementById('productSummaryCards');
+        if (products.length === 0) {
+            summaryEl.innerHTML = '';
+        } else {
+            const avgPrice = activeProducts.length > 0
+                ? activeProducts.reduce((sum, p) => sum + p.price, 0) / activeProducts.length : 0;
+            const avgMarginPct = activeProducts.length > 0
+                ? activeProducts.reduce((sum, p) => sum + (p.price > 0 ? ((p.price - p.cogs) / p.price) * 100 : 0), 0) / activeProducts.length : 0;
+            const totalRevPotential = activeProducts.reduce((sum, p) => sum + p.price, 0);
+
+            summaryEl.innerHTML = `
+                <div class="budget-summary-card"><span class="budget-summary-label">Total Products</span><span class="budget-summary-value">${products.length}</span></div>
+                <div class="budget-summary-card"><span class="budget-summary-label">Active</span><span class="budget-summary-value">${activeProducts.length}</span></div>
+                <div class="budget-summary-card"><span class="budget-summary-label">Avg Price</span><span class="budget-summary-value">${fmtAmt(avgPrice)}</span></div>
+                <div class="budget-summary-card"><span class="budget-summary-label">Avg Margin</span><span class="budget-summary-value ${avgMarginPct >= 0 ? 'pc-margin-positive' : 'pc-margin-negative'}">${avgMarginPct.toFixed(1)}%</span></div>
+            `;
+        }
+
+        // Product table
+        const wrapper = document.getElementById('productTableWrapper');
+        if (visible.length === 0) {
+            wrapper.innerHTML = products.length === 0
+                ? '<p class="empty-state">No products yet. Click "+ Add Product" to get started.</p>'
+                : '<p class="empty-state">No active products to show. Toggle "Show Discontinued" to see all.</p>';
+            return;
+        }
+
+        let html = `<table class="pc-table">
+            <thead><tr>
+                <th>Name</th>
+                <th>SKU</th>
+                <th class="pc-col-num">Price</th>
+                <th class="pc-col-num">Tax %</th>
+                <th class="pc-col-num">COGS</th>
+                <th class="pc-col-num">Margin $</th>
+                <th class="pc-col-num">Margin %</th>
+                <th>Notes</th>
+                <th class="pc-col-actions">Actions</th>
+            </tr></thead><tbody>`;
+
+        visible.forEach(p => {
+            const margin = p.price - (p.cogs || 0);
+            const marginPct = p.price > 0 ? (margin / p.price) * 100 : 0;
+            const marginClass = margin >= 0 ? 'pc-margin-positive' : 'pc-margin-negative';
+            const rowClass = p.is_discontinued ? 'pc-row-discontinued' : '';
+            const toggleLabel = p.is_discontinued ? 'Reactivate' : 'Discontinue';
+            const toggleClass = p.is_discontinued ? 'btn-success' : 'btn-warning';
+
+            html += `<tr class="${rowClass}">
+                <td>${Utils.escapeHtml(p.name)}</td>
+                <td>${p.sku ? Utils.escapeHtml(p.sku) : '<span style="color:var(--color-text-muted)">—</span>'}</td>
+                <td class="pc-col-num">${fmtAmt(p.price)}</td>
+                <td class="pc-col-num">${p.tax_rate ? p.tax_rate.toFixed(2) + '%' : '—'}</td>
+                <td class="pc-col-num">${fmtAmt(p.cogs || 0)}</td>
+                <td class="pc-col-num ${marginClass}">${fmtAmt(margin)}</td>
+                <td class="pc-col-num ${marginClass}">${marginPct.toFixed(1)}%</td>
+                <td>${p.notes ? '<span class="pc-notes" title="' + Utils.escapeHtml(p.notes) + '">' + Utils.escapeHtml(p.notes) + '</span>' : ''}</td>
+                <td class="pc-col-actions">
+                    <div class="pc-actions">
+                        <button class="btn btn-secondary btn-small edit-product-btn" data-id="${p.id}">Edit</button>
+                        <button class="btn ${toggleClass} btn-small discontinue-product-btn" data-id="${p.id}">${toggleLabel}</button>
+                        <button class="btn btn-danger btn-small delete-product-btn" data-id="${p.id}">Delete</button>
+                    </div>
+                </td>
+            </tr>`;
+        });
+
+        html += '</tbody></table>';
+        wrapper.innerHTML = html;
+    },
+
 };
 
 // Export for use in other modules

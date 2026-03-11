@@ -9,6 +9,7 @@ const App = {
     deleteAssetTargetId: null,
     deleteLoanTargetId: null,
     deleteBudgetExpenseTargetId: null,
+    deleteProductTargetId: null,
     selectedAssetId: null,
     selectedLoanId: null,
     selectedBudgetExpenseId: null,
@@ -105,6 +106,7 @@ const App = {
      * Refresh all UI components
      */
     refreshAll() {
+        this.syncAllLoanJournalEntries();
         this.refreshCategories();
         this.refreshTransactions();
         this.refreshSummary();
@@ -699,7 +701,7 @@ const App = {
             btn.classList.toggle('active', btn.dataset.tab === tab);
         });
 
-        const tabs = ['journalTab', 'cashflowTab', 'pnlTab', 'balancesheetTab', 'assetsTab', 'loanTab', 'budgetTab', 'breakevenTab', 'projectedsalesTab'];
+        const tabs = ['journalTab', 'cashflowTab', 'pnlTab', 'balancesheetTab', 'assetsTab', 'loanTab', 'budgetTab', 'breakevenTab', 'projectedsalesTab', 'productsTab'];
         tabs.forEach(id => {
             const el = document.getElementById(id);
             if (el) el.style.display = 'none';
@@ -729,6 +731,9 @@ const App = {
         } else if (tab === 'projectedsales') {
             document.getElementById('projectedsalesTab').style.display = 'block';
             this.refreshProjectedSales();
+        } else if (tab === 'products') {
+            document.getElementById('productsTab').style.display = 'block';
+            this.refreshProducts();
         } else {
             document.getElementById('journalTab').style.display = 'block';
         }
@@ -1509,6 +1514,8 @@ const App = {
                 const loanId = parseInt(skipBtn.dataset.loanId);
                 const paymentNum = parseInt(skipBtn.dataset.payment);
                 Database.toggleSkipLoanPayment(loanId, paymentNum);
+                const skippedLoan = Database.getLoanById(loanId);
+                if (skippedLoan) this._syncLoanJournalEntries(loanId, skippedLoan);
                 this.refreshLoans();
                 return;
             }
@@ -1540,6 +1547,8 @@ const App = {
                 } else {
                     Database.setLoanPaymentOverride(loanId, paymentNum, parseFloat(val));
                 }
+                const overrideLoan = Database.getLoanById(loanId);
+                if (overrideLoan) this._syncLoanJournalEntries(loanId, overrideLoan);
                 this.refreshLoans();
             };
 
@@ -1594,6 +1603,34 @@ const App = {
         document.getElementById('recordBudgetStatus').addEventListener('change', () => {
             const status = document.getElementById('recordBudgetStatus').value;
             document.getElementById('recordBudgetDateProcessedGroup').style.display = status !== 'pending' ? '' : 'none';
+        });
+
+        // ==================== PRODUCTS TAB ====================
+        document.getElementById('addProductBtn').addEventListener('click', () => this.openProductModal());
+        document.getElementById('productForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+            this.handleSaveProduct();
+        });
+        document.getElementById('cancelProductBtn').addEventListener('click', () => UI.hideModal('productModal'));
+        document.getElementById('confirmDeleteProductBtn').addEventListener('click', () => this.confirmDeleteProduct());
+        document.getElementById('cancelDeleteProductBtn').addEventListener('click', () => {
+            UI.hideModal('deleteProductModal');
+            this.deleteProductTargetId = null;
+        });
+        document.getElementById('pcShowDiscontinued').addEventListener('change', () => this.refreshProducts());
+
+        // Product table click delegation
+        document.getElementById('productTableWrapper').addEventListener('click', (e) => {
+            const editBtn = e.target.closest('.edit-product-btn');
+            const deleteBtn = e.target.closest('.delete-product-btn');
+            const discontinueBtn = e.target.closest('.discontinue-product-btn');
+            if (editBtn) {
+                this.handleEditProduct(parseInt(editBtn.dataset.id));
+            } else if (deleteBtn) {
+                this.handleDeleteProduct(parseInt(deleteBtn.dataset.id));
+            } else if (discontinueBtn) {
+                this.handleToggleDiscontinued(parseInt(discontinueBtn.dataset.id));
+            }
         });
 
         // ==================== BREAK-EVEN ====================
@@ -3223,10 +3260,12 @@ const App = {
 
         if (editingId) {
             Database.updateLoan(parseInt(editingId), params);
+            this._syncLoanJournalEntries(parseInt(editingId), params);
             UI.showNotification('Loan updated', 'success');
         } else {
             const loanId = Database.addLoan(params);
             this.selectedLoanId = loanId;
+            this._syncLoanJournalEntries(loanId, params);
             if (document.getElementById('loanAutoCreate').checked) {
                 this._autoCreateLoanBudgetAndCategory(loanId, name, params);
             }
@@ -3294,6 +3333,144 @@ const App = {
             catId,
             `Auto-created from loan #${loanId}`
         );
+    },
+
+    /**
+     * Sync journal entries for a single loan:
+     * - Upserts the loan receivable (principal amount, status=received, dated start_date)
+     * - Adds/updates pending payable entries for each payment month up to currentMonth
+     * - Removes pending entries for months no longer in schedule (e.g. loan shortened)
+     * - Paid entries are never touched
+     */
+    _syncLoanJournalEntries(loanId, params) {
+        const { name, principal, annual_rate, term_months, payments_per_year, start_date, first_payment_date } = params;
+
+        // --- Category: Loan Proceeds (receivable) ---
+        let categories = Database.getCategories();
+        let proceedsCat = categories.find(c => c.name === 'Loan Proceeds' && c.default_type === 'receivable');
+        let proceedsCatId;
+        if (!proceedsCat) {
+            proceedsCatId = Database.addCategory('Loan Proceeds', false, null, 'receivable');
+        } else {
+            proceedsCatId = proceedsCat.id;
+        }
+
+        // --- Category: loan name (payable, for payments) ---
+        categories = Database.getCategories();
+        let paymentCat = categories.find(c => c.name === name);
+        let paymentCatId;
+        if (!paymentCat) {
+            paymentCatId = Database.addCategory(name, true, null, 'payable');
+        } else {
+            paymentCatId = paymentCat.id;
+        }
+
+        // --- Upsert receivable ---
+        const existingReceivable = Database.db.exec(
+            "SELECT id FROM transactions WHERE source_type = 'loan_receivable' AND source_id = ?",
+            [loanId]
+        );
+        const startMonth = start_date.substring(0, 7);
+        if (existingReceivable.length > 0 && existingReceivable[0].values.length > 0) {
+            const rxId = existingReceivable[0].values[0][0];
+            Database.db.run(
+                'UPDATE transactions SET amount = ?, entry_date = ?, month_due = ?, month_paid = ?, category_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+                [principal, start_date, startMonth, startMonth, proceedsCatId, rxId]
+            );
+        } else {
+            Database.addTransaction({
+                entry_date: start_date,
+                category_id: proceedsCatId,
+                item_description: `${name} \u2013 Loan Proceeds`,
+                amount: principal,
+                transaction_type: 'receivable',
+                status: 'received',
+                date_processed: start_date,
+                month_due: startMonth,
+                month_paid: startMonth,
+                source_type: 'loan_receivable',
+                source_id: loanId
+            });
+        }
+
+        // --- Sync payment entries ---
+        const skipped = Database.getLoanSkippedPayments(loanId);
+        const overrides = Database.getLoanPaymentOverrides(loanId);
+        const schedule = Utils.computeAmortizationSchedule(
+            { principal, annual_rate, payments_per_year, term_months, start_date, first_payment_date },
+            skipped, overrides
+        );
+        const currentMonth = Utils.getCurrentMonth();
+
+        // Build set of months that should have entries (up to currentMonth, non-skipped)
+        const scheduledMonths = new Set();
+        schedule.forEach(p => {
+            if (!p.skipped && p.payment > 0 && p.month <= currentMonth) scheduledMonths.add(p.month);
+        });
+
+        // Get existing payment transactions for this loan
+        const existingPayments = Database.db.exec(
+            "SELECT id, payment_for_month, amount, status FROM transactions WHERE source_type = 'loan_payment' AND source_id = ?",
+            [loanId]
+        );
+        const existingByMonth = {};
+        if (existingPayments.length > 0) {
+            existingPayments[0].values.forEach(([id, month, amount, status]) => {
+                existingByMonth[month] = { id, amount, status };
+            });
+        }
+
+        // Add or update payment entries
+        schedule.forEach(p => {
+            if (p.skipped || p.payment <= 0 || p.month > currentMonth) return;
+            const existing = existingByMonth[p.month];
+            if (!existing) {
+                Database.addTransaction({
+                    entry_date: p.month + '-01',
+                    category_id: paymentCatId,
+                    item_description: `${name} \u2013 Payment`,
+                    amount: p.payment,
+                    transaction_type: 'payable',
+                    status: 'pending',
+                    month_due: p.month,
+                    payment_for_month: p.month,
+                    source_type: 'loan_payment',
+                    source_id: loanId
+                });
+            } else if (existing.status === 'pending' && existing.amount !== p.payment) {
+                Database.db.run(
+                    'UPDATE transactions SET amount = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+                    [p.payment, existing.id]
+                );
+            }
+        });
+
+        // Remove pending entries for months no longer in schedule (loan was shortened/edited)
+        Object.entries(existingByMonth).forEach(([month, tx]) => {
+            if (!scheduledMonths.has(month) && tx.status === 'pending') {
+                Database.db.run('DELETE FROM transactions WHERE id = ?', [tx.id]);
+            }
+        });
+
+        Database.autoSave();
+    },
+
+    /**
+     * Sync journal entries for all loans. Called from refreshAll() so new months auto-appear.
+     */
+    syncAllLoanJournalEntries() {
+        const loans = Database.getLoans();
+        loans.forEach(loan => {
+            this._syncLoanJournalEntries(loan.id, {
+                name: loan.name,
+                principal: loan.principal,
+                annual_rate: loan.annual_rate,
+                term_months: loan.term_months,
+                payments_per_year: loan.payments_per_year,
+                start_date: loan.start_date,
+                first_payment_date: loan.first_payment_date
+            });
+        });
     },
 
     // ==================== BUDGET HANDLERS ====================
@@ -3711,6 +3888,90 @@ const App = {
         this.downloadBlob(blob, `${Utils.sanitizeFilename(name)}.db`);
         UI.hideModal('saveAsModal');
         UI.showNotification('Database saved successfully', 'success');
+    },
+
+    // ==================== PRODUCTS HANDLERS ====================
+
+    refreshProducts() {
+        const showDiscontinued = document.getElementById('pcShowDiscontinued').checked;
+        const products = Database.getProducts();
+        UI.renderProductsTab(products, showDiscontinued);
+    },
+
+    openProductModal() {
+        document.getElementById('productForm').reset();
+        document.getElementById('editingProductId').value = '';
+        document.getElementById('productModalTitle').textContent = 'Add Product';
+        document.getElementById('saveProductBtn').textContent = 'Add Product';
+
+        UI.showModal('productModal');
+        document.getElementById('productName').focus();
+    },
+
+    handleSaveProduct() {
+        const name = document.getElementById('productName').value.trim();
+        const sku = document.getElementById('productSku').value.trim() || null;
+        const price = parseFloat(document.getElementById('productPrice').value);
+        const taxRate = parseFloat(document.getElementById('productTaxRate').value) || 0;
+        const cogs = parseFloat(document.getElementById('productCogs').value) || 0;
+        const notes = document.getElementById('productNotes').value.trim() || null;
+        const editingId = document.getElementById('editingProductId').value;
+
+        if (!name || isNaN(price) || price < 0) {
+            UI.showNotification('Please enter a product name and valid price', 'error');
+            return;
+        }
+
+        try {
+            if (editingId) {
+                Database.updateProduct(parseInt(editingId), name, sku, price, taxRate, cogs, notes);
+                UI.showNotification('Product updated', 'success');
+            } else {
+                Database.addProduct(name, sku, price, taxRate, cogs, notes);
+                UI.showNotification('Product added', 'success');
+            }
+            UI.hideModal('productModal');
+            this.refreshProducts();
+        } catch (error) {
+            console.error('Error saving product:', error);
+            UI.showNotification('Failed to save product', 'error');
+        }
+    },
+
+    handleEditProduct(id) {
+        const product = Database.getProductById(id);
+        if (!product) return;
+
+        this.openProductModal(id);
+        document.getElementById('editingProductId').value = product.id;
+        document.getElementById('productName').value = product.name;
+        document.getElementById('productSku').value = product.sku || '';
+        document.getElementById('productPrice').value = product.price;
+        document.getElementById('productTaxRate').value = product.tax_rate || '';
+        document.getElementById('productCogs').value = product.cogs || '';
+        document.getElementById('productNotes').value = product.notes || '';
+        document.getElementById('productModalTitle').textContent = 'Edit Product';
+        document.getElementById('saveProductBtn').textContent = 'Save Changes';
+    },
+
+    handleDeleteProduct(id) {
+        this.deleteProductTargetId = id;
+        UI.showModal('deleteProductModal');
+    },
+
+    confirmDeleteProduct() {
+        if (this.deleteProductTargetId) {
+            Database.deleteProduct(this.deleteProductTargetId);
+            UI.showNotification('Product deleted', 'success');
+            this.refreshProducts();
+        }
+        UI.hideModal('deleteProductModal');
+        this.deleteProductTargetId = null;
+    },
+
+    handleToggleDiscontinued(id) {
+        Database.toggleProductDiscontinued(id);
+        this.refreshProducts();
     },
 
     // ==================== BREAK-EVEN ANALYSIS ====================

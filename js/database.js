@@ -193,6 +193,21 @@ const Database = {
             )
         `);
 
+        this.db.run(`
+            CREATE TABLE IF NOT EXISTS products (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                sku TEXT,
+                price DECIMAL(10,2) NOT NULL,
+                tax_rate DECIMAL(6,4) DEFAULT 0,
+                cogs DECIMAL(10,2) DEFAULT 0,
+                notes TEXT,
+                is_discontinued INTEGER DEFAULT 0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
         // Create default "Monthly Expenses" folder
         this.db.run('INSERT OR IGNORE INTO category_folders (name, folder_type, sort_order) VALUES (?, ?, ?)', ['Monthly Expenses', 'payable', 0]);
 
@@ -1712,7 +1727,19 @@ const Database = {
         this.db.run('DELETE FROM loans WHERE id = ?', [id]);
         this.db.run('DELETE FROM loan_skipped_payments WHERE loan_id = ?', [id]);
         this.db.run('DELETE FROM loan_payment_overrides WHERE loan_id = ?', [id]);
+        this.deleteLoanTransactions(id);
         this.autoSave();
+    },
+
+    /**
+     * Delete all journal transactions linked to a loan (receivable + payments)
+     * @param {number} id - Loan ID
+     */
+    deleteLoanTransactions(id) {
+        this.db.run(
+            "DELETE FROM transactions WHERE source_type IN ('loan_receivable', 'loan_payment') AND source_id = ?",
+            [id]
+        );
     },
 
     /**
@@ -1905,6 +1932,66 @@ const Database = {
         `, [month, month]);
         if (results.length === 0) return [];
         return this.rowsToObjects(results[0]);
+    },
+
+    // ==================== PRODUCTS ====================
+
+    /**
+     * Add a product to the catalog
+     */
+    addProduct(name, sku, price, taxRate, cogs, notes) {
+        this.db.run(
+            'INSERT INTO products (name, sku, price, tax_rate, cogs, notes) VALUES (?, ?, ?, ?, ?, ?)',
+            [name.trim(), sku ? sku.trim() : null, price, taxRate || 0, cogs || 0, notes || null]
+        );
+        const result = this.db.exec('SELECT last_insert_rowid() as id');
+        this.autoSave();
+        return result[0].values[0][0];
+    },
+
+    /**
+     * Update a product
+     */
+    updateProduct(id, name, sku, price, taxRate, cogs, notes) {
+        this.db.run(
+            'UPDATE products SET name = ?, sku = ?, price = ?, tax_rate = ?, cogs = ?, notes = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+            [name.trim(), sku ? sku.trim() : null, price, taxRate || 0, cogs || 0, notes || null, id]
+        );
+        this.autoSave();
+    },
+
+    /**
+     * Toggle a product's discontinued status
+     */
+    toggleProductDiscontinued(id) {
+        this.db.run('UPDATE products SET is_discontinued = CASE WHEN is_discontinued = 0 THEN 1 ELSE 0 END, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [id]);
+        this.autoSave();
+    },
+
+    /**
+     * Delete a product
+     */
+    deleteProduct(id) {
+        this.db.run('DELETE FROM products WHERE id = ?', [id]);
+        this.autoSave();
+    },
+
+    /**
+     * Get all products, ordered by discontinued status then name
+     */
+    getProducts() {
+        const results = this.db.exec('SELECT * FROM products ORDER BY is_discontinued ASC, name ASC');
+        if (results.length === 0) return [];
+        return this.rowsToObjects(results[0]);
+    },
+
+    /**
+     * Get a single product by ID
+     */
+    getProductById(id) {
+        const results = this.db.exec('SELECT * FROM products WHERE id = ?', [id]);
+        if (results.length === 0 || results[0].values.length === 0) return null;
+        return this.rowsToObjects(results[0])[0];
     },
 
     // ==================== BREAK-EVEN CONFIG ====================

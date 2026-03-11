@@ -178,6 +178,7 @@
             <button class="main-tab" data-tab="budget">Budget</button>
             <button class="main-tab" data-tab="breakeven">Break-Even</button>
             <button class="main-tab" data-tab="projectedsales">Projected Sales</button>
+            <button class="main-tab" data-tab="products">Products</button>
         </nav>
 
         <!-- Journal Tab -->
@@ -647,6 +648,80 @@
                     <p class="empty-state">Enable projections and configure channels to get started.</p>
                 </div>
             </section>
+        </div>
+
+        <!-- Products Tab -->
+        <div id="productsTab" style="display: none;">
+            <section class="pc-section">
+                <div class="pc-header">
+                    <h3>Product Catalog</h3>
+                    <div class="pc-controls">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="pcShowDiscontinued" checked>
+                            <span>Show Discontinued</span>
+                        </label>
+                        <button id="addProductBtn" class="btn btn-primary btn-small">+ Add Product</button>
+                    </div>
+                </div>
+                <div id="productSummaryCards" class="pc-summary-cards"></div>
+                <div id="productTableWrapper" class="pc-table-wrapper">
+                    <p class="empty-state">No products yet. Click "+ Add Product" to get started.</p>
+                </div>
+            </section>
+        </div>
+
+        <!-- Product Modal -->
+        <div id="productModal" class="modal">
+            <div class="modal-content modal-wide">
+                <h3 id="productModalTitle">Add Product</h3>
+                <form id="productForm">
+                    <input type="hidden" id="editingProductId" value="">
+                    <div class="form-row">
+                        <div class="form-group" style="flex: 2;">
+                            <label for="productName">Product Name</label>
+                            <input type="text" id="productName" required placeholder="e.g., Widget Pro">
+                        </div>
+                        <div class="form-group" style="flex: 1;">
+                            <label for="productSku">SKU <span class="label-hint">(optional)</span></label>
+                            <input type="text" id="productSku" placeholder="e.g., WP-001">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="productPrice">Selling Price</label>
+                            <input type="number" id="productPrice" step="0.01" min="0" placeholder="0.00" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="productTaxRate">Typical Tax Rate (%)</label>
+                            <input type="number" id="productTaxRate" step="0.01" min="0" max="100" placeholder="0.00">
+                        </div>
+                        <div class="form-group">
+                            <label for="productCogs">COGS</label>
+                            <input type="number" id="productCogs" step="0.01" min="0" placeholder="0.00">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="productNotes">Notes <span class="label-hint">(optional)</span></label>
+                        <input type="text" id="productNotes" placeholder="Optional notes about this product">
+                    </div>
+                    <div class="form-actions">
+                        <button type="button" id="cancelProductBtn" class="btn btn-secondary">Cancel</button>
+                        <button type="submit" id="saveProductBtn" class="btn btn-primary">Add Product</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Delete Product Confirmation Modal -->
+        <div id="deleteProductModal" class="modal">
+            <div class="modal-content">
+                <h3>Delete Product</h3>
+                <p>Are you sure you want to permanently delete this product?</p>
+                <div class="form-actions">
+                    <button type="button" id="cancelDeleteProductBtn" class="btn btn-secondary">Cancel</button>
+                    <button type="button" id="confirmDeleteProductBtn" class="btn btn-danger">Delete</button>
+                </div>
+            </div>
         </div>
 
         <!-- Break-Even Config Modal -->
