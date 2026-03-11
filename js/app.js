@@ -1749,6 +1749,30 @@ const App = {
         document.getElementById('pcDateTo').addEventListener('change',   () => this.refreshProducts());
         document.getElementById('pcDatePreset').addEventListener('change', () => this._pcApplyDatePreset());
 
+        // Product CSV Import
+        document.getElementById('pcImportToggle').addEventListener('click', () => {
+            document.getElementById('pcImportPanel').classList.toggle('open');
+        });
+        const pcZone = document.getElementById('pcCsvZone');
+        document.getElementById('pcCsvBrowse').addEventListener('click', (e) => {
+            e.stopPropagation();
+            document.getElementById('pcCsvInput').click();
+        });
+        pcZone.addEventListener('click', () => document.getElementById('pcCsvInput').click());
+        pcZone.addEventListener('dragover', (e) => { e.preventDefault(); pcZone.classList.add('dragover'); });
+        pcZone.addEventListener('dragleave', () => pcZone.classList.remove('dragover'));
+        pcZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            pcZone.classList.remove('dragover');
+            const file = e.dataTransfer.files[0];
+            if (file) this._pcStageFile(file);
+        });
+        document.getElementById('pcCsvInput').addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) this._pcStageFile(file);
+        });
+        document.getElementById('pcImportSubmit').addEventListener('click', () => this._pcImportCsv());
+
         // Product-VE Mapping modal
         document.getElementById('pvmSaveBtn').addEventListener('click',   () => this.handleSaveProductMappings());
         document.getElementById('pvmCancelBtn').addEventListener('click', () => UI.hideModal('pvmModal'));
@@ -4013,6 +4037,86 @@ const App = {
     },
 
     // ==================== PRODUCTS HANDLERS ====================
+
+    _pcStageFile(file) {
+        this._pcStagedFile = file;
+        document.getElementById('pcCsvFileName').textContent = file.name;
+        document.getElementById('pcCsvZone').classList.add('has-file');
+        document.getElementById('pcImportSubmit').disabled = false;
+        document.getElementById('pcImportStatus').textContent = '';
+    },
+
+    _pcImportCsv() {
+        const file = this._pcStagedFile;
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const text = e.target.result;
+                const lines = text.split(/\r?\n/).filter(l => l.trim());
+                if (lines.length < 2) throw new Error('File appears empty');
+
+                // Parse header row
+                const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/^"|"$/g, ''));
+                const col = (name) => headers.indexOf(name);
+
+                if (col('name') === -1) throw new Error('Missing required column: name');
+
+                const nameIdx    = col('name');
+                const skuIdx     = col('sku');
+                const priceIdx   = col('price');
+                const cogsIdx    = col('cogs');
+                const taxIdx     = col('tax_rate');
+                const notesIdx   = col('notes');
+
+                const parseMoney = (v) => {
+                    if (v === undefined || v === null || v === '') return 0;
+                    return parseFloat(String(v).replace(/[$,%\s"]/g, '')) || 0;
+                };
+
+                // Get existing SKUs to avoid duplicates
+                const existing = Database.getProducts();
+                const existingSkus = new Set(existing.map(p => (p.sku || '').trim().toLowerCase()).filter(Boolean));
+
+                let imported = 0, skipped = 0;
+                for (let i = 1; i < lines.length; i++) {
+                    const cols = lines[i].split(',').map(c => c.trim().replace(/^"|"$/g, ''));
+                    const name = cols[nameIdx] || '';
+                    if (!name) continue;
+
+                    const sku = skuIdx !== -1 ? (cols[skuIdx] || '') : '';
+                    if (sku && existingSkus.has(sku.toLowerCase())) { skipped++; continue; }
+
+                    const price   = priceIdx   !== -1 ? parseMoney(cols[priceIdx])   : 0;
+                    const cogs    = cogsIdx    !== -1 ? parseMoney(cols[cogsIdx])     : 0;
+                    const taxRate = taxIdx     !== -1 ? parseMoney(cols[taxIdx])      : 0;
+                    const notes   = notesIdx   !== -1 ? (cols[notesIdx] || '') : '';
+
+                    Database.addProduct(name, sku || null, price, taxRate, cogs, notes || null);
+                    if (sku) existingSkus.add(sku.toLowerCase());
+                    imported++;
+                }
+
+                // Reset UI
+                this._pcStagedFile = null;
+                document.getElementById('pcCsvFileName').textContent = '';
+                document.getElementById('pcCsvZone').classList.remove('has-file');
+                document.getElementById('pcImportSubmit').disabled = true;
+                document.getElementById('pcCsvInput').value = '';
+                document.getElementById('pcImportPanel').classList.remove('open');
+
+                const msg = skipped > 0
+                    ? `Imported ${imported} product${imported !== 1 ? 's' : ''}. Skipped ${skipped} (duplicate SKU).`
+                    : `Imported ${imported} product${imported !== 1 ? 's' : ''} successfully.`;
+                UI.showNotification(msg, 'success');
+                this.refreshProducts();
+            } catch (err) {
+                document.getElementById('pcImportStatus').textContent = 'Error: ' + err.message;
+                UI.showNotification('Import failed: ' + err.message, 'error');
+            }
+        };
+        reader.readAsText(file);
+    },
 
     refreshProducts() {
         const showDiscontinued = document.getElementById('pcShowDiscontinued').checked;

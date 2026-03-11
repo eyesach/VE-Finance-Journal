@@ -678,6 +678,8 @@
 
         <!-- Products Tab -->
         <div id="productsTab" style="display: none;">
+            <!-- Hidden file input for product CSV import -->
+            <input type="file" id="pcCsvInput" accept=".csv" style="display: none;">
             <section class="pc-section">
                 <div class="pc-header">
                     <h3>Product Catalog</h3>
@@ -689,6 +691,48 @@
                         <button id="addProductBtn" class="btn btn-primary btn-small">+ Add Product</button>
                     </div>
                 </div>
+
+                <!-- CSV Import Panel -->
+                <div class="ve-import-panel" id="pcImportPanel">
+                    <button class="ve-import-toggle" id="pcImportToggle">
+                        <span class="ve-import-toggle-label">Import Products</span>
+                        <span class="ve-import-toggle-meta" id="pcImportInfo">CSV file</span>
+                        <svg class="ve-import-chevron" width="12" height="12" viewBox="0 0 12 12"><path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg>
+                    </button>
+                    <div class="ve-import-drawer" id="pcImportDrawer">
+                        <div class="ve-import-grid" style="grid-template-columns: 1fr 2fr; gap: 12px;">
+                            <!-- CSV Drop Zone -->
+                            <div class="ve-drop-zone" id="pcCsvZone">
+                                <div class="ve-drop-icon">
+                                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="2" y="3" width="16" height="14" rx="2" stroke="currentColor" stroke-width="1.4"/><path d="M6 8h8M6 11h5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+                                </div>
+                                <div class="ve-drop-title">Product CSV</div>
+                                <div class="ve-drop-desc">.csv file</div>
+                                <div class="ve-drop-file" id="pcCsvFileName"></div>
+                                <button class="ve-drop-btn" id="pcCsvBrowse">Choose file</button>
+                            </div>
+                            <!-- Format Description -->
+                            <div style="padding: 14px 16px; background: var(--c3, #f8f9fa); border-radius: 6px; border: 1px solid #eef0f2;">
+                                <div style="font-size: 0.75rem; font-weight: 600; color: #495057; margin-bottom: 6px;">CSV Format</div>
+                                <div style="font-size: 0.68rem; color: #6c757d; line-height: 1.6;">
+                                    First row must be a header row with these column names (order doesn't matter):<br>
+                                    <code style="background:#e9ecef; padding:1px 4px; border-radius:3px; font-size:0.67rem;">name</code>&nbsp;
+                                    <code style="background:#e9ecef; padding:1px 4px; border-radius:3px; font-size:0.67rem;">sku</code>&nbsp;
+                                    <code style="background:#e9ecef; padding:1px 4px; border-radius:3px; font-size:0.67rem;">price</code>&nbsp;
+                                    <code style="background:#e9ecef; padding:1px 4px; border-radius:3px; font-size:0.67rem;">cogs</code>&nbsp;
+                                    <code style="background:#e9ecef; padding:1px 4px; border-radius:3px; font-size:0.67rem;">tax_rate</code>&nbsp;
+                                    <code style="background:#e9ecef; padding:1px 4px; border-radius:3px; font-size:0.67rem;">notes</code>
+                                    <br><span style="color:#9aa3ad;">Only <strong style="color:#495057;">name</strong> is required. Dollar signs and % symbols are stripped automatically. Existing products with the same SKU will be skipped.</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="ve-import-footer">
+                            <button class="ve-import-submit" id="pcImportSubmit" disabled>Import Products</button>
+                            <span id="pcImportStatus" style="font-size:0.72rem; color:#9aa3ad;"></span>
+                        </div>
+                    </div>
+                </div>
+
                 <div id="productSummaryCards" class="pc-summary-cards"></div>
 
                 <!-- VE Sales Analytics Section (shown when products are linked) -->
