@@ -2854,7 +2854,6 @@ const UI = {
                 <th>Name</th>
                 <th>SKU</th>
                 <th class="pc-col-num">Price</th>
-                <th class="pc-col-num">Tax %</th>
                 <th class="pc-col-num">COGS</th>
                 <th class="pc-col-num">Margin $</th>
                 <th class="pc-col-num">Margin %</th>
@@ -2878,7 +2877,6 @@ const UI = {
                 <td class="pc-col-name"><span class="pc-name-text">${Utils.escapeHtml(p.name)}</span>${linkedBadge}${notesIcon}</td>
                 <td class="pc-col-sku">${p.sku ? Utils.escapeHtml(p.sku) : '<span style="color:var(--color-text-muted)">—</span>'}</td>
                 <td class="pc-col-num">${fmtAmt(p.price)}</td>
-                <td class="pc-col-num">${p.tax_rate ? p.tax_rate.toFixed(2) + '%' : '—'}</td>
                 <td class="pc-col-num">${fmtAmt(p.cogs || 0)}</td>
                 <td class="pc-col-num ${marginClass}">${fmtAmt(margin)}</td>
                 <td class="pc-col-num ${marginClass}">${marginPct.toFixed(1)}%</td>

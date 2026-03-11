@@ -266,8 +266,9 @@ const Database = {
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 product_id INTEGER NOT NULL,
                 ve_item_name TEXT NOT NULL,
+                ve_item_price REAL NOT NULL DEFAULT 0,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(product_id, ve_item_name)
+                UNIQUE(product_id, ve_item_name, ve_item_price)
             )
         `);
 
@@ -553,6 +554,10 @@ const Database = {
         try { this.db.exec('SELECT inventory_cost FROM transactions LIMIT 1'); }
         catch (e) { this.db.run('ALTER TABLE transactions ADD COLUMN inventory_cost DECIMAL(10,2)'); }
 
+        // === Add ve_item_price to product_ve_mappings ===
+        try { this.db.exec('SELECT ve_item_price FROM product_ve_mappings LIMIT 1'); }
+        catch (e) { this.db.run('ALTER TABLE product_ve_mappings ADD COLUMN ve_item_price REAL NOT NULL DEFAULT 0'); }
+
         // === Create budget_expenses table ===
         this.db.run(`
             CREATE TABLE IF NOT EXISTS budget_expenses (
@@ -605,8 +610,9 @@ const Database = {
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 product_id INTEGER NOT NULL,
                 ve_item_name TEXT NOT NULL,
+                ve_item_price REAL NOT NULL DEFAULT 0,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(product_id, ve_item_name)
+                UNIQUE(product_id, ve_item_name, ve_item_price)
             )
         `);
 
@@ -2135,35 +2141,44 @@ const Database = {
         return results[0].values.map(r => r[0]);
     },
 
-    /** Returns ve_item_name strings currently mapped to a product */
+    /** Returns sorted distinct (name, price) pairs from ve_sale_items */
+    getDistinctVeItemNamesWithPrice() {
+        const results = this.db.exec(
+            'SELECT DISTINCT name, ROUND(price, 2) as price FROM ve_sale_items WHERE name IS NOT NULL ORDER BY name ASC, price ASC'
+        );
+        if (results.length === 0) return [];
+        return results[0].values.map(r => ({ name: r[0], price: r[1] }));
+    },
+
+    /** Returns {name, price} objects currently mapped to a product */
     getMappingsForProduct(productId) {
         const results = this.db.exec(
-            'SELECT ve_item_name FROM product_ve_mappings WHERE product_id = ? ORDER BY ve_item_name ASC',
+            'SELECT ve_item_name, ve_item_price FROM product_ve_mappings WHERE product_id = ? ORDER BY ve_item_name ASC',
             [productId]
         );
         if (results.length === 0) return [];
-        return results[0].values.map(r => r[0]);
+        return results[0].values.map(r => ({ name: r[0], price: r[1] || 0 }));
     },
 
-    /** Returns a Set of all ve_item_name values that have at least one mapping */
+    /** Returns a Set of "name|price.toFixed(2)" keys for all mapped VE items */
     getMappedVeItemNames() {
-        const results = this.db.exec('SELECT DISTINCT ve_item_name FROM product_ve_mappings');
+        const results = this.db.exec('SELECT DISTINCT ve_item_name, ve_item_price FROM product_ve_mappings');
         if (results.length === 0) return new Set();
-        return new Set(results[0].values.map(r => r[0]));
+        return new Set(results[0].values.map(r => r[0] + '|' + (r[1] || 0).toFixed(2)));
     },
 
     /**
-     * Replace all mappings for a product with a new set of ve_item_names.
+     * Replace all mappings for a product with a new set of {name, price} objects.
      * Deletes existing then inserts new ones.
      */
-    setMappingsForProduct(productId, itemNames) {
+    setMappingsForProduct(productId, items) {
         this.db.run('DELETE FROM product_ve_mappings WHERE product_id = ?', [productId]);
-        if (itemNames && itemNames.length > 0) {
+        if (items && items.length > 0) {
             const stmt = this.db.prepare(
-                'INSERT OR IGNORE INTO product_ve_mappings (product_id, ve_item_name) VALUES (?, ?)'
+                'INSERT OR IGNORE INTO product_ve_mappings (product_id, ve_item_name, ve_item_price) VALUES (?, ?, ?)'
             );
-            for (const name of itemNames) {
-                stmt.run([productId, name]);
+            for (const { name, price } of items) {
+                stmt.run([productId, name, price || 0]);
             }
             stmt.free();
         }
@@ -2192,7 +2207,7 @@ const Database = {
                 COALESCE(SUM(CASE WHEN vs.subtotal > 0 THEN vs.tax * (vi.amount / vs.subtotal) ELSE 0 END), 0) AS sales_tax
             FROM ve_sale_items vi
             JOIN ve_sales vs ON vs.transaction_no = vi.transaction_no
-            JOIN product_ve_mappings m ON m.ve_item_name = vi.name
+            JOIN product_ve_mappings m ON m.ve_item_name = vi.name AND ROUND(m.ve_item_price, 2) = ROUND(vi.price, 2)
             WHERE 1=1 ${whereFrag}
         `, params);
 
@@ -2209,7 +2224,7 @@ const Database = {
                    COALESCE(SUM(vi.quantity), 0) AS units_sold,
                    COALESCE(SUM(vi.amount), 0) AS revenue
             FROM ve_sale_items vi
-            JOIN product_ve_mappings m ON m.ve_item_name = vi.name
+            JOIN product_ve_mappings m ON m.ve_item_name = vi.name AND ROUND(m.ve_item_price, 2) = ROUND(vi.price, 2)
             JOIN products p ON p.id = m.product_id
             JOIN ve_sales vs ON vs.transaction_no = vi.transaction_no
             WHERE 1=1 ${whereFrag}
@@ -2226,7 +2241,7 @@ const Database = {
                        p.id AS product_id, p.name AS product_name, p.cogs,
                        COALESCE(SUM(vi.quantity), 0) AS qty_sold
                 FROM ve_sale_items vi
-                JOIN product_ve_mappings m ON m.ve_item_name = vi.name
+                JOIN product_ve_mappings m ON m.ve_item_name = vi.name AND ROUND(m.ve_item_price, 2) = ROUND(vi.price, 2)
                 JOIN products p ON p.id = m.product_id
                 JOIN ve_sales vs ON vs.transaction_no = vi.transaction_no
                 WHERE 1=1 ${whereFrag}

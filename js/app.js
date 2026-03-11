@@ -16,7 +16,6 @@ const App = {
     folderCreatedFromCategory: false,
     pendingFileLoad: null,
     pendingLoadBuffer: null,
-    savedFileHandle: null,
     pendingInlineStatusChange: null, // {id, newStatus, selectElement}
     currentSortMode: 'entryDate',
     _timeline: null,
@@ -1254,8 +1253,8 @@ const App = {
             this.handleSaveDatabase();
         });
 
-        document.getElementById('saveAsDbBtn').addEventListener('click', () => {
-            this.handleSaveAsDatabase();
+        document.getElementById('saveAllDbBtn').addEventListener('click', () => {
+            this.handleSaveAllDatabases();
         });
 
         document.getElementById('loadDbBtn').addEventListener('click', () => {
@@ -3938,26 +3937,11 @@ const App = {
     },
 
     /**
-     * Handle save database (uses File System Access API if available, with saved handle)
+     * Handle save database (always prompts for location)
      */
     async handleSaveDatabase() {
         const blob = Database.exportToFile();
 
-        // If we have a saved file handle, try to reuse it
-        if (this.savedFileHandle) {
-            try {
-                const writable = await this.savedFileHandle.createWritable();
-                await writable.write(blob);
-                await writable.close();
-                UI.showNotification('Journal saved', 'success');
-                return;
-            } catch (e) {
-                // Handle might be stale, fall through to picker
-                this.savedFileHandle = null;
-            }
-        }
-
-        // Try File System Access API
         if (window.showSaveFilePicker) {
             try {
                 const handle = await window.showSaveFilePicker({
@@ -3968,47 +3952,15 @@ const App = {
                     }]
                 });
 
-                this.savedFileHandle = handle;
-                const writable = await handle.createWritable();
-                await writable.write(blob);
-                await writable.close();
-                UI.showNotification('Journal saved', 'success');
-                return;
-            } catch (e) {
-                if (e.name === 'AbortError') return; // User cancelled
-                // Fall through to download
-            }
-        }
-
-        // Fallback: regular download
-        this.downloadBlob(blob, this.getSuggestedFilename());
-        UI.showNotification('Database saved successfully', 'success');
-    },
-
-    /**
-     * Handle save as (always prompts for new location)
-     */
-    async handleSaveAsDatabase() {
-        const blob = Database.exportToFile();
-
-        if (window.showSaveFilePicker) {
-            try {
-                const handle = await window.showSaveFilePicker({
-                    suggestedName: this.getSuggestedFilename(),
-                    types: [{
-                        description: 'Database Files',
-                        accept: { 'application/x-sqlite3': ['.db'] }
-                    }]
-                });
-
-                this.savedFileHandle = handle;
                 const writable = await handle.createWritable();
                 await writable.write(blob);
                 await writable.close();
                 UI.showNotification('Journal saved', 'success');
             } catch (e) {
                 if (e.name === 'AbortError') return;
-                UI.showNotification('Failed to save', 'error');
+                // Fall through to download
+                this.downloadBlob(blob, this.getSuggestedFilename());
+                UI.showNotification('Database saved successfully', 'success');
             }
         } else {
             // Fallback: show save as modal for naming
@@ -4017,6 +3969,62 @@ const App = {
                 ? `${Utils.sanitizeFilename(owner)}_accounting_journal`
                 : `accounting_journal_${new Date().toISOString().split('T')[0]}`;
             UI.showModal('saveAsModal');
+        }
+    },
+
+    /**
+     * Handle save all — downloads a zip containing all company .db files
+     */
+    async handleSaveAllDatabases() {
+        try {
+            const companies = CompanyManager.getAll();
+            if (!companies || companies.length === 0) {
+                UI.showNotification('No companies to save', 'error');
+                return;
+            }
+
+            // Save current company to IDB first so we get latest data
+            const currentData = Database.db.export();
+            await CompanyManager._writeIDB(CompanyManager._activeKey, new Uint8Array(currentData));
+
+            const zip = new JSZip();
+
+            for (const company of companies) {
+                const bytes = await CompanyManager._readIDB(company.id);
+                if (bytes) {
+                    const filename = `${Utils.sanitizeFilename(company.name)}_accounting_journal.db`;
+                    zip.file(filename, bytes);
+                }
+            }
+
+            const blob = await zip.generateAsync({ type: 'blob' });
+            const dateSuffix = new Date().toISOString().split('T')[0];
+            const suggestedName = `all_companies_${dateSuffix}.zip`;
+
+            if (window.showSaveFilePicker) {
+                try {
+                    const handle = await window.showSaveFilePicker({
+                        suggestedName,
+                        types: [{
+                            description: 'ZIP Archive',
+                            accept: { 'application/zip': ['.zip'] }
+                        }]
+                    });
+                    const writable = await handle.createWritable();
+                    await writable.write(blob);
+                    await writable.close();
+                    UI.showNotification(`Saved ${companies.length} company database(s)`, 'success');
+                    return;
+                } catch (e) {
+                    if (e.name === 'AbortError') return;
+                }
+            }
+
+            this.downloadBlob(blob, suggestedName);
+            UI.showNotification(`Saved ${companies.length} company database(s)`, 'success');
+        } catch (e) {
+            console.error('Save all failed:', e);
+            UI.showNotification('Failed to save all databases', 'error');
         }
     },
 
@@ -4215,23 +4223,27 @@ const App = {
     openManageLinksModal(productId) {
         const product = Database.getProductById(productId);
         if (!product) return;
-        const allNames = Database.getDistinctVeItemNames();
-        const mapped   = new Set(Database.getMappingsForProduct(productId));
+        const allItems = Database.getDistinctVeItemNamesWithPrice();
+        const mappedArr = Database.getMappingsForProduct(productId);
+        const mapped = new Set(mappedArr.map(m => m.name + '|||' + (m.price || 0).toFixed(2)));
 
         document.getElementById('pvmProductId').value = productId;
         document.getElementById('pvmProductName').textContent = product.name;
         document.getElementById('pvmSearchInput').value = '';
 
         const list = document.getElementById('pvmItemList');
-        if (allNames.length === 0) {
+        if (allItems.length === 0) {
             list.innerHTML = '<p class="pvm-empty-msg">No VE item names found. Import VE Sales data first.</p>';
         } else {
-            list.innerHTML = allNames.map(name => {
-                const checked = mapped.has(name) ? 'checked' : '';
+            list.innerHTML = allItems.map(({ name, price }) => {
+                const key = name + '|||' + (price || 0).toFixed(2);
+                const checked = mapped.has(key) ? 'checked' : '';
                 const esc = Utils.escapeHtml(name);
+                const priceStr = (price != null) ? Utils.formatCurrency(price) : '—';
                 return `<label class="pvm-item">
-                    <input type="checkbox" class="pvm-check" value="${esc}" ${checked}>
+                    <input type="checkbox" class="pvm-check" value="${esc}|||${(price || 0).toFixed(2)}" ${checked}>
                     <span class="pvm-item-name">${esc}</span>
+                    <span class="pvm-item-price">${priceStr}</span>
                 </label>`;
             }).join('');
         }
@@ -4256,7 +4268,10 @@ const App = {
     handleSaveProductMappings() {
         const productId = parseInt(document.getElementById('pvmProductId').value);
         const checked = [...document.querySelectorAll('#pvmItemList .pvm-check:checked')]
-            .map(cb => cb.value);
+            .map(cb => {
+                const [name, price] = cb.value.split('|||');
+                return { name, price: parseFloat(price) || 0 };
+            });
         Database.setMappingsForProduct(productId, checked);
         UI.hideModal('pvmModal');
         UI.showNotification('Links saved', 'success');
@@ -5202,7 +5217,7 @@ const App = {
         if (!this.pendingLoadBuffer) return;
         try {
             await CompanyManager.replaceActive(this.pendingLoadBuffer);
-            this.savedFileHandle = null;
+
             this._finalizeLoad('Database loaded successfully');
         } catch (error) {
             console.error('Error loading database:', error);
@@ -6136,7 +6151,7 @@ const App = {
     applyViewOnlyRestrictions() {
         const hideIds = [
             'newEntryBtn', 'addFolderEntriesBtn', 'manageCategoriesBtn',
-            'saveDbBtn', 'saveAsDbBtn', 'loadDbBtn', 'shareBtn'
+            'saveDbBtn', 'saveAllDbBtn', 'loadDbBtn', 'shareBtn'
         ];
         hideIds.forEach(id => {
             const el = document.getElementById(id);
@@ -6576,7 +6591,7 @@ const App = {
         for (let i = 0; i < products.length; i++) {
             const p = products[i];
             const inferBadge  = p.hasInferred ? '<span class="ve-inferred-badge">inferred</span>' : '';
-            const linkedBadge = mappedNames.has(p.name) ? '<span class="ve-linked-badge">linked</span>' : '';
+            const linkedBadge = mappedNames.has(p.name + '|' + p.price.toFixed(2)) ? '<span class="ve-linked-badge">linked</span>' : '';
             const prodNum = p.productNumber ? `<br><span class="ve-product-num">${Utils.escapeHtml(p.productNumber)}</span>` : '';
             const bgStyle = colorMap.has(i) ? ` style="background:${colorMap.get(i)}"` : '';
             html += `<tr${bgStyle}>
