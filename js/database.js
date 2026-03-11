@@ -8,7 +8,11 @@ const Database = {
     SQL: null,
     IDB_NAME: 'AccountingJournalDB',
     IDB_STORE: 'database',
-    IDB_KEY: 'sqliteDb',
+    get IDB_KEY() {
+        const key = CompanyManager.getActiveKey();
+        if (!key) throw new Error('CompanyManager not initialized — no active company key');
+        return key;
+    },
 
     /**
      * Initialize the database
@@ -18,6 +22,8 @@ const Database = {
         this.SQL = await initSqlJs({
             locateFile: file => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/${file}`
         });
+
+        await CompanyManager.init();
 
         const savedData = await this.loadFromIndexedDB();
 
@@ -29,6 +35,22 @@ const Database = {
             this.db = new this.SQL.Database();
             this.createSchema();
             console.log('New database created');
+        }
+    },
+
+    /**
+     * Swap the active in-memory database with the given bytes.
+     * Called by CompanyManager.switchTo() and replaceActive().
+     * @param {Uint8Array|null} bytes - SQLite binary, or null for a fresh blank DB
+     */
+    loadBytes(bytes) {
+        if (this.db) this.db.close();
+        if (bytes) {
+            this.db = new this.SQL.Database(bytes);
+            this.migrateSchema();
+        } else {
+            this.db = new this.SQL.Database();
+            this.createSchema();
         }
     },
 
@@ -205,6 +227,47 @@ const Database = {
                 is_discontinued INTEGER DEFAULT 0,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
+        this.db.run(`
+            CREATE TABLE IF NOT EXISTS ve_sales (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                transaction_no TEXT NOT NULL,
+                date DATE NOT NULL,
+                billing_name TEXT,
+                description TEXT,
+                subtotal DECIMAL(10,2) DEFAULT 0,
+                tax DECIMAL(10,2) DEFAULT 0,
+                shipping DECIMAL(10,2) DEFAULT 0,
+                discount DECIMAL(10,2) DEFAULT 0,
+                total DECIMAL(10,2) DEFAULT 0,
+                source TEXT NOT NULL DEFAULT 'online',
+                UNIQUE(transaction_no, source)
+            )
+        `);
+
+        this.db.run(`
+            CREATE TABLE IF NOT EXISTS ve_sale_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                transaction_no TEXT NOT NULL,
+                name TEXT NOT NULL,
+                product_number TEXT,
+                price DECIMAL(10,2) DEFAULT 0,
+                quantity INTEGER DEFAULT 1,
+                taxable INTEGER DEFAULT 0,
+                amount DECIMAL(10,2) DEFAULT 0,
+                inferred INTEGER DEFAULT 0
+            )
+        `);
+
+        this.db.run(`
+            CREATE TABLE IF NOT EXISTS product_ve_mappings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                product_id INTEGER NOT NULL,
+                ve_item_name TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(product_id, ve_item_name)
             )
         `);
 
@@ -504,6 +567,68 @@ const Database = {
                 FOREIGN KEY (category_id) REFERENCES categories(id)
             )
         `);
+
+        // === Create VE sales tables ===
+        this.db.run(`
+            CREATE TABLE IF NOT EXISTS ve_sales (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                transaction_no TEXT NOT NULL,
+                date DATE NOT NULL,
+                billing_name TEXT,
+                description TEXT,
+                subtotal DECIMAL(10,2) DEFAULT 0,
+                tax DECIMAL(10,2) DEFAULT 0,
+                shipping DECIMAL(10,2) DEFAULT 0,
+                discount DECIMAL(10,2) DEFAULT 0,
+                total DECIMAL(10,2) DEFAULT 0,
+                source TEXT NOT NULL DEFAULT 'online',
+                UNIQUE(transaction_no, source)
+            )
+        `);
+        this.db.run(`
+            CREATE TABLE IF NOT EXISTS ve_sale_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                transaction_no TEXT NOT NULL,
+                name TEXT NOT NULL,
+                product_number TEXT,
+                price DECIMAL(10,2) DEFAULT 0,
+                quantity INTEGER DEFAULT 1,
+                taxable INTEGER DEFAULT 0,
+                amount DECIMAL(10,2) DEFAULT 0,
+                inferred INTEGER DEFAULT 0
+            )
+        `);
+
+        // === Create product-VE mapping table ===
+        this.db.run(`
+            CREATE TABLE IF NOT EXISTS product_ve_mappings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                product_id INTEGER NOT NULL,
+                ve_item_name TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(product_id, ve_item_name)
+            )
+        `);
+
+        // === Create products table if missing ===
+        this.db.run(`
+            CREATE TABLE IF NOT EXISTS products (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                sku TEXT,
+                price DECIMAL(10,2) NOT NULL,
+                tax_rate DECIMAL(6,4) DEFAULT 0,
+                cogs DECIMAL(10,2) DEFAULT 0,
+                notes TEXT,
+                is_discontinued INTEGER DEFAULT 0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
+        // === Add is_discontinued column to products (if table existed before this migration) ===
+        try { this.db.exec('SELECT is_discontinued FROM products LIMIT 1'); }
+        catch (e) { this.db.run('ALTER TABLE products ADD COLUMN is_discontinued INTEGER DEFAULT 0'); }
     },
 
     // ==================== FOLDER OPERATIONS ====================
@@ -1747,6 +1872,10 @@ const Database = {
      * @param {number} loanId
      * @returns {Set<number>} Set of skipped payment numbers
      */
+    getLoanSkippedPayments(loanId) {
+        return this.getSkippedPayments(loanId);
+    },
+
     getSkippedPayments(loanId) {
         const results = this.db.exec('SELECT payment_number FROM loan_skipped_payments WHERE loan_id = ?', [loanId]);
         const set = new Set();
@@ -1972,6 +2101,7 @@ const Database = {
      * Delete a product
      */
     deleteProduct(id) {
+        this.db.run('DELETE FROM product_ve_mappings WHERE product_id = ?', [id]);
         this.db.run('DELETE FROM products WHERE id = ?', [id]);
         this.autoSave();
     },
@@ -1992,6 +2122,123 @@ const Database = {
         const results = this.db.exec('SELECT * FROM products WHERE id = ?', [id]);
         if (results.length === 0 || results[0].values.length === 0) return null;
         return this.rowsToObjects(results[0])[0];
+    },
+
+    // ==================== PRODUCT-VE MAPPINGS ====================
+
+    /** Returns sorted unique VE item names from ve_sale_items */
+    getDistinctVeItemNames() {
+        const results = this.db.exec(
+            'SELECT DISTINCT name FROM ve_sale_items WHERE name IS NOT NULL ORDER BY name ASC'
+        );
+        if (results.length === 0) return [];
+        return results[0].values.map(r => r[0]);
+    },
+
+    /** Returns ve_item_name strings currently mapped to a product */
+    getMappingsForProduct(productId) {
+        const results = this.db.exec(
+            'SELECT ve_item_name FROM product_ve_mappings WHERE product_id = ? ORDER BY ve_item_name ASC',
+            [productId]
+        );
+        if (results.length === 0) return [];
+        return results[0].values.map(r => r[0]);
+    },
+
+    /** Returns a Set of all ve_item_name values that have at least one mapping */
+    getMappedVeItemNames() {
+        const results = this.db.exec('SELECT DISTINCT ve_item_name FROM product_ve_mappings');
+        if (results.length === 0) return new Set();
+        return new Set(results[0].values.map(r => r[0]));
+    },
+
+    /**
+     * Replace all mappings for a product with a new set of ve_item_names.
+     * Deletes existing then inserts new ones.
+     */
+    setMappingsForProduct(productId, itemNames) {
+        this.db.run('DELETE FROM product_ve_mappings WHERE product_id = ?', [productId]);
+        if (itemNames && itemNames.length > 0) {
+            const stmt = this.db.prepare(
+                'INSERT OR IGNORE INTO product_ve_mappings (product_id, ve_item_name) VALUES (?, ?)'
+            );
+            for (const name of itemNames) {
+                stmt.run([productId, name]);
+            }
+            stmt.free();
+        }
+        this.autoSave();
+    },
+
+    /**
+     * Compute linked analytics for the Products tab.
+     * Returns { totals, byProduct, monthlyCogs }
+     */
+    getLinkedProductAnalytics(dateFrom, dateTo) {
+        const empty = { totals: { pretax_total: 0, sales_tax: 0, post_tax_total: 0 }, byProduct: [], monthlyCogs: [] };
+        const hasMappings = this.db.exec('SELECT 1 FROM product_ve_mappings LIMIT 1');
+        if (hasMappings.length === 0) return empty;
+
+        const conditions = [];
+        const params = [];
+        if (dateFrom) { conditions.push('vs.date >= ?'); params.push(dateFrom); }
+        if (dateTo)   { conditions.push('vs.date <= ?'); params.push(dateTo); }
+        const whereFrag = conditions.length > 0 ? 'AND ' + conditions.join(' AND ') : '';
+
+        // Totals
+        const totalsResult = this.db.exec(`
+            SELECT
+                COALESCE(SUM(vi.amount), 0) AS pretax_total,
+                COALESCE(SUM(CASE WHEN vs.subtotal > 0 THEN vs.tax * (vi.amount / vs.subtotal) ELSE 0 END), 0) AS sales_tax
+            FROM ve_sale_items vi
+            JOIN ve_sales vs ON vs.transaction_no = vi.transaction_no
+            JOIN product_ve_mappings m ON m.ve_item_name = vi.name
+            WHERE 1=1 ${whereFrag}
+        `, params);
+
+        let totals = { pretax_total: 0, sales_tax: 0, post_tax_total: 0 };
+        if (totalsResult.length > 0 && totalsResult[0].values.length > 0) {
+            const pt = totalsResult[0].values[0][0] || 0;
+            const st = totalsResult[0].values[0][1] || 0;
+            totals = { pretax_total: pt, sales_tax: st, post_tax_total: pt + st };
+        }
+
+        // By-product aggregates
+        const byProductResult = this.db.exec(`
+            SELECT p.id, p.name, p.cogs,
+                   COALESCE(SUM(vi.quantity), 0) AS units_sold,
+                   COALESCE(SUM(vi.amount), 0) AS revenue
+            FROM ve_sale_items vi
+            JOIN product_ve_mappings m ON m.ve_item_name = vi.name
+            JOIN products p ON p.id = m.product_id
+            JOIN ve_sales vs ON vs.transaction_no = vi.transaction_no
+            WHERE 1=1 ${whereFrag}
+            GROUP BY p.id, p.name, p.cogs
+            ORDER BY revenue DESC
+        `, params);
+        const byProduct = byProductResult.length > 0 ? this.rowsToObjects(byProductResult[0]) : [];
+
+        // Monthly COGS pivot rows
+        let monthlyCogs = [];
+        if (byProduct.length > 0) {
+            const mcResult = this.db.exec(`
+                SELECT strftime('%Y-%m', vs.date) AS month,
+                       p.id AS product_id, p.name AS product_name, p.cogs,
+                       COALESCE(SUM(vi.quantity), 0) AS qty_sold
+                FROM ve_sale_items vi
+                JOIN product_ve_mappings m ON m.ve_item_name = vi.name
+                JOIN products p ON p.id = m.product_id
+                JOIN ve_sales vs ON vs.transaction_no = vi.transaction_no
+                WHERE 1=1 ${whereFrag}
+                GROUP BY month, p.id
+                ORDER BY month ASC, p.name ASC
+            `, params);
+            if (mcResult.length > 0) {
+                monthlyCogs = this.rowsToObjects(mcResult[0]);
+            }
+        }
+
+        return { totals, byProduct, monthlyCogs };
     },
 
     // ==================== BREAK-EVEN CONFIG ====================
@@ -2857,6 +3104,95 @@ const Database = {
     },
 
     // ==================== HELPERS ====================
+
+    // ==================== VE SALES OPERATIONS ====================
+
+    clearVESales(source) {
+        if (source) {
+            const txNos = this.db.exec('SELECT transaction_no FROM ve_sales WHERE source = ?', [source]);
+            if (txNos.length > 0) {
+                for (const row of txNos[0].values) {
+                    this.db.run('DELETE FROM ve_sale_items WHERE transaction_no = ?', [row[0]]);
+                }
+            }
+            this.db.run('DELETE FROM ve_sales WHERE source = ?', [source]);
+        } else {
+            this.db.run('DELETE FROM ve_sale_items');
+            this.db.run('DELETE FROM ve_sales');
+        }
+        this.autoSave();
+    },
+
+    upsertVESales(salesArray) {
+        const stmt = this.db.prepare('INSERT OR REPLACE INTO ve_sales (transaction_no, date, billing_name, description, subtotal, tax, shipping, discount, total, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+        for (const s of salesArray) {
+            stmt.run([s.transactionNo, s.date, s.billingName || '', s.description || '', s.subtotal || 0, s.tax || 0, s.shipping || 0, s.discount || 0, s.total || 0, s.source || 'online']);
+        }
+        stmt.free();
+        this.autoSave();
+    },
+
+    upsertVESaleItems(txNo, items) {
+        this.db.run('DELETE FROM ve_sale_items WHERE transaction_no = ?', [txNo]);
+        const stmt = this.db.prepare('INSERT INTO ve_sale_items (transaction_no, name, product_number, price, quantity, taxable, amount, inferred) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+        for (const item of items) {
+            stmt.run([txNo, item.name || 'Unknown', item.productNumber || null, item.price || 0, item.quantity || 1, item.taxable ? 1 : 0, item.amount || 0, item.inferred ? 1 : 0]);
+        }
+        stmt.free();
+        this.autoSave();
+    },
+
+    getVESales(filters = {}) {
+        let sql = 'SELECT * FROM ve_sales WHERE 1=1';
+        const params = [];
+        if (filters.source && filters.source !== 'both') {
+            sql += ' AND source = ?';
+            params.push(filters.source);
+        }
+        if (filters.fromDate) {
+            sql += ' AND date >= ?';
+            params.push(filters.fromDate);
+        }
+        if (filters.toDate) {
+            sql += ' AND date <= ?';
+            params.push(filters.toDate);
+        }
+        sql += ' ORDER BY date DESC';
+        const results = this.db.exec(sql, params);
+        if (results.length === 0) return [];
+        return this.rowsToObjects(results[0]);
+    },
+
+    getAllVESaleItems() {
+        const results = this.db.exec('SELECT * FROM ve_sale_items');
+        if (results.length === 0) return new Map();
+        const rows = this.rowsToObjects(results[0]);
+        const map = new Map();
+        for (const row of rows) {
+            if (!map.has(row.transaction_no)) map.set(row.transaction_no, []);
+            map.get(row.transaction_no).push({
+                name: row.name,
+                productNumber: row.product_number,
+                price: row.price,
+                quantity: row.quantity,
+                taxable: !!row.taxable,
+                amount: row.amount,
+                inferred: !!row.inferred,
+            });
+        }
+        return map;
+    },
+
+    getVEImportMeta() {
+        const result = this.db.exec("SELECT value FROM app_meta WHERE key = 've_import_meta'");
+        if (result.length === 0 || result[0].values.length === 0) return null;
+        try { return JSON.parse(result[0].values[0][0]); } catch { return null; }
+    },
+
+    setVEImportMeta(meta) {
+        this.db.run("INSERT OR REPLACE INTO app_meta (key, value) VALUES ('ve_import_meta', ?)", [JSON.stringify(meta)]);
+        this.autoSave();
+    },
 
     /**
      * Convert sql.js result rows to objects

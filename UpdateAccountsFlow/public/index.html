@@ -215,6 +215,7 @@
     <div class="control-group">
       <label>&nbsp;</label>
       <button class="refresh-btn" id="refreshBtn" title="Download fresh Excel files from VE Hub">Update Data</button>
+      <button class="refresh-btn" id="exportBtn" title="Export all data as JSON for import into Accounting Journal" style="background:#28a745;">Export JSON</button>
     </div>
   </div>
 
@@ -899,6 +900,37 @@ async function refreshExcel() {
   }
 }
 
+// --- Export JSON ---
+async function exportJson() {
+  const btn = document.getElementById('exportBtn');
+  btn.disabled = true;
+  btn.textContent = 'Exporting...';
+  try {
+    const res = await fetch('/api/export');
+    if (!res.ok) {
+      let msg = 'Export failed';
+      try { const body = await res.json(); msg = body.error || msg; } catch {}
+      throw new Error(msg);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 've-sales-export.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    btn.textContent = 'Exported!';
+    setTimeout(() => { btn.textContent = 'Export JSON'; }, 2000);
+  } catch (err) {
+    alert('Export failed: ' + err.message);
+    btn.textContent = 'Export JSON';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 // --- Init ---
 document.getElementById('filterSource').addEventListener('change', applyFilters);
 document.getElementById('filterFrom').addEventListener('change', applyFilters);
@@ -907,6 +939,7 @@ document.getElementById('sortBy').addEventListener('change', applyFilters);
 document.getElementById('filterPreset').addEventListener('change', applyPreset);
 document.getElementById('scrapeBtn').addEventListener('click', startScrape);
 document.getElementById('refreshBtn').addEventListener('click', refreshExcel);
+document.getElementById('exportBtn').addEventListener('click', exportJson);
 document.getElementById('highlightDupes').addEventListener('change', renderProducts);
 setupColumnSort();
 setupProductSort();

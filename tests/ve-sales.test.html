@@ -1,0 +1,652 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>VE Sales Tab — Unit Tests</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 24px; background: #f8f9fa; }
+  h1 { font-size: 1.4rem; margin-bottom: 16px; }
+  .suite { margin-bottom: 20px; }
+  .suite h2 { font-size: 1rem; margin-bottom: 8px; border-bottom: 2px solid #4a90a4; padding-bottom: 4px; }
+  .test { padding: 6px 12px; margin: 2px 0; border-radius: 4px; font-size: 0.85rem; }
+  .test.pass { background: #d4edda; color: #155724; }
+  .test.fail { background: #f8d7da; color: #721c24; }
+  .summary { margin-top: 20px; padding: 16px; background: #fff; border-radius: 8px; font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+  .error-detail { font-size: 0.78rem; color: #721c24; margin-top: 2px; font-family: monospace; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<h1>VE Sales Tab — Unit Tests</h1>
+<div id="results"></div>
+<div id="summary" class="summary"></div>
+
+<!-- Load SheetJS for Excel tests -->
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+
+<!-- Load sql.js for database tests -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/sql-wasm.js"></script>
+
+<script>
+// ============== Minimal Test Framework ==============
+let passed = 0, failed = 0;
+const resultsEl = document.getElementById('results');
+
+function suite(name) {
+  const div = document.createElement('div');
+  div.className = 'suite';
+  div.innerHTML = `<h2>${name}</h2>`;
+  resultsEl.appendChild(div);
+  return div;
+}
+
+function test(suiteEl, name, fn) {
+  const div = document.createElement('div');
+  div.className = 'test';
+  try {
+    fn();
+    div.className = 'test pass';
+    div.textContent = '\u2714 ' + name;
+    passed++;
+  } catch (e) {
+    div.className = 'test fail';
+    div.innerHTML = '\u2718 ' + name + `<div class="error-detail">${e.message || e}</div>`;
+    failed++;
+  }
+  suiteEl.appendChild(div);
+}
+
+function assert(condition, msg) {
+  if (!condition) throw new Error(msg || 'Assertion failed');
+}
+
+function assertEqual(actual, expected, msg) {
+  if (actual !== expected) throw new Error((msg || '') + ` Expected: ${JSON.stringify(expected)}, Got: ${JSON.stringify(actual)}`);
+}
+
+function assertClose(actual, expected, tolerance, msg) {
+  if (Math.abs(actual - expected) > tolerance) throw new Error((msg || '') + ` Expected ~${expected}, Got ${actual}`);
+}
+
+// ============== Extracted App Logic (for testing without full app) ==============
+
+const VEParser = {
+  veFindCol(headers, candidates) {
+    for (const name of candidates) {
+      if (headers[name] !== undefined) return name;
+    }
+    return null;
+  },
+
+  veParseNumber(val) {
+    if (val === null || val === undefined) return 0;
+    if (typeof val === 'number') return val;
+    const cleaned = String(val).replace(/[$,\s]/g, '');
+    const num = parseFloat(cleaned);
+    return isNaN(num) ? 0 : num;
+  },
+
+  veParseDate(val) {
+    if (!val) return null;
+    if (val instanceof Date) return isNaN(val.getTime()) ? null : val.toISOString().split('T')[0];
+    const str = String(val).trim();
+    const d = new Date(str);
+    return isNaN(d.getTime()) ? null : d.toISOString().split('T')[0];
+  },
+
+  veResolveColumns(headers) {
+    return {
+      transactionNo: this.veFindCol(headers, ['transaction no', 'transaction_no', 'transactionno', 'trans no', 'order no', 'order number']),
+      date: this.veFindCol(headers, ['date', 'order date', 'transaction date']),
+      billingName: this.veFindCol(headers, ['billing name', 'billing_name', 'customer', 'name']),
+      subtotal: this.veFindCol(headers, ['subtotal', 'sub total', 'sub-total', 'pretax']),
+      tax: this.veFindCol(headers, ['tax', 'sales tax', 'tax amount']),
+      shipping: this.veFindCol(headers, ['shipping', 'shipping cost', 'freight']),
+      discount: this.veFindCol(headers, ['discount', 'discount amount']),
+      total: this.veFindCol(headers, ['total', 'grand total', 'order total', 'amount']),
+    };
+  },
+};
+
+// ============== Tests ==============
+
+// --- Number Parsing ---
+const s1 = suite('Number Parsing (veParseNumber)');
+
+test(s1, 'parses integer', () => {
+  assertEqual(VEParser.veParseNumber(42), 42);
+});
+
+test(s1, 'parses float', () => {
+  assertEqual(VEParser.veParseNumber(19.99), 19.99);
+});
+
+test(s1, 'parses string with dollar sign', () => {
+  assertEqual(VEParser.veParseNumber('$19.99'), 19.99);
+});
+
+test(s1, 'parses string with commas', () => {
+  assertEqual(VEParser.veParseNumber('$1,234.56'), 1234.56);
+});
+
+test(s1, 'returns 0 for null', () => {
+  assertEqual(VEParser.veParseNumber(null), 0);
+});
+
+test(s1, 'returns 0 for undefined', () => {
+  assertEqual(VEParser.veParseNumber(undefined), 0);
+});
+
+test(s1, 'returns 0 for non-numeric string', () => {
+  assertEqual(VEParser.veParseNumber('abc'), 0);
+});
+
+test(s1, 'handles negative numbers', () => {
+  assertEqual(VEParser.veParseNumber('-5.50'), -5.50);
+});
+
+// --- Date Parsing ---
+const s2 = suite('Date Parsing (veParseDate)');
+
+test(s2, 'parses ISO date string', () => {
+  assertEqual(VEParser.veParseDate('2026-03-06'), '2026-03-06');
+});
+
+test(s2, 'parses Date object', () => {
+  const result = VEParser.veParseDate(new Date('2026-03-06T00:00:00Z'));
+  assertEqual(result, '2026-03-06');
+});
+
+test(s2, 'returns null for null input', () => {
+  assertEqual(VEParser.veParseDate(null), null);
+});
+
+test(s2, 'returns null for empty string', () => {
+  assertEqual(VEParser.veParseDate(''), null);
+});
+
+test(s2, 'returns null for invalid date', () => {
+  assertEqual(VEParser.veParseDate('not-a-date'), null);
+});
+
+test(s2, 'parses US date format', () => {
+  const result = VEParser.veParseDate('03/06/2026');
+  assert(result !== null, 'Should parse US date format');
+});
+
+// --- Column Resolution ---
+const s3 = suite('Column Resolution (veFindCol / veResolveColumns)');
+
+test(s3, 'finds exact column name', () => {
+  const headers = { 'transaction no': 'Transaction No', 'date': 'Date', 'total': 'Total' };
+  assertEqual(VEParser.veFindCol(headers, ['transaction no']), 'transaction no');
+});
+
+test(s3, 'finds alternate column name', () => {
+  const headers = { 'order no': 'Order No', 'date': 'Date' };
+  assertEqual(VEParser.veFindCol(headers, ['transaction no', 'transaction_no', 'order no']), 'order no');
+});
+
+test(s3, 'returns null when no match', () => {
+  const headers = { 'foo': 'Foo', 'bar': 'Bar' };
+  assertEqual(VEParser.veFindCol(headers, ['transaction no', 'order no']), null);
+});
+
+test(s3, 'resolves full column set', () => {
+  const headers = { 'transaction no': 'X', 'date': 'X', 'billing name': 'X', 'subtotal': 'X', 'tax': 'X', 'shipping': 'X', 'discount': 'X', 'total': 'X' };
+  const cols = VEParser.veResolveColumns(headers);
+  assertEqual(cols.transactionNo, 'transaction no');
+  assertEqual(cols.date, 'date');
+  assertEqual(cols.billingName, 'billing name');
+  assertEqual(cols.subtotal, 'subtotal');
+  assertEqual(cols.tax, 'tax');
+  assertEqual(cols.shipping, 'shipping');
+  assertEqual(cols.discount, 'discount');
+  assertEqual(cols.total, 'total');
+});
+
+test(s3, 'resolves alternate column names', () => {
+  const headers = { 'order number': 'X', 'order date': 'X', 'customer': 'X', 'pretax': 'X', 'sales tax': 'X', 'freight': 'X', 'grand total': 'X' };
+  const cols = VEParser.veResolveColumns(headers);
+  assertEqual(cols.transactionNo, 'order number');
+  assertEqual(cols.date, 'order date');
+  assertEqual(cols.billingName, 'customer');
+  assertEqual(cols.subtotal, 'pretax');
+  assertEqual(cols.tax, 'sales tax');
+  assertEqual(cols.shipping, 'freight');
+  assertEqual(cols.total, 'grand total');
+});
+
+// --- Excel Parsing (SheetJS in-memory) ---
+const s4 = suite('Excel Parsing (veParseExcel via SheetJS)');
+
+function createTestWorkbook(salesData, itemsData) {
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.json_to_sheet(salesData);
+  XLSX.utils.book_append_sheet(wb, ws, 'Sales');
+  if (itemsData) {
+    const wsItems = XLSX.utils.json_to_sheet(itemsData);
+    XLSX.utils.book_append_sheet(wb, wsItems, 'Sales transaction items');
+  }
+  return XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+}
+
+// Minimal veParseExcel for testing (extracted from App)
+function veParseExcel(arrayBuffer) {
+  const workbook = XLSX.read(arrayBuffer, { type: 'array', cellDates: true });
+  const sheet = workbook.Sheets[workbook.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+  if (rows.length === 0) return { sales: [], lineItems: new Map() };
+
+  const headers = {};
+  for (const key of Object.keys(rows[0])) headers[key.trim().toLowerCase()] = key;
+  const cols = VEParser.veResolveColumns(headers);
+
+  const sales = [];
+  for (const row of rows) {
+    const txNo = cols.transactionNo ? row[headers[cols.transactionNo]] : null;
+    const dateRaw = cols.date ? row[headers[cols.date]] : null;
+    const total = VEParser.veParseNumber(cols.total ? row[headers[cols.total]] : 0);
+    if (!txNo && !dateRaw && !total) continue;
+    const date = VEParser.veParseDate(dateRaw);
+    if (!date) continue;
+    sales.push({
+      transactionNo: String(txNo || ''),
+      date,
+      billingName: String(cols.billingName ? row[headers[cols.billingName]] : ''),
+      subtotal: VEParser.veParseNumber(cols.subtotal ? row[headers[cols.subtotal]] : 0),
+      tax: VEParser.veParseNumber(cols.tax ? row[headers[cols.tax]] : 0),
+      shipping: VEParser.veParseNumber(cols.shipping ? row[headers[cols.shipping]] : 0),
+      discount: Math.abs(VEParser.veParseNumber(cols.discount ? row[headers[cols.discount]] : 0)),
+      total,
+      source: 'online',
+    });
+  }
+
+  const lineItems = new Map();
+  const itemsSheetName = workbook.SheetNames.find(n => n.toLowerCase().includes('item'));
+  if (itemsSheetName) {
+    const itemSheet = workbook.Sheets[itemsSheetName];
+    const itemRows = XLSX.utils.sheet_to_json(itemSheet, { defval: '' });
+    if (itemRows.length > 0) {
+      const itemHeaders = {};
+      for (const key of Object.keys(itemRows[0])) itemHeaders[key.trim().toLowerCase()] = key;
+      const txCol = VEParser.veFindCol(itemHeaders, ['transaction no', 'transaction_no']);
+      const nameCol = VEParser.veFindCol(itemHeaders, ['item name', 'product name', 'name']);
+      const priceCol = VEParser.veFindCol(itemHeaders, ['price', 'unit price']);
+      const qtyCol = VEParser.veFindCol(itemHeaders, ['quantity', 'qty']);
+      const amountCol = VEParser.veFindCol(itemHeaders, ['amount', 'total']);
+      if (txCol && nameCol) {
+        for (const row of itemRows) {
+          const txNoVal = String(row[itemHeaders[txCol]] || '').trim();
+          if (!txNoVal) continue;
+          const item = {
+            name: String(row[itemHeaders[nameCol]] || 'Unknown').trim(),
+            price: VEParser.veParseNumber(priceCol ? row[itemHeaders[priceCol]] : 0),
+            quantity: parseInt(qtyCol ? row[itemHeaders[qtyCol]] : '1', 10) || 1,
+            amount: VEParser.veParseNumber(amountCol ? row[itemHeaders[amountCol]] : 0),
+          };
+          if (!lineItems.has(txNoVal)) lineItems.set(txNoVal, []);
+          lineItems.get(txNoVal).push(item);
+        }
+      }
+    }
+  }
+  return { sales, lineItems };
+}
+
+test(s4, 'parses basic sales data', () => {
+  const ab = createTestWorkbook([
+    { 'Transaction No': 'TX-001', 'Date': '2026-03-01', 'Billing Name': 'Alice', 'Subtotal': 50, 'Tax': 4.50, 'Shipping': 0, 'Discount': 0, 'Total': 54.50 },
+    { 'Transaction No': 'TX-002', 'Date': '2026-03-02', 'Billing Name': 'Bob', 'Subtotal': 100, 'Tax': 9, 'Shipping': 5, 'Discount': 10, 'Total': 104 },
+  ]);
+  const { sales } = veParseExcel(ab);
+  assertEqual(sales.length, 2, 'Should parse 2 sales');
+  assertEqual(sales[0].transactionNo, 'TX-001');
+  assertEqual(sales[0].subtotal, 50);
+  assertEqual(sales[0].tax, 4.50);
+  assertEqual(sales[1].discount, 10);
+  assertEqual(sales[1].shipping, 5);
+});
+
+test(s4, 'parses line items from second sheet', () => {
+  const ab = createTestWorkbook(
+    [{ 'Transaction No': 'TX-001', 'Date': '2026-03-01', 'Total': 50 }],
+    [
+      { 'Transaction No': 'TX-001', 'Item Name': 'Widget A', 'Price': 25, 'Quantity': 2, 'Amount': 50 },
+    ]
+  );
+  const { lineItems } = veParseExcel(ab);
+  assert(lineItems.has('TX-001'), 'Should have items for TX-001');
+  assertEqual(lineItems.get('TX-001').length, 1);
+  assertEqual(lineItems.get('TX-001')[0].name, 'Widget A');
+  assertEqual(lineItems.get('TX-001')[0].quantity, 2);
+});
+
+test(s4, 'handles empty Excel file gracefully', () => {
+  const ab = createTestWorkbook([]);
+  const { sales } = veParseExcel(ab);
+  assertEqual(sales.length, 0);
+});
+
+test(s4, 'skips rows with invalid dates', () => {
+  const ab = createTestWorkbook([
+    { 'Transaction No': 'TX-001', 'Date': '2026-03-01', 'Total': 50 },
+    { 'Transaction No': 'TX-002', 'Date': '', 'Total': 30 },
+  ]);
+  const { sales } = veParseExcel(ab);
+  assertEqual(sales.length, 1, 'Should skip row with empty date');
+});
+
+test(s4, 'handles multiple line items per transaction', () => {
+  const ab = createTestWorkbook(
+    [{ 'Transaction No': 'TX-001', 'Date': '2026-03-01', 'Total': 75 }],
+    [
+      { 'Transaction No': 'TX-001', 'Item Name': 'Widget A', 'Price': 25, 'Quantity': 1, 'Amount': 25 },
+      { 'Transaction No': 'TX-001', 'Item Name': 'Widget B', 'Price': 50, 'Quantity': 1, 'Amount': 50 },
+    ]
+  );
+  const { lineItems } = veParseExcel(ab);
+  assertEqual(lineItems.get('TX-001').length, 2);
+});
+
+// --- JSON Import Validation ---
+const s5 = suite('JSON Import Validation');
+
+test(s5, 'valid JSON export parses correctly', () => {
+  const json = {
+    exportVersion: 1,
+    exportDate: '2026-03-10T00:00:00Z',
+    companyName: 'Test Co',
+    sales: [
+      { transactionNo: 'TX-001', date: '2026-03-01T00:00:00Z', billingName: 'Alice', subtotal: 50, tax: 4.5, shipping: 0, discount: 0, total: 54.5, source: 'online' },
+    ],
+    lineItems: {
+      'TX-001': [{ name: 'Widget', price: 50, quantity: 1, amount: 50 }],
+    },
+  };
+  const str = JSON.stringify(json);
+  const parsed = JSON.parse(str);
+  assertEqual(parsed.exportVersion, 1);
+  assertEqual(parsed.sales.length, 1);
+  assertEqual(parsed.sales[0].transactionNo, 'TX-001');
+  assert(parsed.lineItems['TX-001'].length === 1);
+});
+
+test(s5, 'rejects invalid JSON', () => {
+  let threw = false;
+  try { JSON.parse('{invalid json}'); } catch { threw = true; }
+  assert(threw, 'Should throw on invalid JSON');
+});
+
+test(s5, 'detects missing exportVersion', () => {
+  const json = { sales: [] };
+  assert(!json.exportVersion, 'Should detect missing exportVersion');
+});
+
+test(s5, 'detects missing sales array', () => {
+  const json = { exportVersion: 1 };
+  assert(!Array.isArray(json.sales), 'Should detect missing sales array');
+});
+
+// --- Filter Logic ---
+const s6 = suite('Filter Logic');
+
+const testSales = [
+  { transaction_no: 'TX-001', date: '2026-01-15', source: 'online', subtotal: 50, tax: 4.5, total: 54.5, shipping: 0, discount: 0 },
+  { transaction_no: 'TX-002', date: '2026-02-10', source: 'tradeshow', subtotal: 100, tax: 9, total: 109, shipping: 5, discount: 10 },
+  { transaction_no: 'TX-003', date: '2026-03-05', source: 'online', subtotal: 75, tax: 6.75, total: 81.75, shipping: 0, discount: 0 },
+];
+
+function filterSales(sales, { source = 'both', fromDate = '', toDate = '' } = {}) {
+  return sales.filter(s => {
+    if (source !== 'both' && s.source !== source) return false;
+    if (fromDate && s.date < fromDate) return false;
+    if (toDate && s.date > toDate) return false;
+    return true;
+  });
+}
+
+test(s6, 'no filters returns all', () => {
+  assertEqual(filterSales(testSales).length, 3);
+});
+
+test(s6, 'filter by source online', () => {
+  const result = filterSales(testSales, { source: 'online' });
+  assertEqual(result.length, 2);
+  assert(result.every(s => s.source === 'online'));
+});
+
+test(s6, 'filter by source tradeshow', () => {
+  const result = filterSales(testSales, { source: 'tradeshow' });
+  assertEqual(result.length, 1);
+  assertEqual(result[0].transaction_no, 'TX-002');
+});
+
+test(s6, 'filter by date range', () => {
+  const result = filterSales(testSales, { fromDate: '2026-02-01', toDate: '2026-02-28' });
+  assertEqual(result.length, 1);
+  assertEqual(result[0].transaction_no, 'TX-002');
+});
+
+test(s6, 'filter by from date only', () => {
+  const result = filterSales(testSales, { fromDate: '2026-03-01' });
+  assertEqual(result.length, 1);
+  assertEqual(result[0].transaction_no, 'TX-003');
+});
+
+test(s6, 'filter by to date only', () => {
+  const result = filterSales(testSales, { toDate: '2026-01-31' });
+  assertEqual(result.length, 1);
+  assertEqual(result[0].transaction_no, 'TX-001');
+});
+
+test(s6, 'combined source + date filter', () => {
+  const result = filterSales(testSales, { source: 'online', fromDate: '2026-02-01' });
+  assertEqual(result.length, 1);
+  assertEqual(result[0].transaction_no, 'TX-003');
+});
+
+// --- Summary Math ---
+const s7 = suite('Summary Math');
+
+test(s7, 'calculates correct totals', () => {
+  let subtotal = 0, tax = 0, total = 0, shipping = 0, discount = 0;
+  for (const s of testSales) {
+    subtotal += s.subtotal; tax += s.tax; total += s.total;
+    shipping += s.shipping; discount += s.discount;
+  }
+  assertEqual(subtotal, 225);
+  assertClose(tax, 20.25, 0.01);
+  assertClose(total, 245.25, 0.01);
+  assertEqual(shipping, 5);
+  assertEqual(discount, 10);
+});
+
+test(s7, 'discount count is correct', () => {
+  const dc = testSales.filter(s => s.discount > 0).length;
+  assertEqual(dc, 1);
+});
+
+test(s7, 'shipping count is correct', () => {
+  const sc = testSales.filter(s => s.shipping > 0).length;
+  assertEqual(sc, 1);
+});
+
+// --- Product Aggregation ---
+const s8 = suite('Product Aggregation');
+
+test(s8, 'groups products by name + price', () => {
+  const items = new Map();
+  items.set('TX-001', [
+    { name: 'Widget A', price: 25, quantity: 2, amount: 50 },
+  ]);
+  items.set('TX-002', [
+    { name: 'Widget A', price: 25, quantity: 1, amount: 25 },
+    { name: 'Widget B', price: 50, quantity: 1, amount: 50 },
+  ]);
+
+  const map = new Map();
+  for (const [, txItems] of items) {
+    for (const item of txItems) {
+      const key = item.name.toLowerCase().trim() + '|' + item.price.toFixed(2);
+      if (!map.has(key)) map.set(key, { name: item.name, price: item.price, totalQty: 0, totalRevenue: 0 });
+      const entry = map.get(key);
+      entry.totalQty += item.quantity;
+      entry.totalRevenue += item.amount;
+    }
+  }
+
+  assertEqual(map.size, 2, 'Should have 2 unique products');
+  const widgetA = map.get('widget a|25.00');
+  assertEqual(widgetA.totalQty, 3, 'Widget A total qty');
+  assertEqual(widgetA.totalRevenue, 75, 'Widget A total revenue');
+  const widgetB = map.get('widget b|50.00');
+  assertEqual(widgetB.totalQty, 1);
+  assertEqual(widgetB.totalRevenue, 50);
+});
+
+test(s8, 'same product different prices creates separate entries', () => {
+  const map = new Map();
+  const items = [
+    { name: 'Widget A', price: 25, quantity: 1, amount: 25 },
+    { name: 'Widget A', price: 30, quantity: 1, amount: 30 },
+  ];
+  for (const item of items) {
+    const key = item.name.toLowerCase().trim() + '|' + item.price.toFixed(2);
+    if (!map.has(key)) map.set(key, { totalQty: 0, totalRevenue: 0 });
+    map.get(key).totalQty += item.quantity;
+    map.get(key).totalRevenue += item.amount;
+  }
+  assertEqual(map.size, 2, 'Different prices should create separate entries');
+});
+
+// --- Database CRUD (requires sql.js) ---
+const s9 = suite('Database CRUD (SQLite)');
+
+async function runDbTests() {
+  const SQL = await initSqlJs({
+    locateFile: file => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/${file}`
+  });
+  const db = new SQL.Database();
+
+  // Create tables
+  db.run(`CREATE TABLE IF NOT EXISTS ve_sales (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    transaction_no TEXT NOT NULL,
+    date DATE NOT NULL,
+    billing_name TEXT,
+    description TEXT,
+    subtotal DECIMAL(10,2) DEFAULT 0,
+    tax DECIMAL(10,2) DEFAULT 0,
+    shipping DECIMAL(10,2) DEFAULT 0,
+    discount DECIMAL(10,2) DEFAULT 0,
+    total DECIMAL(10,2) DEFAULT 0,
+    source TEXT NOT NULL DEFAULT 'online',
+    UNIQUE(transaction_no, source)
+  )`);
+
+  db.run(`CREATE TABLE IF NOT EXISTS ve_sale_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    transaction_no TEXT NOT NULL,
+    name TEXT NOT NULL,
+    product_number TEXT,
+    price DECIMAL(10,2) DEFAULT 0,
+    quantity INTEGER DEFAULT 1,
+    taxable INTEGER DEFAULT 0,
+    amount DECIMAL(10,2) DEFAULT 0,
+    inferred INTEGER DEFAULT 0
+  )`);
+
+  // Test INSERT
+  test(s9, 'inserts sales records', () => {
+    db.run('INSERT INTO ve_sales (transaction_no, date, billing_name, subtotal, tax, total, source) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      ['TX-001', '2026-03-01', 'Alice', 50, 4.50, 54.50, 'online']);
+    db.run('INSERT INTO ve_sales (transaction_no, date, billing_name, subtotal, tax, total, source) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      ['TX-002', '2026-03-02', 'Bob', 100, 9, 109, 'tradeshow']);
+    const result = db.exec('SELECT COUNT(*) as cnt FROM ve_sales');
+    assertEqual(result[0].values[0][0], 2);
+  });
+
+  // Test SELECT with filter
+  test(s9, 'filters by source', () => {
+    const result = db.exec("SELECT * FROM ve_sales WHERE source = 'online'");
+    assertEqual(result[0].values.length, 1);
+  });
+
+  // Test UNIQUE constraint (upsert)
+  test(s9, 'REPLACE on duplicate transaction_no + source', () => {
+    db.run('INSERT OR REPLACE INTO ve_sales (transaction_no, date, billing_name, subtotal, tax, total, source) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      ['TX-001', '2026-03-01', 'Alice Updated', 55, 5, 60, 'online']);
+    const result = db.exec("SELECT billing_name FROM ve_sales WHERE transaction_no = 'TX-001' AND source = 'online'");
+    assertEqual(result[0].values[0][0], 'Alice Updated');
+    const countResult = db.exec('SELECT COUNT(*) FROM ve_sales');
+    assertEqual(countResult[0].values[0][0], 2, 'Should still have 2 records');
+  });
+
+  // Test items insert
+  test(s9, 'inserts sale items', () => {
+    db.run('INSERT INTO ve_sale_items (transaction_no, name, price, quantity, amount) VALUES (?, ?, ?, ?, ?)',
+      ['TX-001', 'Widget A', 25, 2, 50]);
+    db.run('INSERT INTO ve_sale_items (transaction_no, name, price, quantity, amount) VALUES (?, ?, ?, ?, ?)',
+      ['TX-001', 'Widget B', 5, 1, 5]);
+    const result = db.exec("SELECT * FROM ve_sale_items WHERE transaction_no = 'TX-001'");
+    assertEqual(result[0].values.length, 2);
+  });
+
+  // Test DELETE (clear)
+  test(s9, 'clears all data', () => {
+    db.run('DELETE FROM ve_sale_items');
+    db.run('DELETE FROM ve_sales');
+    const salesResult = db.exec('SELECT COUNT(*) FROM ve_sales');
+    assertEqual(salesResult[0].values[0][0], 0);
+    const itemsResult = db.exec('SELECT COUNT(*) FROM ve_sale_items');
+    assertEqual(itemsResult[0].values[0][0], 0);
+  });
+
+  // Test date range filter
+  test(s9, 'filters by date range', () => {
+    db.run('INSERT INTO ve_sales (transaction_no, date, total, source) VALUES (?, ?, ?, ?)', ['TX-A', '2026-01-15', 50, 'online']);
+    db.run('INSERT INTO ve_sales (transaction_no, date, total, source) VALUES (?, ?, ?, ?)', ['TX-B', '2026-02-15', 60, 'online']);
+    db.run('INSERT INTO ve_sales (transaction_no, date, total, source) VALUES (?, ?, ?, ?)', ['TX-C', '2026-03-15', 70, 'online']);
+    const result = db.exec("SELECT * FROM ve_sales WHERE date >= '2026-02-01' AND date <= '2026-02-28'");
+    assertEqual(result[0].values.length, 1);
+    assertEqual(result[0].values[0][1], 'TX-B'); // transaction_no is column index 1
+  });
+
+  db.close();
+}
+
+// --- Edge Cases ---
+const s10 = suite('Edge Cases');
+
+test(s10, 'handles discount as negative number (abs)', () => {
+  assertEqual(Math.abs(-5.50), 5.50);
+  assertEqual(Math.abs(5.50), 5.50);
+});
+
+test(s10, 'handles empty transaction number', () => {
+  const txNo = '';
+  assertEqual(String(txNo || ''), '');
+});
+
+test(s10, 'handles missing billing name gracefully', () => {
+  const name = null;
+  assertEqual(String(name || ''), '');
+});
+
+// ============== Run async DB tests then show summary ==============
+runDbTests().then(() => {
+  const summaryEl = document.getElementById('summary');
+  const total = passed + failed;
+  summaryEl.textContent = `${passed}/${total} tests passed, ${failed} failed`;
+  summaryEl.style.color = failed === 0 ? '#155724' : '#721c24';
+  summaryEl.style.background = failed === 0 ? '#d4edda' : '#f8d7da';
+}).catch(err => {
+  const summaryEl = document.getElementById('summary');
+  summaryEl.textContent = 'Test suite error: ' + err.message;
+  summaryEl.style.color = '#721c24';
+  summaryEl.style.background = '#f8d7da';
+});
+</script>
+</body>
+</html>

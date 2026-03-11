@@ -2805,8 +2805,10 @@ const UI = {
 
     // ==================== PRODUCTS TAB ====================
 
-    renderProductsTab(products, showDiscontinued) {
+    renderProductsTab(products, showDiscontinued, analytics) {
         const fmtAmt = (amt) => Utils.formatCurrency(amt);
+        analytics = analytics || { totals: { pretax_total: 0, sales_tax: 0, post_tax_total: 0 }, byProduct: [], linkedProductIds: new Set() };
+        const linkedIds = analytics.linkedProductIds || new Set();
 
         // Filter products based on discontinued toggle
         const visible = showDiscontinued ? products : products.filter(p => !p.is_discontinued);
@@ -2821,13 +2823,20 @@ const UI = {
                 ? activeProducts.reduce((sum, p) => sum + p.price, 0) / activeProducts.length : 0;
             const avgMarginPct = activeProducts.length > 0
                 ? activeProducts.reduce((sum, p) => sum + (p.price > 0 ? ((p.price - p.cogs) / p.price) * 100 : 0), 0) / activeProducts.length : 0;
-            const totalRevPotential = activeProducts.reduce((sum, p) => sum + p.price, 0);
+
+            const hasAnalytics = analytics.byProduct.length > 0;
+            const veCards = hasAnalytics ? `
+                <div class="budget-summary-card"><span class="budget-summary-label">VE Pretax Revenue</span><span class="budget-summary-value">${fmtAmt(analytics.totals.pretax_total)}</span></div>
+                <div class="budget-summary-card"><span class="budget-summary-label">VE Sales Tax</span><span class="budget-summary-value">${fmtAmt(analytics.totals.sales_tax)}</span></div>
+                <div class="budget-summary-card"><span class="budget-summary-label">VE Post-Tax Total</span><span class="budget-summary-value">${fmtAmt(analytics.totals.post_tax_total)}</span></div>
+            ` : '';
 
             summaryEl.innerHTML = `
                 <div class="budget-summary-card"><span class="budget-summary-label">Total Products</span><span class="budget-summary-value">${products.length}</span></div>
                 <div class="budget-summary-card"><span class="budget-summary-label">Active</span><span class="budget-summary-value">${activeProducts.length}</span></div>
                 <div class="budget-summary-card"><span class="budget-summary-label">Avg Price</span><span class="budget-summary-value">${fmtAmt(avgPrice)}</span></div>
                 <div class="budget-summary-card"><span class="budget-summary-label">Avg Margin</span><span class="budget-summary-value ${avgMarginPct >= 0 ? 'pc-margin-positive' : 'pc-margin-negative'}">${avgMarginPct.toFixed(1)}%</span></div>
+                ${veCards}
             `;
         }
 
@@ -2860,9 +2869,10 @@ const UI = {
             const rowClass = p.is_discontinued ? 'pc-row-discontinued' : '';
             const toggleLabel = p.is_discontinued ? 'Reactivate' : 'Discontinue';
             const toggleClass = p.is_discontinued ? 'btn-success' : 'btn-warning';
+            const linkedBadge = linkedIds.has(p.id) ? '<span class="pc-linked-badge">linked</span>' : '';
 
             html += `<tr class="${rowClass}">
-                <td>${Utils.escapeHtml(p.name)}</td>
+                <td>${Utils.escapeHtml(p.name)}${linkedBadge}</td>
                 <td>${p.sku ? Utils.escapeHtml(p.sku) : '<span style="color:var(--color-text-muted)">—</span>'}</td>
                 <td class="pc-col-num">${fmtAmt(p.price)}</td>
                 <td class="pc-col-num">${p.tax_rate ? p.tax_rate.toFixed(2) + '%' : '—'}</td>
@@ -2872,6 +2882,7 @@ const UI = {
                 <td>${p.notes ? '<span class="pc-notes" title="' + Utils.escapeHtml(p.notes) + '">' + Utils.escapeHtml(p.notes) + '</span>' : ''}</td>
                 <td class="pc-col-actions">
                     <div class="pc-actions">
+                        <button class="btn btn-primary btn-small manage-links-btn" data-id="${p.id}">Manage Links</button>
                         <button class="btn btn-secondary btn-small edit-product-btn" data-id="${p.id}">Edit</button>
                         <button class="btn ${toggleClass} btn-small discontinue-product-btn" data-id="${p.id}">${toggleLabel}</button>
                         <button class="btn btn-danger btn-small delete-product-btn" data-id="${p.id}">Delete</button>

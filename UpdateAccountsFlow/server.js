@@ -168,6 +168,28 @@ app.put('/api/product-groups', (req, res) => {
   res.json({ success: true });
 });
 
+// API: Export all data as JSON for import into main Accounting Journal app
+app.get('/api/export', (req, res) => {
+  try {
+    const exportData = {
+      exportVersion: 1,
+      exportDate: new Date().toISOString(),
+      companyName: 'VE International',
+      sales: serializeSales(allSales),
+      lineItems: serializeCache(itemsCache),
+    };
+    const exportFile = path.join(TMP_DIR, 've-sales-export.json');
+    if (!fs.existsSync(TMP_DIR)) fs.mkdirSync(TMP_DIR, { recursive: true });
+    fs.writeFileSync(exportFile, JSON.stringify(exportData, null, 2));
+    res.setHeader('Content-Disposition', 'attachment; filename="ve-sales-export.json"');
+    res.setHeader('Content-Type', 'application/json');
+    res.json(exportData);
+  } catch (err) {
+    console.error('Export error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // API: Refresh Excel files (download fresh + re-parse)
 let refreshStatus = { state: 'idle' };
 app.get('/api/refresh', async (req, res) => {

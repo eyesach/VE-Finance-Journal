@@ -15,6 +15,7 @@ const App = {
     selectedBudgetExpenseId: null,
     folderCreatedFromCategory: false,
     pendingFileLoad: null,
+    pendingLoadBuffer: null,
     savedFileHandle: null,
     pendingInlineStatusChange: null, // {id, newStatus, selectElement}
     currentSortMode: 'entryDate',
@@ -23,6 +24,8 @@ const App = {
     _beChartTimeline: null,
     _beChartProgress: null,
     _beProgressState: null,
+    _pvmChartUnits: null,
+    _pvmChartRevenue: null,
     _syncAutoSaveWrapped: false,
     _rollbackTargetVersion: null,
 
@@ -59,6 +62,14 @@ const App = {
 
             await Database.init();
 
+            // First-run: prompt user to name the migrated company
+            if (CompanyManager.needsNamingPrompt()) {
+                await this.promptInitialCompanyName();
+            }
+
+            // Render company switcher in header
+            CompanyManager.renderSwitcher();
+
             // Set up initial UI state
             document.getElementById('entryDate').value = Utils.getTodayDate();
 
@@ -77,6 +88,7 @@ const App = {
             // Restore tab order and set up tab drag-drop
             this.restoreTabOrder();
             this.setupTabDragDrop();
+            this.setupTabScrollFade();
 
             // Load and apply timeline
             this.loadAndApplyTimeline();
@@ -89,6 +101,7 @@ const App = {
 
             // Set up event listeners
             this.setupEventListeners();
+            this.setupVESalesListeners();
 
             // Initialize sync if previously configured
             await this.initSync();
@@ -110,38 +123,16 @@ const App = {
         this.refreshCategories();
         this.refreshTransactions();
         this.refreshSummary();
-        // Refresh cash flow tab if it's currently visible
-        const cashflowTab = document.getElementById('cashflowTab');
-        if (cashflowTab && cashflowTab.style.display !== 'none') {
-            this.refreshCashFlow();
-        }
-        // Always refresh P&L (break-even depends on its computed values)
+        this.refreshCashFlow();
         this.refreshPnL();
-        // Refresh Balance Sheet tab if visible
-        const bsTab = document.getElementById('balancesheetTab');
-        if (bsTab && bsTab.style.display !== 'none') {
-            this.refreshBalanceSheet();
-        }
-        // Refresh Fixed Assets tab if visible
-        const assetsTab = document.getElementById('assetsTab');
-        if (assetsTab && assetsTab.style.display !== 'none') {
-            this.refreshFixedAssets();
-        }
-        // Refresh Loans tab if visible
-        const loanTab = document.getElementById('loanTab');
-        if (loanTab && loanTab.style.display !== 'none') {
-            this.refreshLoans();
-        }
-        // Refresh Budget tab if visible
-        const budgetTab = document.getElementById('budgetTab');
-        if (budgetTab && budgetTab.style.display !== 'none') {
-            this.refreshBudget();
-        }
-        // Refresh Break-Even tab if visible
-        const beTab = document.getElementById('breakevenTab');
-        if (beTab && beTab.style.display !== 'none') {
-            this.refreshBreakeven();
-        }
+        this.refreshBalanceSheet();
+        this.refreshFixedAssets();
+        this.refreshLoans();
+        this.refreshBudget();
+        this.refreshBreakeven();
+        this.refreshProjectedSales();
+        this.refreshProducts();
+        this.refreshVESales();
     },
 
     /**
@@ -365,6 +356,27 @@ const App = {
             }
             nav.querySelectorAll('.tab-drag-over').forEach(t => t.classList.remove('tab-drag-over'));
         });
+    },
+
+    /**
+     * Show fade gradients on tab bar edges when there is more content to scroll
+     */
+    setupTabScrollFade() {
+        const nav = document.getElementById('mainTabs');
+        if (!nav) return;
+        const wrapper = nav.closest('.main-tabs-wrapper');
+        if (!wrapper) return;
+
+        const update = () => {
+            const { scrollLeft, scrollWidth, clientWidth } = nav;
+            wrapper.classList.toggle('can-scroll-left',  scrollLeft > 1);
+            wrapper.classList.toggle('can-scroll-right', scrollLeft + clientWidth < scrollWidth - 1);
+        };
+
+        nav.addEventListener('scroll', update, { passive: true });
+        // Also update after resize or tab reorder
+        new ResizeObserver(update).observe(nav);
+        update();
     },
 
     /**
@@ -701,7 +713,7 @@ const App = {
             btn.classList.toggle('active', btn.dataset.tab === tab);
         });
 
-        const tabs = ['journalTab', 'cashflowTab', 'pnlTab', 'balancesheetTab', 'assetsTab', 'loanTab', 'budgetTab', 'breakevenTab', 'projectedsalesTab', 'productsTab'];
+        const tabs = ['journalTab', 'cashflowTab', 'pnlTab', 'balancesheetTab', 'assetsTab', 'loanTab', 'budgetTab', 'breakevenTab', 'projectedsalesTab', 'productsTab', 'vesalesTab'];
         tabs.forEach(id => {
             const el = document.getElementById(id);
             if (el) el.style.display = 'none';
@@ -734,6 +746,9 @@ const App = {
         } else if (tab === 'products') {
             document.getElementById('productsTab').style.display = 'block';
             this.refreshProducts();
+        } else if (tab === 'vesales') {
+            document.getElementById('vesalesTab').style.display = 'block';
+            this.refreshVESales();
         } else {
             document.getElementById('journalTab').style.display = 'block';
         }
@@ -1260,8 +1275,101 @@ const App = {
 
         document.getElementById('cancelLoadBtn').addEventListener('click', () => {
             UI.hideModal('loadConfirmModal');
-            this.pendingFileLoad = null;
-            document.getElementById('loadDbInput').value = '';
+            this._cleanupPendingLoad();
+        });
+
+        // ==================== COMPANY SWITCHER ====================
+
+        // Company button — toggle popover
+        document.getElementById('companyBtn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            const popover = document.getElementById('companyPopover');
+            const isOpen = popover.style.display !== 'none';
+            popover.style.display = isOpen ? 'none' : 'block';
+            if (!isOpen) CompanyManager.renderSwitcher();
+        });
+
+        // Close company popover on outside click
+        document.addEventListener('click', (e) => {
+            const popover = document.getElementById('companyPopover');
+            if (popover && popover.style.display !== 'none' && !e.target.closest('.company-switcher-wrapper')) {
+                popover.style.display = 'none';
+            }
+        });
+
+        // Switch company by clicking a list item
+        document.getElementById('companyList').addEventListener('click', async (e) => {
+            const item = e.target.closest('.company-list-item');
+            if (!item) return;
+            const id = item.dataset.id;
+            if (id === CompanyManager.getRegistry().activeId) {
+                document.getElementById('companyPopover').style.display = 'none';
+                return;
+            }
+            document.getElementById('companyPopover').style.display = 'none';
+            await this.switchToCompany(id);
+        });
+
+        // Add new company button
+        document.getElementById('addCompanyBtn').addEventListener('click', async () => {
+            document.getElementById('companyPopover').style.display = 'none';
+            await this.handleCreateCompany();
+        });
+
+        // Open manage modal
+        document.getElementById('manageCompaniesBtn').addEventListener('click', () => {
+            document.getElementById('companyPopover').style.display = 'none';
+            this.openManageCompanies();
+        });
+
+        // Manage modal — close
+        document.getElementById('closeManageCompaniesBtn').addEventListener('click', () => {
+            UI.hideModal('manageCompaniesModal');
+        });
+
+        // Manage modal — rename / delete (event delegation on tbody)
+        document.getElementById('companiesTableBody').addEventListener('click', async (e) => {
+            const renameBtn = e.target.closest('.company-rename-btn');
+            const deleteBtn = e.target.closest('.company-delete-btn');
+            if (renameBtn) {
+                await this.handleRenameCompany(renameBtn.dataset.id);
+            } else if (deleteBtn && !deleteBtn.disabled) {
+                await this.handleDeleteCompany(deleteBtn.dataset.id);
+                this.renderManageCompanies();
+                this._updateCopySectionVisibility();
+            }
+        });
+
+        // Copy section button
+        document.getElementById('copySectionBtn').addEventListener('click', async () => {
+            const sourceId = document.getElementById('copyFromCompanySelect').value;
+            const section = document.getElementById('copySectionSelect').value;
+            if (!sourceId) return;
+
+            const status = document.getElementById('copySectionStatus');
+            status.textContent = 'Copying…';
+            try {
+                const result = await CompanyManager.copySection(sourceId, section);
+                status.textContent = `Copied ${result.copied} record(s).`;
+                this.refreshAll();
+            } catch (err) {
+                console.error('Copy section failed:', err);
+                status.textContent = 'Copy failed.';
+            }
+        });
+
+        // Load choice modal buttons
+        document.getElementById('loadReplaceBtn').addEventListener('click', () => {
+            this.confirmLoadReplace();
+        });
+
+        document.getElementById('loadAddNewBtn').addEventListener('click', () => {
+            this.confirmLoadAsNew();
+        });
+
+        document.getElementById('cancelLoadChoiceBtn').addEventListener('click', () => {
+            UI.hideModal('loadChoiceModal');
+            this._cleanupPendingLoad();
         });
 
         // Save As modal (fallback)
@@ -1621,10 +1729,13 @@ const App = {
 
         // Product table click delegation
         document.getElementById('productTableWrapper').addEventListener('click', (e) => {
-            const editBtn = e.target.closest('.edit-product-btn');
-            const deleteBtn = e.target.closest('.delete-product-btn');
+            const editBtn        = e.target.closest('.edit-product-btn');
+            const deleteBtn      = e.target.closest('.delete-product-btn');
             const discontinueBtn = e.target.closest('.discontinue-product-btn');
-            if (editBtn) {
+            const linksBtn       = e.target.closest('.manage-links-btn');
+            if (linksBtn) {
+                this.openManageLinksModal(parseInt(linksBtn.dataset.id));
+            } else if (editBtn) {
                 this.handleEditProduct(parseInt(editBtn.dataset.id));
             } else if (deleteBtn) {
                 this.handleDeleteProduct(parseInt(deleteBtn.dataset.id));
@@ -1632,6 +1743,17 @@ const App = {
                 this.handleToggleDiscontinued(parseInt(discontinueBtn.dataset.id));
             }
         });
+
+        // Products tab analytics date filter
+        document.getElementById('pcDateFrom').addEventListener('change', () => this.refreshProducts());
+        document.getElementById('pcDateTo').addEventListener('change',   () => this.refreshProducts());
+        document.getElementById('pcDatePreset').addEventListener('change', () => this._pcApplyDatePreset());
+
+        // Product-VE Mapping modal
+        document.getElementById('pvmSaveBtn').addEventListener('click',   () => this.handleSaveProductMappings());
+        document.getElementById('pvmCancelBtn').addEventListener('click', () => UI.hideModal('pvmModal'));
+        document.getElementById('pvmSearchInput').addEventListener('input', (e) => this.handlePvmSearch(e.target.value));
+        document.getElementById('pvmItemList').addEventListener('change', () => this._pvmUpdateSelectedCount());
 
         // ==================== BREAK-EVEN ====================
         document.getElementById('beConfigBtn').addEventListener('click', () => this.openBeConfigModal());
@@ -3895,7 +4017,17 @@ const App = {
     refreshProducts() {
         const showDiscontinued = document.getElementById('pcShowDiscontinued').checked;
         const products = Database.getProducts();
-        UI.renderProductsTab(products, showDiscontinued);
+        const dateFrom = document.getElementById('pcDateFrom').value || null;
+        const dateTo   = document.getElementById('pcDateTo').value   || null;
+        const analytics = Database.getLinkedProductAnalytics(dateFrom, dateTo);
+        analytics.linkedProductIds = new Set(analytics.byProduct.map(p => p.id));
+        UI.renderProductsTab(products, showDiscontinued, analytics);
+        this._destroyPcCharts();
+        if (analytics.byProduct.length > 0) {
+            this._renderPcChartsAndAnalytics(analytics);
+        } else {
+            document.getElementById('pcAnalyticsSection').style.display = 'none';
+        }
     },
 
     openProductModal() {
@@ -3971,6 +4103,191 @@ const App = {
 
     handleToggleDiscontinued(id) {
         Database.toggleProductDiscontinued(id);
+        this.refreshProducts();
+    },
+
+    // ==================== PRODUCT-VE MAPPING HANDLERS ====================
+
+    openManageLinksModal(productId) {
+        const product = Database.getProductById(productId);
+        if (!product) return;
+        const allNames = Database.getDistinctVeItemNames();
+        const mapped   = new Set(Database.getMappingsForProduct(productId));
+
+        document.getElementById('pvmProductId').value = productId;
+        document.getElementById('pvmProductName').textContent = product.name;
+        document.getElementById('pvmSearchInput').value = '';
+
+        const list = document.getElementById('pvmItemList');
+        if (allNames.length === 0) {
+            list.innerHTML = '<p class="pvm-empty-msg">No VE item names found. Import VE Sales data first.</p>';
+        } else {
+            list.innerHTML = allNames.map(name => {
+                const checked = mapped.has(name) ? 'checked' : '';
+                const esc = Utils.escapeHtml(name);
+                return `<label class="pvm-item">
+                    <input type="checkbox" class="pvm-check" value="${esc}" ${checked}>
+                    <span class="pvm-item-name">${esc}</span>
+                </label>`;
+            }).join('');
+        }
+        this._pvmUpdateSelectedCount();
+        UI.showModal('pvmModal');
+        document.getElementById('pvmSearchInput').focus();
+    },
+
+    handlePvmSearch(query) {
+        const q = query.toLowerCase();
+        document.querySelectorAll('#pvmItemList .pvm-item').forEach(item => {
+            const name = item.querySelector('.pvm-item-name').textContent.toLowerCase();
+            item.classList.toggle('pvm-item--hidden', q.length > 0 && !name.includes(q));
+        });
+    },
+
+    _pvmUpdateSelectedCount() {
+        const count = document.querySelectorAll('#pvmItemList .pvm-check:checked').length;
+        document.getElementById('pvmSelectedCount').textContent = `${count} selected`;
+    },
+
+    handleSaveProductMappings() {
+        const productId = parseInt(document.getElementById('pvmProductId').value);
+        const checked = [...document.querySelectorAll('#pvmItemList .pvm-check:checked')]
+            .map(cb => cb.value);
+        Database.setMappingsForProduct(productId, checked);
+        UI.hideModal('pvmModal');
+        UI.showNotification('Links saved', 'success');
+        this.refreshProducts();
+        // Refresh VE Sales if visible to update badges
+        if (document.getElementById('vesalesTab').style.display !== 'none') {
+            this.veRenderProducts();
+        }
+    },
+
+    _destroyPcCharts() {
+        if (this._pvmChartUnits)   { this._pvmChartUnits.destroy();   this._pvmChartUnits   = null; }
+        if (this._pvmChartRevenue) { this._pvmChartRevenue.destroy(); this._pvmChartRevenue = null; }
+    },
+
+    _renderPcChartsAndAnalytics(analytics) {
+        document.getElementById('pcAnalyticsSection').style.display = 'block';
+
+        const palette = [
+            '#4a90a4','#5ba85c','#e67e22','#8e6abf','#d64f4f',
+            '#2d9c8a','#c0a010','#3d7db8','#b05090','#7a8c40',
+            '#e08060','#6080e0','#a0b060','#e060a0','#60a0b0'
+        ];
+        const labels  = analytics.byProduct.map(p => p.name);
+        const units   = analytics.byProduct.map(p => p.units_sold);
+        const revenue = analytics.byProduct.map(p => p.revenue);
+        const colors  = labels.map((_, i) => palette[i % palette.length]);
+
+        const chartOpts = {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: {
+                legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 }, padding: 10 } },
+                tooltip: {
+                    callbacks: {
+                        label: (ctx) => {
+                            const val = ctx.raw;
+                            if (ctx.dataset.label === 'revenue') return ` ${Utils.formatCurrency(val)}`;
+                            return ` ${val.toLocaleString()} units`;
+                        }
+                    }
+                }
+            }
+        };
+
+        const uCanvas = document.getElementById('pcChartUnitsCanvas');
+        const rCanvas = document.getElementById('pcChartRevenueCanvas');
+        if (uCanvas && typeof Chart !== 'undefined') {
+            this._pvmChartUnits = new Chart(uCanvas, {
+                type: 'doughnut',
+                data: { labels, datasets: [{ label: 'units', data: units, backgroundColor: colors, borderWidth: 1 }] },
+                options: chartOpts
+            });
+        }
+        if (rCanvas && typeof Chart !== 'undefined') {
+            this._pvmChartRevenue = new Chart(rCanvas, {
+                type: 'doughnut',
+                data: { labels, datasets: [{ label: 'revenue', data: revenue, backgroundColor: colors, borderWidth: 1 }] },
+                options: chartOpts
+            });
+        }
+
+        // Monthly COGS pivot table
+        const rows     = analytics.monthlyCogs;
+        const months   = [...new Set(rows.map(r => r.month))].sort();
+        const products = analytics.byProduct;
+        const fmt      = (n) => Utils.formatCurrency(n);
+
+        let tHead = '<tr><th>Product</th>' + months.map(m => {
+            const [yr, mo] = m.split('-');
+            const label = new Date(parseInt(yr), parseInt(mo) - 1, 1)
+                .toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+            return `<th>${label}</th>`;
+        }).join('') + '<th>Total COGS</th></tr>';
+
+        let tBody = '';
+        const colTotals = new Array(months.length).fill(0);
+        let grandTotal  = 0;
+
+        for (const p of products) {
+            let rowTotal = 0;
+            const cells = months.map((m, mi) => {
+                const hit  = rows.find(r => r.month === m && Number(r.product_id) === Number(p.id));
+                const cogs = hit ? (hit.qty_sold * (p.cogs || 0)) : 0;
+                colTotals[mi] += cogs;
+                rowTotal += cogs;
+                return `<td class="${cogs === 0 ? 'pc-cogs-zero' : ''}">${cogs > 0 ? fmt(cogs) : '—'}</td>`;
+            }).join('');
+            grandTotal += rowTotal;
+            tBody += `<tr><td>${Utils.escapeHtml(p.name)}</td>${cells}<td>${fmt(rowTotal)}</td></tr>`;
+        }
+        const footCells = colTotals.map(t => `<td>${fmt(t)}</td>`).join('');
+        tBody += `<tr><td>Total</td>${footCells}<td>${fmt(grandTotal)}</td></tr>`;
+
+        document.getElementById('pcCogsTableWrapper').innerHTML =
+            `<div class="pc-analytics-cogs-title">Monthly COGS Summary</div>
+             <div class="pc-cogs-table-wrap">
+               <table class="pc-cogs-table"><thead>${tHead}</thead><tbody>${tBody}</tbody></table>
+             </div>`;
+    },
+
+    _pcApplyDatePreset() {
+        const preset = document.getElementById('pcDatePreset').value;
+        const fromEl = document.getElementById('pcDateFrom');
+        const toEl   = document.getElementById('pcDateTo');
+        const now    = new Date();
+        switch (preset) {
+            case 'all':
+                fromEl.value = ''; toEl.value = '';
+                break;
+            case 'thisMonth': {
+                const y = now.getFullYear(), m = String(now.getMonth() + 1).padStart(2, '0');
+                fromEl.value = `${y}-${m}-01`;
+                const lastDay = new Date(y, now.getMonth() + 1, 0).getDate();
+                toEl.value = `${y}-${m}-${String(lastDay).padStart(2, '0')}`;
+                break;
+            }
+            case 'lastMonth': {
+                const last = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+                const y = last.getFullYear(), m = String(last.getMonth() + 1).padStart(2, '0');
+                fromEl.value = `${y}-${m}-01`;
+                const lastDay = new Date(last.getFullYear(), last.getMonth() + 1, 0).getDate();
+                toEl.value = `${y}-${m}-${String(lastDay).padStart(2, '0')}`;
+                break;
+            }
+            case 'thisQuarter': {
+                const qMonth = Math.floor(now.getMonth() / 3) * 3;
+                const y = now.getFullYear();
+                fromEl.value = `${y}-${String(qMonth + 1).padStart(2, '0')}-01`;
+                const lastQMonth = qMonth + 2;
+                const lastDay = new Date(y, lastQMonth + 1, 0).getDate();
+                toEl.value = `${y}-${String(lastQMonth + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+                break;
+            }
+        }
         this.refreshProducts();
     },
 
@@ -4749,47 +5066,277 @@ const App = {
     },
 
     /**
-     * Confirm and load database from file
+     * Stage a file load — reads the file and shows the load-choice modal.
      */
     async confirmLoadDatabase() {
         if (this._guardViewOnly()) return;
         if (!this.pendingFileLoad) return;
 
         try {
-            const buffer = await this.pendingFileLoad.arrayBuffer();
-            await Database.importFromFile(buffer);
-
+            this.pendingLoadBuffer = await this.pendingFileLoad.arrayBuffer();
             UI.hideModal('loadConfirmModal');
-            this.pendingFileLoad = null;
-            this.savedFileHandle = null; // Clear saved handle since we loaded a new file
-            document.getElementById('loadDbInput').value = '';
 
-            // Reload journal owner
-            const owner = Database.getJournalOwner();
-            document.getElementById('journalOwner').value = owner;
-            UI.updateJournalTitle(owner);
-            // Re-trigger auto-size measurement
-            document.getElementById('journalOwner').dispatchEvent(new Event('input'));
+            // Update the active-company name in the replace-button label
+            const active = CompanyManager.getActiveCompany();
+            const targetEl = document.getElementById('loadReplaceTarget');
+            if (targetEl && active) targetEl.textContent = active.name;
 
-            // Repopulate year dropdowns (in case data spans different years)
-            UI.populateYearDropdowns();
+            // Show which option the user wants
+            UI.showModal('loadChoiceModal');
+        } catch (error) {
+            console.error('Error reading file:', error);
+            UI.hideModal('loadConfirmModal');
+            this._cleanupPendingLoad();
+            UI.showNotification('Failed to read file.', 'error');
+        }
+    },
 
-            // Reload theme from loaded database
-            this.loadAndApplyTheme();
-
-            // Restore tab order and drag-drop from loaded database
-            this.restoreTabOrder();
-            this.setupTabDragDrop();
-
-            // Load and apply timeline from loaded database
-            this.loadAndApplyTimeline();
-
-            this.refreshAll();
-            UI.showNotification('Database loaded successfully', 'success');
+    /**
+     * Replace the active company's DB with the staged file.
+     */
+    async confirmLoadReplace() {
+        if (!this.pendingLoadBuffer) return;
+        try {
+            await CompanyManager.replaceActive(this.pendingLoadBuffer);
+            this.savedFileHandle = null;
+            this._finalizeLoad('Database loaded successfully');
         } catch (error) {
             console.error('Error loading database:', error);
             UI.showNotification('Failed to load database. The file may be corrupted.', 'error');
         }
+    },
+
+    /**
+     * Import the staged file as a brand-new company.
+     */
+    async confirmLoadAsNew() {
+        if (!this.pendingLoadBuffer) return;
+        const registry = CompanyManager.getRegistry();
+        if (registry.companies.length >= CompanyManager.MAX_COMPANIES) {
+            UI.showNotification('Maximum 5 companies reached. Delete one first.', 'error');
+            UI.hideModal('loadChoiceModal');
+            this._cleanupPendingLoad();
+            return;
+        }
+        const name = prompt('Name for this imported company:');
+        if (!name || !name.trim()) {
+            return; // user cancelled
+        }
+        try {
+            const newId = await CompanyManager.importAsNew(this.pendingLoadBuffer, name.trim());
+            UI.hideModal('loadChoiceModal');
+            this._cleanupPendingLoad();
+
+            if (confirm(`Switch to "${name.trim()}" now?`)) {
+                await this.switchToCompany(newId);
+            } else {
+                CompanyManager.renderSwitcher();
+                UI.showNotification(`"${name.trim()}" added. Switch to it from the company menu.`, 'success');
+            }
+        } catch (error) {
+            console.error('Error importing company:', error);
+            UI.showNotification('Failed to import. The file may be corrupted.', 'error');
+        }
+    },
+
+    /**
+     * Shared post-load cleanup and UI reload.
+     */
+    _finalizeLoad(message) {
+        UI.hideModal('loadChoiceModal');
+        this._cleanupPendingLoad();
+        this._reloadUI();
+        UI.showNotification(message || 'Database loaded successfully', 'success');
+    },
+
+    _cleanupPendingLoad() {
+        this.pendingFileLoad = null;
+        this.pendingLoadBuffer = null;
+        document.getElementById('loadDbInput').value = '';
+    },
+
+    /**
+     * Reload all UI state after a company switch or DB load.
+     */
+    _reloadUI() {
+        this.savedFileHandle = null;
+
+        const owner = Database.getJournalOwner();
+        document.getElementById('journalOwner').value = owner;
+        UI.updateJournalTitle(owner);
+        document.getElementById('journalOwner').dispatchEvent(new Event('input'));
+
+        UI.populateYearDropdowns();
+        UI.populatePaymentForMonthDropdown();
+        this.loadAndApplyTheme();
+        this.restoreTabOrder();
+        this.setupTabDragDrop();
+        this.setupTabScrollFade();
+        this.loadAndApplyTimeline();
+        this.initBalanceSheetDate();
+        this.refreshAll();
+        CompanyManager.renderSwitcher();
+    },
+
+    // ==================== COMPANY MANAGEMENT ====================
+
+    /**
+     * Show the first-time company naming modal and wait for the user's input.
+     */
+    promptInitialCompanyName() {
+        return new Promise((resolve) => {
+            UI.showModal('companyNameModal');
+            const input = document.getElementById('initialCompanyNameInput');
+            input.value = '';
+            input.focus();
+
+            const confirmBtn = document.getElementById('confirmCompanyNameBtn');
+            const skipBtn = document.getElementById('skipCompanyNameBtn');
+
+            const onConfirm = async () => {
+                const name = input.value.trim() || 'My Company';
+                await CompanyManager.rename(CompanyManager.getActiveCompany().id, name);
+                CompanyManager.clearNamingPrompt();
+                UI.hideModal('companyNameModal');
+                cleanup();
+                resolve();
+            };
+
+            const onSkip = () => {
+                CompanyManager.clearNamingPrompt();
+                UI.hideModal('companyNameModal');
+                cleanup();
+                resolve();
+            };
+
+            const onKeydown = (e) => { if (e.key === 'Enter') onConfirm(); };
+
+            confirmBtn.addEventListener('click', onConfirm);
+            skipBtn.addEventListener('click', onSkip);
+            input.addEventListener('keydown', onKeydown);
+
+            function cleanup() {
+                confirmBtn.removeEventListener('click', onConfirm);
+                skipBtn.removeEventListener('click', onSkip);
+                input.removeEventListener('keydown', onKeydown);
+            }
+        });
+    },
+
+    /**
+     * Switch the active company and reload the full UI.
+     */
+    async switchToCompany(companyId) {
+        document.body.style.opacity = '0.5';
+        try {
+            await CompanyManager.switchTo(companyId);
+            this._reloadUI();
+        } catch (err) {
+            console.error('Company switch failed:', err);
+            UI.showNotification('Failed to switch company.', 'error');
+        } finally {
+            document.body.style.opacity = '1';
+        }
+    },
+
+    /**
+     * Create a new blank company and switch to it.
+     */
+    async handleCreateCompany() {
+        const registry = CompanyManager.getRegistry();
+        if (registry.companies.length >= CompanyManager.MAX_COMPANIES) {
+            UI.showNotification('Maximum 5 companies reached. Delete one first.', 'error');
+            return;
+        }
+        const name = prompt('New company name:');
+        if (!name || !name.trim()) return;
+
+        try {
+            const newId = await CompanyManager.createNew(name.trim());
+            await this.switchToCompany(newId);
+        } catch (err) {
+            UI.showNotification('Failed to create company.', 'error');
+        }
+    },
+
+    /**
+     * Delete the specified company. If it was active, switchToCompany handles the transition.
+     */
+    async handleDeleteCompany(companyId) {
+        const registry = CompanyManager.getRegistry();
+        const comp = registry.companies.find(c => c.id === companyId);
+        if (!comp) return;
+
+        if (!confirm(`Delete "${comp.name}" and all its data? This cannot be undone.`)) return;
+
+        document.body.style.opacity = '0.5';
+        try {
+            const wasActive = companyId === registry.activeId;
+            const updatedRegistry = await CompanyManager.delete(companyId);
+
+            if (wasActive) {
+                if (updatedRegistry.activeId) {
+                    // Already switched by CompanyManager.delete(); just load new bytes
+                    const bytes = await CompanyManager._readIDB(updatedRegistry.activeId);
+                    Database.loadBytes(bytes);
+                    this._reloadUI();
+                } else {
+                    // No companies left — create a blank one
+                    await this.handleCreateCompany();
+                }
+            } else {
+                // Deleted a non-active company — just re-render
+                CompanyManager.renderSwitcher();
+                this.renderManageCompanies();
+            }
+            UI.showNotification(`"${comp.name}" deleted.`, 'success');
+        } catch (err) {
+            console.error('Delete failed:', err);
+            UI.showNotification('Failed to delete company.', 'error');
+        } finally {
+            document.body.style.opacity = '1';
+        }
+    },
+
+    /**
+     * Rename a company inline from the manage modal.
+     */
+    async handleRenameCompany(companyId) {
+        const registry = CompanyManager.getRegistry();
+        const comp = registry.companies.find(c => c.id === companyId);
+        if (!comp) return;
+
+        const name = prompt('New name:', comp.name);
+        if (!name || !name.trim() || name.trim() === comp.name) return;
+
+        await CompanyManager.rename(companyId, name.trim());
+        CompanyManager.renderSwitcher();
+        this.renderManageCompanies();
+
+        // If renaming the active company, update the journal owner display too
+        if (companyId === CompanyManager.getRegistry().activeId) {
+            // Update company button label only (journal owner field is separate)
+        }
+        UI.showNotification('Company renamed.', 'success');
+    },
+
+    /**
+     * Open the manage companies modal.
+     */
+    openManageCompanies() {
+        this.renderManageCompanies();
+        this._updateCopySectionVisibility();
+        UI.showModal('manageCompaniesModal');
+    },
+
+    renderManageCompanies() {
+        CompanyManager.renderManageTable();
+    },
+
+    _updateCopySectionVisibility() {
+        const all = CompanyManager.getAll();
+        const section = document.getElementById('copySectionWrapper');
+        if (section) section.style.display = all.length > 1 ? '' : 'none';
     },
 
     // ==================== PROJECTION HELPERS ====================
@@ -5460,6 +6007,7 @@ const App = {
             this.loadAndApplyTheme();
             this.restoreTabOrder();
             this.setupTabDragDrop();
+            this.setupTabScrollFade();
             this.loadAndApplyTimeline();
             this.refreshAll();
             this.setupEventListeners();
@@ -5679,6 +6227,716 @@ const App = {
             document.execCommand('copy');
             document.body.removeChild(textarea);
             UI.showNotification('Copied to clipboard', 'success');
+        });
+    },
+
+    // ==================== VE SALES TAB ====================
+
+    _veSales: [],
+    _veFiltered: [],
+    _veItemsCache: new Map(),
+    _veProductSortCol: 'qty',
+    _veProductSortDir: 'desc',
+
+    refreshVESales() {
+        this._veSales = Database.getVESales();
+        this._veItemsCache = Database.getAllVESaleItems();
+        const meta = Database.getVEImportMeta();
+
+        // Show import info
+        const infoEl = document.getElementById('veImportInfo');
+        if (meta && meta.importDate) {
+            const d = new Date(meta.importDate);
+            infoEl.textContent = 'Last import: ' + d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+        } else {
+            infoEl.textContent = '';
+        }
+
+        // Toggle empty state vs dashboard
+        const hasData = this._veSales.length > 0;
+        document.getElementById('veEmptyState').style.display = hasData ? 'none' : 'block';
+        document.getElementById('veDashboard').style.display = hasData ? 'block' : 'none';
+        document.getElementById('veControls').style.display = hasData ? 'flex' : 'none';
+
+        // Auto-open import panel when no data, collapse when data exists
+        const panel = document.getElementById('veImportPanel');
+        if (!hasData) {
+            panel.classList.add('open');
+        }
+
+        if (hasData) {
+            this.veApplyFilters();
+        }
+    },
+
+    veApplyFilters() {
+        const source = document.getElementById('ve-filterSource').value;
+        const from = document.getElementById('ve-filterFrom').value;
+        const to = document.getElementById('ve-filterTo').value;
+        const sortBy = document.getElementById('ve-sortBy').value;
+
+        this._veFiltered = this._veSales.filter(s => {
+            if (source !== 'both' && s.source !== source) return false;
+            if (from && s.date < from) return false;
+            if (to && s.date > to) return false;
+            return true;
+        });
+
+        this._veFiltered.sort((a, b) => {
+            switch (sortBy) {
+                case 'date-desc': return (b.date || '').localeCompare(a.date || '');
+                case 'date-asc': return (a.date || '').localeCompare(b.date || '');
+                case 'total-desc': return b.total - a.total;
+                case 'total-asc': return a.total - b.total;
+                case 'txno': return String(a.transaction_no).localeCompare(String(b.transaction_no));
+                default: return 0;
+            }
+        });
+
+        this.veRenderAll();
+    },
+
+    veRenderAll() {
+        this.veRenderSummary();
+        this.veRenderSourceBreakdown();
+        this.veRenderProducts();
+        this.veRenderTransactions();
+    },
+
+    veFmt(n) {
+        return '$' + (n || 0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    },
+
+    veFmtDate(isoStr) {
+        if (!isoStr) return '';
+        const d = new Date(isoStr);
+        return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    },
+
+    veRenderSummary() {
+        let subtotal = 0, tax = 0, total = 0, shipping = 0, discount = 0;
+        for (const s of this._veFiltered) {
+            subtotal += s.subtotal || 0;
+            tax += s.tax || 0;
+            total += s.total || 0;
+            shipping += s.shipping || 0;
+            discount += s.discount || 0;
+        }
+        document.getElementById('ve-cardPretax').textContent = this.veFmt(subtotal);
+        document.getElementById('ve-cardTax').textContent = this.veFmt(tax);
+        document.getElementById('ve-cardTotal').textContent = this.veFmt(total);
+        document.getElementById('ve-cardCount').textContent = `${this._veFiltered.length} transaction${this._veFiltered.length !== 1 ? 's' : ''}`;
+
+        const discountCard = document.getElementById('ve-discountCard');
+        if (discount > 0) {
+            discountCard.style.display = '';
+            document.getElementById('ve-cardDiscount').textContent = '-' + this.veFmt(discount);
+            const dc = this._veFiltered.filter(s => s.discount > 0).length;
+            document.getElementById('ve-cardDiscountCount').textContent = `${dc} order${dc !== 1 ? 's' : ''} with discounts`;
+        } else {
+            discountCard.style.display = 'none';
+        }
+
+        const shippingCard = document.getElementById('ve-shippingCard');
+        if (shipping > 0) {
+            shippingCard.style.display = '';
+            document.getElementById('ve-cardShipping').textContent = this.veFmt(shipping);
+            const sc = this._veFiltered.filter(s => s.shipping > 0).length;
+            document.getElementById('ve-cardShippingCount').textContent = `${sc} order${sc !== 1 ? 's' : ''} with shipping`;
+        } else {
+            shippingCard.style.display = 'none';
+        }
+    },
+
+    veRenderSourceBreakdown() {
+        const online = this._veFiltered.filter(s => s.source === 'online');
+        const tradeshow = this._veFiltered.filter(s => s.source === 'tradeshow');
+        const container = document.getElementById('ve-sourceBreakdown');
+
+        const calcTotals = (arr) => {
+            let subtotal = 0, tax = 0, total = 0;
+            for (const s of arr) { subtotal += s.subtotal || 0; tax += s.tax || 0; total += s.total || 0; }
+            return { subtotal, tax, total, count: arr.length };
+        };
+
+        let html = '';
+        if (online.length > 0) {
+            const t = calcTotals(online);
+            html += `<div class="ve-source-card">
+                <h4>Online Sales (Store Manager)</h4>
+                <div class="ve-source-stat"><span class="ve-stat-label">Transactions</span><span>${t.count}</span></div>
+                <div class="ve-source-stat"><span class="ve-stat-label">Pretax</span><span>${this.veFmt(t.subtotal)}</span></div>
+                <div class="ve-source-stat"><span class="ve-stat-label">Tax</span><span>${this.veFmt(t.tax)}</span></div>
+                <div class="ve-source-stat"><span class="ve-stat-label">Total</span><span>${this.veFmt(t.total)}</span></div>
+            </div>`;
+        }
+        if (tradeshow.length > 0) {
+            const t = calcTotals(tradeshow);
+            html += `<div class="ve-source-card">
+                <h4>Trade Show Sales (POS)</h4>
+                <div class="ve-source-stat"><span class="ve-stat-label">Transactions</span><span>${t.count}</span></div>
+                <div class="ve-source-stat"><span class="ve-stat-label">Pretax</span><span>${this.veFmt(t.subtotal)}</span></div>
+                <div class="ve-source-stat"><span class="ve-stat-label">Tax</span><span>${this.veFmt(t.tax)}</span></div>
+                <div class="ve-source-stat"><span class="ve-stat-label">Total</span><span>${this.veFmt(t.total)}</span></div>
+            </div>`;
+        }
+        container.innerHTML = html;
+    },
+
+    veRenderProducts() {
+        const tbody = document.getElementById('ve-productBody');
+        const mappedNames = Database.getMappedVeItemNames();
+        const map = new Map();
+        let unscrapedSubtotal = 0, unscrapedTax = 0, unscrapedCount = 0;
+
+        for (const s of this._veFiltered) {
+            const items = this._veItemsCache.get(s.transaction_no);
+            if (items && items.length > 0) {
+                for (const item of items) {
+                    const price = item.price || 0;
+                    const key = (item.name || 'Unknown').toLowerCase().trim() + '|' + price.toFixed(2);
+                    if (!map.has(key)) {
+                        map.set(key, { name: item.name || 'Unknown', productNumber: item.productNumber || null, price, totalQty: 0, totalRevenue: 0, totalTax: 0, hasInferred: false });
+                    }
+                    const entry = map.get(key);
+                    entry.totalQty += item.quantity || 1;
+                    entry.totalRevenue += item.amount || 0;
+                    if ((s.subtotal || 0) > 0) {
+                        entry.totalTax += (s.tax || 0) * ((item.amount || 0) / s.subtotal);
+                    }
+                    if (item.inferred) entry.hasInferred = true;
+                    if (item.productNumber && !entry.productNumber) entry.productNumber = item.productNumber;
+                }
+            } else {
+                unscrapedSubtotal += s.subtotal || 0;
+                unscrapedTax += s.tax || 0;
+                unscrapedCount++;
+            }
+        }
+
+        const products = [...map.values()];
+        const dir = this._veProductSortDir === 'asc' ? 1 : -1;
+        products.sort((a, b) => {
+            switch (this._veProductSortCol) {
+                case 'name': return dir * a.name.localeCompare(b.name);
+                case 'qty': return dir * (a.totalQty - b.totalQty);
+                case 'price': return dir * (a.price - b.price);
+                case 'revenue': return dir * (a.totalRevenue - b.totalRevenue);
+                case 'tax': return dir * (a.totalTax - b.totalTax);
+                default: return dir * (a.totalQty - b.totalQty);
+            }
+        });
+
+        // Highlight similar products
+        const highlightOn = document.getElementById('ve-highlightDupes').checked;
+        const colorMap = new Map();
+        if (highlightOn) {
+            const palette = ['#fce4ec','#e8f5e9','#e3f2fd','#fff3e0','#f3e5f5','#e0f7fa','#fff9c4','#fbe9e7','#e8eaf6','#f1f8e9'];
+            // Group by prefix
+            const prefixGroups = new Map();
+            for (let i = 0; i < products.length; i++) {
+                const prefix = products[i].name.toLowerCase().trim().substring(0, 12);
+                if (!prefixGroups.has(prefix)) prefixGroups.set(prefix, []);
+                prefixGroups.get(prefix).push(i);
+            }
+            // Re-order: groups (2+ items) first, then singles
+            const reordered = [];
+            const singles = [];
+            for (const [, indices] of prefixGroups) {
+                if (indices.length > 1) {
+                    for (const i of indices) reordered.push(products[i]);
+                } else {
+                    singles.push(products[indices[0]]);
+                }
+            }
+            products.splice(0, products.length, ...reordered, ...singles);
+            // Rebuild colorMap on new order
+            const newPrefixGroups = new Map();
+            for (let i = 0; i < products.length; i++) {
+                const prefix = products[i].name.toLowerCase().trim().substring(0, 12);
+                if (!newPrefixGroups.has(prefix)) newPrefixGroups.set(prefix, []);
+                newPrefixGroups.get(prefix).push(i);
+            }
+            let colorIdx = 0;
+            for (const [, indices] of newPrefixGroups) {
+                if (indices.length > 1) {
+                    const color = palette[colorIdx % palette.length];
+                    for (const i of indices) colorMap.set(i, color);
+                    colorIdx++;
+                }
+            }
+        }
+
+        let totalQty = 0, totalRev = 0, totalTax = 0;
+        let html = '';
+        for (let i = 0; i < products.length; i++) {
+            const p = products[i];
+            const inferBadge  = p.hasInferred ? '<span class="ve-inferred-badge">inferred</span>' : '';
+            const linkedBadge = mappedNames.has(p.name) ? '<span class="ve-linked-badge">linked</span>' : '';
+            const prodNum = p.productNumber ? `<br><span class="ve-product-num">${Utils.escapeHtml(p.productNumber)}</span>` : '';
+            const bgStyle = colorMap.has(i) ? ` style="background:${colorMap.get(i)}"` : '';
+            html += `<tr${bgStyle}>
+                <td>${Utils.escapeHtml(p.name)}${prodNum} ${inferBadge}${linkedBadge}</td>
+                <td class="num">${p.totalQty}</td>
+                <td class="num">${this.veFmt(p.price)}</td>
+                <td class="num">${this.veFmt(p.totalRevenue)}</td>
+                <td class="num">${this.veFmt(p.totalTax)}</td>
+            </tr>`;
+            totalQty += p.totalQty;
+            totalRev += p.totalRevenue;
+            totalTax += p.totalTax;
+        }
+        if (unscrapedCount > 0) {
+            html += `<tr><td><span class="ve-muted">No Item Data (${unscrapedCount})</span></td><td class="num">${unscrapedCount}</td><td class="num"></td><td class="num">${this.veFmt(unscrapedSubtotal)}</td><td class="num">${this.veFmt(unscrapedTax)}</td></tr>`;
+            totalQty += unscrapedCount; totalRev += unscrapedSubtotal; totalTax += unscrapedTax;
+        }
+        html += `<tr class="ve-total-row"><td>Total</td><td class="num">${totalQty}</td><td class="num"></td><td class="num">${this.veFmt(totalRev)}</td><td class="num">${this.veFmt(totalTax)}</td></tr>`;
+        tbody.innerHTML = html;
+        document.getElementById('ve-productCount').textContent = `(${products.length} products)`;
+    },
+
+    veRenderTransactions() {
+        const tbody = document.getElementById('ve-txBody');
+        document.getElementById('ve-txCount').textContent = `(${this._veFiltered.length})`;
+
+        if (this._veFiltered.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#6c757d;padding:20px;">No transactions match filters</td></tr>';
+            return;
+        }
+
+        let html = '';
+        for (const s of this._veFiltered) {
+            const items = this._veItemsCache.get(s.transaction_no);
+            let statusHtml = '';
+            if (items && items.length > 0) {
+                const isInferred = items.some(i => i.inferred);
+                statusHtml = isInferred
+                    ? '<span class="ve-status-dot inferred"></span>Inferred'
+                    : '<span class="ve-status-dot scraped"></span>' + items.length + ' item' + (items.length !== 1 ? 's' : '');
+            } else {
+                statusHtml = '<span class="ve-status-dot unknown"></span>Unknown';
+            }
+
+            html += `<tr>
+                <td>${Utils.escapeHtml(s.transaction_no)}</td>
+                <td>${this.veFmtDate(s.date)}</td>
+                <td><span class="ve-source-badge ${s.source}">${s.source === 'online' ? 'Online' : 'Trade Show'}</span></td>
+                <td>${Utils.escapeHtml(s.billing_name || '')}</td>
+                <td class="num">${this.veFmt(s.subtotal)}</td>
+                <td class="num">${this.veFmt(s.tax)}</td>
+                <td class="num">${this.veFmt(s.total)}</td>
+                <td>${statusHtml}</td>
+            </tr>`;
+        }
+        tbody.innerHTML = html;
+    },
+
+    // --- VE Excel Parsing (client-side via SheetJS) ---
+
+    veFindCol(headers, candidates) {
+        for (const name of candidates) {
+            if (headers[name] !== undefined) return name;
+        }
+        return null;
+    },
+
+    veParseNumber(val) {
+        if (val === null || val === undefined) return 0;
+        if (typeof val === 'number') return val;
+        const cleaned = String(val).replace(/[$,\s]/g, '');
+        const num = parseFloat(cleaned);
+        return isNaN(num) ? 0 : num;
+    },
+
+    veParseDate(val) {
+        if (!val) return null;
+        if (val instanceof Date) return isNaN(val.getTime()) ? null : val.toISOString().split('T')[0];
+        const str = String(val).trim();
+        const d = new Date(str);
+        return isNaN(d.getTime()) ? null : d.toISOString().split('T')[0];
+    },
+
+    veResolveColumns(headers) {
+        return {
+            transactionNo: this.veFindCol(headers, ['transaction no', 'transaction_no', 'transactionno', 'trans no', 'order no', 'order number']),
+            date: this.veFindCol(headers, ['date', 'order date', 'transaction date']),
+            billingName: this.veFindCol(headers, ['billing name', 'billing_name', 'customer', 'name']),
+            description: this.veFindCol(headers, ['description', 'item', 'product', 'item description', 'product name']),
+            subtotal: this.veFindCol(headers, ['subtotal', 'sub total', 'sub-total', 'pretax']),
+            tax: this.veFindCol(headers, ['tax', 'sales tax', 'tax amount']),
+            shipping: this.veFindCol(headers, ['shipping', 'shipping cost', 'freight']),
+            discount: this.veFindCol(headers, ['discount', 'discount amount']),
+            total: this.veFindCol(headers, ['total', 'grand total', 'order total', 'amount']),
+        };
+    },
+
+    veDetectSource(workbook) {
+        // Detect if this is a store (online) or tradeshow file by sheet names and content
+        const sheetNames = workbook.SheetNames.map(n => n.toLowerCase());
+        if (sheetNames.some(n => n.includes('trade show') || n.includes('pos'))) return 'tradeshow';
+        if (sheetNames.some(n => n.includes('store') || n.includes('checkout'))) return 'online';
+        // Fallback: check first sheet header row for clues
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(sheet, { defval: '', range: 0 });
+        if (rows.length > 0) {
+            const keys = Object.keys(rows[0]).map(k => k.toLowerCase());
+            if (keys.some(k => k.includes('pos') || k.includes('trade'))) return 'tradeshow';
+        }
+        return 'online'; // default
+    },
+
+    veParseExcel(arrayBuffer) {
+        if (typeof XLSX === 'undefined') throw new Error('SheetJS library not loaded');
+        const workbook = XLSX.read(arrayBuffer, { type: 'array', cellDates: true });
+        const source = this.veDetectSource(workbook);
+
+        // Parse main sales sheet (first sheet)
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+        if (rows.length === 0) return { sales: [], lineItems: new Map(), source };
+
+        // Build header map (lowercase)
+        const sampleRow = rows[0];
+        const headers = {};
+        for (const key of Object.keys(sampleRow)) {
+            headers[key.trim().toLowerCase()] = key;
+        }
+        const cols = this.veResolveColumns(headers);
+
+        if (!cols.transactionNo || !cols.date) {
+            throw new Error('Required columns not found: Transaction No and Date are required. Found headers: ' + Object.keys(sampleRow).join(', '));
+        }
+
+        const sales = [];
+        for (const row of rows) {
+            const txNo = row[headers[cols.transactionNo]];
+            const dateRaw = row[headers[cols.date]];
+            const total = this.veParseNumber(cols.total ? row[headers[cols.total]] : 0);
+
+            if (!txNo && !dateRaw && !total) continue;
+
+            const date = this.veParseDate(dateRaw);
+            if (!date) continue;
+
+            sales.push({
+                transactionNo: String(txNo || ''),
+                date,
+                billingName: String(cols.billingName ? row[headers[cols.billingName]] : '' || ''),
+                description: String(cols.description ? row[headers[cols.description]] : '' || ''),
+                subtotal: this.veParseNumber(cols.subtotal ? row[headers[cols.subtotal]] : 0),
+                tax: this.veParseNumber(cols.tax ? row[headers[cols.tax]] : 0),
+                shipping: this.veParseNumber(cols.shipping ? row[headers[cols.shipping]] : 0),
+                discount: Math.abs(this.veParseNumber(cols.discount ? row[headers[cols.discount]] : 0)),
+                total,
+                source,
+            });
+        }
+
+        // Parse line items from items sheet
+        const lineItems = new Map();
+        const itemsSheetName = workbook.SheetNames.find(n => {
+            const lower = n.toLowerCase();
+            return lower.includes('item') || lower.includes('line');
+        });
+
+        if (itemsSheetName) {
+            const itemSheet = workbook.Sheets[itemsSheetName];
+            const itemRows = XLSX.utils.sheet_to_json(itemSheet, { defval: '' });
+            if (itemRows.length > 0) {
+                const itemHeaders = {};
+                for (const key of Object.keys(itemRows[0])) {
+                    itemHeaders[key.trim().toLowerCase()] = key;
+                }
+                const txCol = this.veFindCol(itemHeaders, ['transaction no', 'transaction_no', 'transactionno']);
+                const nameCol = this.veFindCol(itemHeaders, ['item name', 'product name', 'name', 'item', 'product']);
+                const numCol = this.veFindCol(itemHeaders, ['item number', 'product number', 'item no', 'product no']);
+                const priceCol = this.veFindCol(itemHeaders, ['price', 'unit price']);
+                const qtyCol = this.veFindCol(itemHeaders, ['quantity', 'qty']);
+                const taxableCol = this.veFindCol(itemHeaders, ['taxable']);
+                const amountCol = this.veFindCol(itemHeaders, ['amount', 'total', 'line total']);
+
+                if (txCol && nameCol) {
+                    for (const row of itemRows) {
+                        const txNoVal = String(row[itemHeaders[txCol]] || '').trim();
+                        if (!txNoVal) continue;
+                        const item = {
+                            name: String(row[itemHeaders[nameCol]] || 'Unknown').trim(),
+                            productNumber: numCol ? String(row[itemHeaders[numCol]] || '').trim() || null : null,
+                            price: this.veParseNumber(priceCol ? row[itemHeaders[priceCol]] : 0),
+                            quantity: parseInt(qtyCol ? row[itemHeaders[qtyCol]] : '1', 10) || 1,
+                            taxable: taxableCol ? String(row[itemHeaders[taxableCol]] || '').toLowerCase() === 'yes' : false,
+                            amount: this.veParseNumber(amountCol ? row[itemHeaders[amountCol]] : 0),
+                        };
+                        if (!lineItems.has(txNoVal)) lineItems.set(txNoVal, []);
+                        lineItems.get(txNoVal).push(item);
+                    }
+                }
+            }
+        }
+
+        return { sales, lineItems, source };
+    },
+
+    // --- VE Import Handlers ---
+
+    veImportJson(fileContent) {
+        let data;
+        try {
+            data = JSON.parse(fileContent);
+        } catch {
+            throw new Error('Invalid JSON file');
+        }
+        if (!data.exportVersion || !Array.isArray(data.sales)) {
+            throw new Error('Invalid VE Sales export file. Expected exportVersion and sales array.');
+        }
+
+        Database.clearVESales();
+
+        // Normalize dates to YYYY-MM-DD
+        const sales = data.sales.map(s => ({
+            ...s,
+            date: s.date ? s.date.split('T')[0] : s.date,
+        }));
+        Database.upsertVESales(sales);
+
+        // Import line items
+        if (data.lineItems && typeof data.lineItems === 'object') {
+            for (const [txNo, items] of Object.entries(data.lineItems)) {
+                if (Array.isArray(items) && items.length > 0) {
+                    Database.upsertVESaleItems(txNo, items);
+                }
+            }
+        }
+
+        Database.setVEImportMeta({
+            importDate: new Date().toISOString(),
+            source: 'json',
+            companyName: data.companyName || 'Unknown',
+            salesCount: sales.length,
+        });
+    },
+
+    async veHandleExcelImport(file, forceSource) {
+        const arrayBuffer = await file.arrayBuffer();
+        const { sales, lineItems, source } = this.veParseExcel(arrayBuffer);
+        const effectiveSource = forceSource || source;
+
+        // Override source on all parsed sales
+        for (const s of sales) s.source = effectiveSource;
+
+        // Only clear the specific source being imported
+        Database.clearVESales(effectiveSource);
+        Database.upsertVESales(sales);
+        let totalItems = 0;
+        for (const [txNo, items] of lineItems) {
+            Database.upsertVESaleItems(txNo, items);
+            totalItems += items.length;
+        }
+        return { salesCount: sales.length, itemsCount: totalItems, source: effectiveSource };
+    },
+
+    // Staged files for the import panel
+    _veStagedFiles: { online: null, tradeshow: null, json: null },
+
+    veUpdateImportButton() {
+        const btn = document.getElementById('veImportSubmit');
+        const { online, tradeshow, json } = this._veStagedFiles;
+        btn.disabled = !online && !tradeshow && !json;
+    },
+
+    async veSubmitImport() {
+        const { online, tradeshow, json } = this._veStagedFiles;
+        const btn = document.getElementById('veImportSubmit');
+        btn.disabled = true;
+        btn.textContent = 'Importing...';
+
+        try {
+            if (json) {
+                const text = await json.text();
+                this.veImportJson(text);
+                UI.showNotification('VE Sales JSON imported successfully', 'success');
+            } else {
+                let totalSales = 0;
+                if (online) {
+                    const result = await this.veHandleExcelImport(online, 'online');
+                    totalSales += result.salesCount;
+                }
+                if (tradeshow) {
+                    const result = await this.veHandleExcelImport(tradeshow, 'tradeshow');
+                    totalSales += result.salesCount;
+                }
+                const parts = [];
+                if (online) parts.push('Online');
+                if (tradeshow) parts.push('Trade Show');
+                UI.showNotification(`Imported ${totalSales} ${parts.join(' + ')} sales successfully`, 'success');
+            }
+
+            Database.setVEImportMeta({ importDate: new Date().toISOString(), source: json ? 'json' : 'excel' });
+
+            // Reset staged files and UI
+            this._veStagedFiles = { online: null, tradeshow: null, json: null };
+            document.getElementById('veOnlineFileName').textContent = '';
+            document.getElementById('veTradeshowFileName').textContent = '';
+            document.getElementById('veJsonFileName').textContent = '';
+            document.getElementById('veOnlineZone').classList.remove('has-file');
+            document.getElementById('veTradeshowZone').classList.remove('has-file');
+            document.getElementById('veJsonZone').classList.remove('has-file');
+
+            this.refreshVESales();
+        } catch (err) {
+            UI.showNotification('Import failed: ' + err.message, 'error');
+        }
+
+        btn.textContent = 'Import Selected Files';
+        this.veUpdateImportButton();
+    },
+
+    veApplyPreset() {
+        const preset = document.getElementById('ve-filterPreset').value;
+        const fromEl = document.getElementById('ve-filterFrom');
+        const toEl = document.getElementById('ve-filterTo');
+        const now = new Date();
+
+        switch (preset) {
+            case 'all':
+                fromEl.value = ''; toEl.value = '';
+                break;
+            case 'thisMonth': {
+                const y = now.getFullYear(), m = String(now.getMonth() + 1).padStart(2, '0');
+                fromEl.value = `${y}-${m}-01`;
+                const lastDay = new Date(y, now.getMonth() + 1, 0).getDate();
+                toEl.value = `${y}-${m}-${String(lastDay).padStart(2, '0')}`;
+                break;
+            }
+            case 'lastMonth': {
+                const last = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+                const y = last.getFullYear(), m = String(last.getMonth() + 1).padStart(2, '0');
+                fromEl.value = `${y}-${m}-01`;
+                const lastDay = new Date(y, last.getMonth() + 1, 0).getDate();
+                toEl.value = `${y}-${m}-${String(lastDay).padStart(2, '0')}`;
+                break;
+            }
+            case 'thisQuarter': {
+                const qMonth = Math.floor(now.getMonth() / 3) * 3;
+                const y = now.getFullYear();
+                fromEl.value = `${y}-${String(qMonth + 1).padStart(2, '0')}-01`;
+                const lastQMonth = qMonth + 2;
+                const lastDay = new Date(y, lastQMonth + 1, 0).getDate();
+                toEl.value = `${y}-${String(lastQMonth + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+                break;
+            }
+        }
+        this.veApplyFilters();
+    },
+
+    setupVESalesListeners() {
+        // Filter controls
+        document.getElementById('ve-filterSource').addEventListener('change', () => this.veApplyFilters());
+        document.getElementById('ve-filterFrom').addEventListener('change', () => this.veApplyFilters());
+        document.getElementById('ve-filterTo').addEventListener('change', () => this.veApplyFilters());
+        document.getElementById('ve-sortBy').addEventListener('change', () => this.veApplyFilters());
+        document.getElementById('ve-filterPreset').addEventListener('change', () => this.veApplyPreset());
+        document.getElementById('ve-highlightDupes').addEventListener('change', () => this.veRenderProducts());
+
+        // Import panel toggle
+        document.getElementById('veImportToggle').addEventListener('click', () => {
+            document.getElementById('veImportPanel').classList.toggle('open');
+        });
+
+        // File staging — Online Excel
+        const stageFile = (inputId, zoneId, fileNameId, key) => {
+            document.getElementById(zoneId).addEventListener('click', (e) => {
+                if (e.target.closest('.ve-drop-btn') || e.target === document.getElementById(zoneId)) {
+                    document.getElementById(inputId).click();
+                }
+            });
+            document.getElementById(zoneId).querySelector('.ve-drop-btn').addEventListener('click', (e) => {
+                e.stopPropagation();
+                document.getElementById(inputId).click();
+            });
+            document.getElementById(inputId).addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                this._veStagedFiles[key] = file;
+                document.getElementById(fileNameId).textContent = file.name;
+                document.getElementById(zoneId).classList.add('has-file');
+                // If JSON is staged, clear excel and vice versa
+                if (key === 'json') {
+                    this._veStagedFiles.online = null;
+                    this._veStagedFiles.tradeshow = null;
+                    document.getElementById('veOnlineFileName').textContent = '';
+                    document.getElementById('veTradeshowFileName').textContent = '';
+                    document.getElementById('veOnlineZone').classList.remove('has-file');
+                    document.getElementById('veTradeshowZone').classList.remove('has-file');
+                    document.getElementById('veOnlineExcelInput').value = '';
+                    document.getElementById('veTradeshowExcelInput').value = '';
+                } else {
+                    this._veStagedFiles.json = null;
+                    document.getElementById('veJsonFileName').textContent = '';
+                    document.getElementById('veJsonZone').classList.remove('has-file');
+                    document.getElementById('veJsonInput').value = '';
+                }
+                this.veUpdateImportButton();
+            });
+
+            // Drag and drop
+            const zone = document.getElementById(zoneId);
+            zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.classList.add('dragover'); });
+            zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+            zone.addEventListener('drop', (e) => {
+                e.preventDefault();
+                zone.classList.remove('dragover');
+                const file = e.dataTransfer.files[0];
+                if (!file) return;
+                this._veStagedFiles[key] = file;
+                document.getElementById(fileNameId).textContent = file.name;
+                zone.classList.add('has-file');
+                if (key === 'json') {
+                    this._veStagedFiles.online = null;
+                    this._veStagedFiles.tradeshow = null;
+                    document.getElementById('veOnlineFileName').textContent = '';
+                    document.getElementById('veTradeshowFileName').textContent = '';
+                    document.getElementById('veOnlineZone').classList.remove('has-file');
+                    document.getElementById('veTradeshowZone').classList.remove('has-file');
+                } else {
+                    this._veStagedFiles.json = null;
+                    document.getElementById('veJsonFileName').textContent = '';
+                    document.getElementById('veJsonZone').classList.remove('has-file');
+                }
+                this.veUpdateImportButton();
+            });
+        };
+
+        stageFile('veOnlineExcelInput', 'veOnlineZone', 'veOnlineFileName', 'online');
+        stageFile('veTradeshowExcelInput', 'veTradeshowZone', 'veTradeshowFileName', 'tradeshow');
+        stageFile('veJsonInput', 'veJsonZone', 'veJsonFileName', 'json');
+
+        // Submit import
+        document.getElementById('veImportSubmit').addEventListener('click', () => this.veSubmitImport());
+
+        // Clear data
+        document.getElementById('veClearBtn').addEventListener('click', () => {
+            if (!confirm('Clear all VE Sales data? This cannot be undone.')) return;
+            Database.clearVESales();
+            Database.setVEImportMeta(null);
+            this.refreshVESales();
+            UI.showNotification('VE Sales data cleared', 'success');
+        });
+
+        // Product table sorting
+        document.querySelectorAll('#ve-productTable th[data-vesort]').forEach(th => {
+            th.addEventListener('click', () => {
+                const col = th.dataset.vesort;
+                if (this._veProductSortCol === col) {
+                    this._veProductSortDir = this._veProductSortDir === 'desc' ? 'asc' : 'desc';
+                } else {
+                    this._veProductSortCol = col;
+                    this._veProductSortDir = col === 'name' ? 'asc' : 'desc';
+                }
+                document.querySelectorAll('#ve-productTable th[data-vesort] .ve-sort-arrow').forEach(el => el.textContent = '');
+                th.querySelector('.ve-sort-arrow').textContent = this._veProductSortDir === 'asc' ? '\u25B2' : '\u25BC';
+                this.veRenderProducts();
+            });
         });
     }
 };

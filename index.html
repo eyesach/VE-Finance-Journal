@@ -15,6 +15,29 @@
         <header class="app-header">
             <div class="header-title">
                 <div class="journal-name-wrapper">
+                    <div class="company-switcher-wrapper">
+                        <button id="companyBtn" class="company-btn" title="Switch company">
+                            <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
+                                <rect x="3" y="3" width="18" height="18" rx="2"/>
+                                <path d="M9 21V12h6v9"/>
+                                <path d="M3 9h18"/>
+                            </svg>
+                            <span id="companyBtnLabel" class="company-btn-label">Companies</span>
+                            <svg width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" aria-hidden="true">
+                                <polyline points="6 9 12 15 18 9"/>
+                            </svg>
+                        </button>
+                        <div id="companyPopover" class="company-popover" style="display:none;">
+                            <div class="company-popover-header">
+                                <span class="gear-label">Companies</span>
+                                <button id="addCompanyBtn" class="company-popover-add">+ New</button>
+                            </div>
+                            <ul id="companyList" class="company-list"></ul>
+                            <div class="company-popover-footer">
+                                <button id="manageCompaniesBtn" class="company-popover-manage">Manage…</button>
+                            </div>
+                        </div>
+                    </div>
                     <input type="text" id="journalOwner" class="journal-owner-input"
                            placeholder="Company/Name" title="Enter owner or company name">
                     <span id="journalSuffix" class="journal-suffix">Accounting Journal</span>
@@ -168,18 +191,21 @@
         </section>
 
         <!-- Main Tab Navigation -->
-        <nav class="main-tabs">
-            <button class="main-tab active" data-tab="journal">Journal</button>
-            <button class="main-tab" data-tab="cashflow">Cash Flow</button>
-            <button class="main-tab" data-tab="pnl">P&amp;L</button>
-            <button class="main-tab" data-tab="balancesheet">Balance Sheet</button>
-            <button class="main-tab" data-tab="assets">Assets &amp; Equity</button>
-            <button class="main-tab" data-tab="loan">Loans</button>
-            <button class="main-tab" data-tab="budget">Budget</button>
-            <button class="main-tab" data-tab="breakeven">Break-Even</button>
-            <button class="main-tab" data-tab="projectedsales">Projected Sales</button>
-            <button class="main-tab" data-tab="products">Products</button>
-        </nav>
+        <div class="main-tabs-wrapper">
+            <nav class="main-tabs" id="mainTabs">
+                <button class="main-tab active" data-tab="journal">Journal</button>
+                <button class="main-tab" data-tab="cashflow">Cash Flow</button>
+                <button class="main-tab" data-tab="pnl">P&amp;L</button>
+                <button class="main-tab" data-tab="balancesheet">Balance Sheet</button>
+                <button class="main-tab" data-tab="assets">Assets &amp; Equity</button>
+                <button class="main-tab" data-tab="loan">Loans</button>
+                <button class="main-tab" data-tab="budget">Budget</button>
+                <button class="main-tab" data-tab="breakeven">Break-Even</button>
+                <button class="main-tab" data-tab="projectedsales">Projected Sales</button>
+                <button class="main-tab" data-tab="products">Products</button>
+                <button class="main-tab" data-tab="vesales">VE Sales</button>
+            </nav>
+        </div>
 
         <!-- Journal Tab -->
         <div id="journalTab">
@@ -664,8 +690,229 @@
                     </div>
                 </div>
                 <div id="productSummaryCards" class="pc-summary-cards"></div>
+
+                <!-- VE Sales Analytics Section (shown when products are linked) -->
+                <div class="pc-analytics-filters">
+                    <div class="pc-analytics-filter-group">
+                        <label>From</label>
+                        <input type="date" id="pcDateFrom">
+                    </div>
+                    <div class="pc-analytics-filter-group">
+                        <label>To</label>
+                        <input type="date" id="pcDateTo">
+                    </div>
+                    <div class="pc-analytics-filter-group">
+                        <label>&nbsp;</label>
+                        <select id="pcDatePreset">
+                            <option value="all">All time</option>
+                            <option value="thisMonth">This month</option>
+                            <option value="lastMonth">Last month</option>
+                            <option value="thisQuarter">This quarter</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="pc-analytics-section" id="pcAnalyticsSection" style="display:none;">
+                    <div class="pc-analytics-charts">
+                        <div class="pc-analytics-chart-card">
+                            <div class="pc-analytics-chart-title">Units Sold by Product</div>
+                            <canvas id="pcChartUnitsCanvas"></canvas>
+                        </div>
+                        <div class="pc-analytics-chart-card">
+                            <div class="pc-analytics-chart-title">Revenue by Product</div>
+                            <canvas id="pcChartRevenueCanvas"></canvas>
+                        </div>
+                    </div>
+                    <div class="pc-analytics-cogs" id="pcCogsTableWrapper"></div>
+                </div>
+
                 <div id="productTableWrapper" class="pc-table-wrapper">
                     <p class="empty-state">No products yet. Click "+ Add Product" to get started.</p>
+                </div>
+            </section>
+        </div>
+
+        <!-- VE Sales Tab -->
+        <div id="vesalesTab" style="display: none;">
+            <section class="ve-section">
+                <!-- Hidden file inputs -->
+                <input type="file" id="veJsonInput" accept=".json" style="display: none;">
+                <input type="file" id="veOnlineExcelInput" accept=".xlsx,.xls" style="display: none;">
+                <input type="file" id="veTradeshowExcelInput" accept=".xlsx,.xls" style="display: none;">
+
+                <!-- Import Panel (collapsible) -->
+                <div class="ve-import-panel" id="veImportPanel">
+                    <button class="ve-import-toggle" id="veImportToggle">
+                        <span class="ve-import-toggle-label">Import Data</span>
+                        <span class="ve-import-toggle-meta" id="veImportInfo"></span>
+                        <svg class="ve-import-chevron" width="12" height="12" viewBox="0 0 12 12"><path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg>
+                    </button>
+                    <div class="ve-import-drawer" id="veImportDrawer">
+                        <div class="ve-import-grid">
+                            <!-- Online Excel -->
+                            <div class="ve-drop-zone" id="veOnlineZone">
+                                <div class="ve-drop-icon">
+                                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="2" y="3" width="16" height="14" rx="2" stroke="currentColor" stroke-width="1.4"/><path d="M6 8h8M6 11h5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+                                </div>
+                                <div class="ve-drop-title">Online Sales</div>
+                                <div class="ve-drop-desc">Store Manager .xlsx</div>
+                                <div class="ve-drop-file" id="veOnlineFileName"></div>
+                                <button class="ve-drop-btn" id="veOnlineBrowse">Choose file</button>
+                            </div>
+                            <!-- Tradeshow Excel -->
+                            <div class="ve-drop-zone" id="veTradeshowZone">
+                                <div class="ve-drop-icon">
+                                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="2" y="3" width="16" height="14" rx="2" stroke="currentColor" stroke-width="1.4"/><path d="M6 8h8M6 11h5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+                                </div>
+                                <div class="ve-drop-title">Trade Show Sales</div>
+                                <div class="ve-drop-desc">POS Export .xlsx</div>
+                                <div class="ve-drop-file" id="veTradeshowFileName"></div>
+                                <button class="ve-drop-btn" id="veTradeshowBrowse">Choose file</button>
+                            </div>
+                            <!-- JSON Import -->
+                            <div class="ve-drop-zone ve-drop-zone-alt" id="veJsonZone">
+                                <div class="ve-drop-icon">
+                                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M7 3C5.343 3 4 4.343 4 6v2c0 .552-.448 1-1 1v2c.552 0 1 .448 1 1v2c0 1.657 1.343 3 3 3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M13 3c1.657 0 3 1.343 3 3v2c0 .552.448 1 1 1v2c-.552 0-1 .448-1 1v2c0 1.657-1.343 3-3 3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="10" cy="10" r="1" fill="currentColor"/></svg>
+                                </div>
+                                <div class="ve-drop-title">JSON Export</div>
+                                <div class="ve-drop-desc">From VE Dashboard app</div>
+                                <div class="ve-drop-file" id="veJsonFileName"></div>
+                                <button class="ve-drop-btn" id="veJsonBrowse">Choose file</button>
+                            </div>
+                        </div>
+                        <div class="ve-import-footer">
+                            <button class="ve-import-submit" id="veImportSubmit" disabled>Import Selected Files</button>
+                            <button class="ve-import-clear" id="veClearBtn">Clear All Data</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Filters -->
+                <div class="ve-controls" id="veControls" style="display:none;">
+                    <div class="ve-control-group">
+                        <label>Source</label>
+                        <select id="ve-filterSource">
+                            <option value="both">Both</option>
+                            <option value="online">Online (Store Manager)</option>
+                            <option value="tradeshow">Trade Show (POS)</option>
+                        </select>
+                    </div>
+                    <div class="ve-control-group">
+                        <label>From</label>
+                        <input type="date" id="ve-filterFrom">
+                    </div>
+                    <div class="ve-control-group">
+                        <label>To</label>
+                        <input type="date" id="ve-filterTo">
+                    </div>
+                    <div class="ve-control-group">
+                        <label>&nbsp;</label>
+                        <select id="ve-filterPreset">
+                            <option value="">Date preset...</option>
+                            <option value="all">All time</option>
+                            <option value="thisMonth">This month</option>
+                            <option value="lastMonth">Last month</option>
+                            <option value="thisQuarter">This quarter</option>
+                        </select>
+                    </div>
+                    <div style="flex:1;"></div>
+                    <div class="ve-control-group">
+                        <label>Sort by</label>
+                        <select id="ve-sortBy">
+                            <option value="date-desc">Date (newest)</option>
+                            <option value="date-asc">Date (oldest)</option>
+                            <option value="total-desc">Total (high)</option>
+                            <option value="total-asc">Total (low)</option>
+                            <option value="txno">Transaction No</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Empty State -->
+                <div id="veEmptyState" class="ve-empty-state">
+                    <div class="ve-empty-icon">
+                        <svg width="40" height="40" viewBox="0 0 40 40" fill="none"><rect x="5" y="7" width="30" height="26" rx="3" stroke="currentColor" stroke-width="1.5" opacity="0.3"/><path d="M12 16h16M12 21h10M12 26h13" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" opacity="0.25"/><path d="M20 11l-4 5h3v4h2v-4h3l-4-5z" fill="currentColor" opacity="0.4"/></svg>
+                    </div>
+                    <p class="ve-empty-title">No sales data yet</p>
+                    <p class="ve-empty-hint">Open the import panel above to load Store Manager or Trade Show POS spreadsheets, or import a JSON export from the VE Dashboard app.</p>
+                </div>
+
+                <!-- Dashboard (hidden until data loaded) -->
+                <div id="veDashboard" style="display: none;">
+                    <!-- Summary Cards -->
+                    <div class="ve-cards">
+                        <div class="ve-card">
+                            <div class="ve-card-label">Pretax Total</div>
+                            <div class="ve-card-value ve-pretax" id="ve-cardPretax">$0.00</div>
+                            <div class="ve-card-sub" id="ve-cardCount">0 transactions</div>
+                        </div>
+                        <div class="ve-card">
+                            <div class="ve-card-label">Sales Tax</div>
+                            <div class="ve-card-value ve-tax" id="ve-cardTax">$0.00</div>
+                        </div>
+                        <div class="ve-card">
+                            <div class="ve-card-label">Post-Tax Total</div>
+                            <div class="ve-card-value ve-total" id="ve-cardTotal">$0.00</div>
+                        </div>
+                        <div class="ve-card" id="ve-discountCard" style="display:none;">
+                            <div class="ve-card-label">Discounts</div>
+                            <div class="ve-card-value ve-discount" id="ve-cardDiscount">-$0.00</div>
+                            <div class="ve-card-sub" id="ve-cardDiscountCount"></div>
+                        </div>
+                        <div class="ve-card" id="ve-shippingCard" style="display:none;">
+                            <div class="ve-card-label">Shipping</div>
+                            <div class="ve-card-value ve-shipping" id="ve-cardShipping">$0.00</div>
+                            <div class="ve-card-sub" id="ve-cardShippingCount"></div>
+                        </div>
+                    </div>
+
+                    <!-- Source Breakdown -->
+                    <div class="ve-source-breakdown" id="ve-sourceBreakdown"></div>
+
+                    <!-- Product Breakdown -->
+                    <div class="ve-table-section">
+                        <h3>Product Breakdown <span class="ve-count" id="ve-productCount"></span>
+                            <label class="ve-highlight-label">
+                                <input type="checkbox" id="ve-highlightDupes"> Highlight similar
+                            </label>
+                        </h3>
+                        <div class="ve-table-wrapper">
+                            <table class="ve-table" id="ve-productTable">
+                                <thead>
+                                    <tr>
+                                        <th data-vesort="name">Product <span class="ve-sort-arrow"></span></th>
+                                        <th class="num" data-vesort="qty">Qty Sold <span class="ve-sort-arrow"></span></th>
+                                        <th class="num" data-vesort="price">Unit Price <span class="ve-sort-arrow"></span></th>
+                                        <th class="num" data-vesort="revenue">Total Revenue <span class="ve-sort-arrow"></span></th>
+                                        <th class="num" data-vesort="tax">Tax (est.) <span class="ve-sort-arrow"></span></th>
+                                    </tr>
+                                </thead>
+                                <tbody id="ve-productBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Transaction Table -->
+                    <div class="ve-table-section">
+                        <h3>Transactions <span class="ve-count" id="ve-txCount"></span></h3>
+                        <div class="ve-table-wrapper">
+                            <table class="ve-table" id="ve-txTable">
+                                <thead>
+                                    <tr>
+                                        <th data-vetxsort="txno">Tx No <span class="ve-sort-arrow"></span></th>
+                                        <th data-vetxsort="date">Date <span class="ve-sort-arrow"></span></th>
+                                        <th data-vetxsort="source">Source <span class="ve-sort-arrow"></span></th>
+                                        <th>Customer</th>
+                                        <th class="num" data-vetxsort="subtotal">Subtotal <span class="ve-sort-arrow"></span></th>
+                                        <th class="num" data-vetxsort="tax">Tax <span class="ve-sort-arrow"></span></th>
+                                        <th class="num" data-vetxsort="total">Total <span class="ve-sort-arrow"></span></th>
+                                        <th>Items</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="ve-txBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
                 </div>
             </section>
         </div>
@@ -720,6 +967,30 @@
                 <div class="form-actions">
                     <button type="button" id="cancelDeleteProductBtn" class="btn btn-secondary">Cancel</button>
                     <button type="button" id="confirmDeleteProductBtn" class="btn btn-danger">Delete</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Product-VE Mapping Modal -->
+        <div id="pvmModal" class="modal">
+            <div class="modal-content modal-wide">
+                <div class="pvm-header">
+                    <h3 class="pvm-title">Manage Links: <span id="pvmProductName"></span></h3>
+                    <p class="pvm-hint">Select which VE Sales item names map to this product. Linked items drive analytics, pie charts, and COGS on the Products tab.</p>
+                </div>
+                <input type="hidden" id="pvmProductId">
+                <div class="pvm-search-wrap">
+                    <input type="text" id="pvmSearchInput" class="pvm-search" placeholder="Search VE item names...">
+                </div>
+                <div class="pvm-list-wrap">
+                    <div class="pvm-list" id="pvmItemList"></div>
+                </div>
+                <div class="pvm-footer">
+                    <span class="pvm-selected-count" id="pvmSelectedCount">0 selected</span>
+                    <div class="pvm-actions">
+                        <button type="button" id="pvmCancelBtn" class="btn btn-secondary">Cancel</button>
+                        <button type="button" id="pvmSaveBtn" class="btn btn-primary">Save Links</button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1399,14 +1670,90 @@
             </div>
         </div>
 
-        <!-- Load Confirmation Modal -->
+        <!-- Load Confirmation Modal (stage 1: confirms file read) -->
         <div id="loadConfirmModal" class="modal">
             <div class="modal-content">
                 <h3>Load Database</h3>
-                <p>Loading a database will replace all current data. Continue?</p>
+                <p>How would you like to load this file?</p>
                 <div class="form-actions">
                     <button type="button" id="cancelLoadBtn" class="btn btn-secondary">Cancel</button>
-                    <button type="button" id="confirmLoadBtn" class="btn btn-primary">Load</button>
+                    <button type="button" id="confirmLoadBtn" class="btn btn-primary">Continue</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Load Choice Modal (stage 2: replace vs new company) -->
+        <div id="loadChoiceModal" class="modal">
+            <div class="modal-content">
+                <h3>Load Database</h3>
+                <p>How would you like to load this file?</p>
+                <div class="load-choice-options">
+                    <button type="button" id="loadReplaceBtn" class="btn load-choice-btn">
+                        <strong>Replace current company</strong>
+                        <span>Overwrites data for: <em id="loadReplaceTarget"></em></span>
+                    </button>
+                    <button type="button" id="loadAddNewBtn" class="btn load-choice-btn load-choice-btn--primary">
+                        <strong>Add as new company</strong>
+                        <span>Keeps current data, imports alongside (max 5)</span>
+                    </button>
+                </div>
+                <div class="form-actions" style="margin-top:12px;">
+                    <button type="button" id="cancelLoadChoiceBtn" class="btn btn-secondary">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Manage Companies Modal -->
+        <div id="manageCompaniesModal" class="modal">
+            <div class="modal-content modal-companies">
+                <h3>Manage Companies</h3>
+                <table class="companies-table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Created</th>
+                            <th>Last Used</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody id="companiesTableBody"></tbody>
+                </table>
+                <div id="copySectionWrapper">
+                    <hr class="companies-divider">
+                    <h4 class="companies-copy-heading">Copy Section From Another Company</h4>
+                    <div class="companies-copy-row">
+                        <select id="copyFromCompanySelect" class="companies-copy-select">
+                            <option value="">Select company…</option>
+                        </select>
+                        <select id="copySectionSelect" class="companies-copy-select">
+                            <option value="breakeven">Break-Even Config</option>
+                            <option value="loans">Loan Tables</option>
+                            <option value="budget">Budget Expenses</option>
+                            <option value="products">Products</option>
+                            <option value="assets">Fixed Assets</option>
+                        </select>
+                        <button type="button" id="copySectionBtn" class="btn btn-primary btn-sm">Copy</button>
+                    </div>
+                    <p id="copySectionStatus" class="companies-copy-status"></p>
+                </div>
+                <div class="form-actions" style="margin-top:16px;">
+                    <button type="button" id="closeManageCompaniesBtn" class="btn btn-secondary">Close</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- First-time Company Naming Modal -->
+        <div id="companyNameModal" class="modal">
+            <div class="modal-content">
+                <h3>Name Your Company</h3>
+                <p>Your existing data has been migrated to the multi-company system. What is this company called?</p>
+                <div class="form-group">
+                    <input type="text" id="initialCompanyNameInput" class="form-input"
+                           placeholder="e.g. Acme Bakery" maxlength="60">
+                </div>
+                <div class="form-actions">
+                    <button type="button" id="skipCompanyNameBtn" class="btn btn-secondary">Skip</button>
+                    <button type="button" id="confirmCompanyNameBtn" class="btn btn-primary">Save</button>
                 </div>
             </div>
         </div>
@@ -1685,7 +2032,9 @@
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
     <script src="js/utils.js"></script>
+    <script src="js/companies.js"></script>
     <script src="js/database.js"></script>
     <script src="js/ui.js"></script>
     <script src="js/sync.js"></script>
