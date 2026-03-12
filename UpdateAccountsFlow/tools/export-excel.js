@@ -282,6 +282,7 @@ export async function generateExcelReport(sales, itemsCache) {
 // --- Helpers ---
 
 function calculateTotals(sales) {
+  const round2 = (v) => Math.round(v * 100) / 100;
   let subtotal = 0, tax = 0, total = 0, shipping = 0, discount = 0;
   for (const s of sales) {
     subtotal += s.subtotal;
@@ -290,7 +291,7 @@ function calculateTotals(sales) {
     shipping += s.shipping;
     discount += s.discount;
   }
-  return { subtotal, tax, total, shipping, discount, count: sales.length };
+  return { subtotal: round2(subtotal), tax: round2(tax), total: round2(total), shipping: round2(shipping), discount: round2(discount), count: sales.length };
 }
 
 function groupByProduct(sales, itemsCache) {
@@ -314,7 +315,7 @@ function groupByProduct(sales, itemsCache) {
         entry.totalQuantity += item.quantity || 1;
         entry.totalRevenue += item.amount || 0;
         if (s.subtotal > 0) {
-          entry.totalTax += s.tax * (item.amount / s.subtotal);
+          entry.totalTax += Math.round(s.tax * (item.amount / s.subtotal) * 100) / 100;
         }
         entry.prices.push(item.price || 0);
         if (item.productNumber && !entry.productNumber) entry.productNumber = item.productNumber;
@@ -326,8 +327,11 @@ function groupByProduct(sales, itemsCache) {
     }
   }
 
+  const round2 = (v) => Math.round(v * 100) / 100;
   const products = [...map.values()].map(p => ({
     ...p,
+    totalRevenue: round2(p.totalRevenue),
+    totalTax: round2(p.totalTax),
     unitPrice: p.prices.length > 0 ? p.prices[0] : 0,
     priceConsistent: p.prices.every(pr => Math.abs(pr - p.prices[0]) < 0.01),
   }));

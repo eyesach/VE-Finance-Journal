@@ -2359,6 +2359,15 @@ body {
 .ve-drop-btn { display: inline-block; padding: 3px 10px; font-size: var(--font-xs); font-family: inherit; border: 1px solid var(--c5, var(--border)); border-radius: 4px; background: var(--c4, var(--surface)); color: var(--c6, var(--text)); cursor: pointer; transition: all 0.15s; }
 .ve-drop-btn:hover { border-color: var(--c2, var(--primary)); color: var(--c2, var(--primary)); }
 .ve-drop-zone.has-file .ve-drop-btn { border-color: var(--c2, var(--primary)); color: var(--c2, var(--primary)); }
+.ve-import-divider { display: flex; align-items: center; gap: 10px; padding: 8px 0 4px; color: var(--text-muted); font-size: var(--font-xs); text-transform: uppercase; letter-spacing: 0.5px; }
+.ve-import-divider::before, .ve-import-divider::after { content: ''; flex: 1; height: 1px; background: var(--border-light); }
+.ve-sync-row { display: flex; align-items: center; gap: 10px; padding-bottom: 10px; }
+.ve-sync-btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 16px; font-size: var(--font-xs); font-weight: 600; font-family: inherit; border: 1px solid var(--green, #28a745); border-radius: var(--radius-sm); background: var(--green, #28a745); color: #fff; cursor: pointer; transition: opacity 0.15s, transform 0.1s; }
+.ve-sync-btn:hover { opacity: 0.9; }
+.ve-sync-btn:active { transform: scale(0.98); }
+.ve-sync-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.ve-sync-btn svg { flex-shrink: 0; }
+.ve-sync-hint { font-size: var(--font-xs); color: var(--text-muted); }
 .ve-import-footer { display: flex; align-items: center; gap: 10px; padding-top: 10px; border-top: 1px solid var(--border-light); }
 .ve-import-submit { padding: 6px 18px; font-size: var(--font-xs); font-weight: 600; font-family: inherit; border: none; border-radius: var(--radius-sm); background: var(--c2, var(--primary)); color: #fff; cursor: pointer; transition: opacity 0.15s, transform 0.1s; }
 .ve-import-submit:hover:not(:disabled) { opacity: 0.9; }
@@ -2543,8 +2552,9 @@ body.view-only-mode .pnl-editable-cell, body.view-only-mode .cf-editable-cell { 
 
 /* ========== SALE DATE RANGE ========== */
 .sale-date-range { font-size: var(--font-xs); color: var(--text-muted); margin-left: 4px; }
-.sale-date-inputs { display: flex; align-items: center; gap: 6px; }
-.sale-date-inputs input[type="date"] { flex: 1; padding: 5px 8px; border: 1px solid var(--c5, var(--border)); border-radius: 4px; font-size: var(--font-sm); background: var(--c4, var(--surface)); color: var(--c6, var(--text)); font-family: inherit; }
+.sale-date-inputs { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.sale-date-inputs input[type="date"] { flex: 1; min-width: 0; padding: 5px 8px; border: 1px solid var(--c5, var(--border)); border-radius: 4px; font-size: var(--font-sm); background: var(--c4, var(--surface)); color: var(--c6, var(--text)); font-family: inherit; }
+#saleDateGroup { grid-column: span 2; }
 .sale-date-separator { color: var(--text-muted); font-size: var(--font-sm); }
 
 /* ========== SCROLLBAR ========== */

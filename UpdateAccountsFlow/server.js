@@ -121,9 +121,15 @@ function sendSSE(event, data) {
 }
 
 function serializeSales(sales) {
+  const round2 = (v) => Math.round(v * 100) / 100;
   return sales.map(s => ({
     ...s,
     date: s.date.toISOString(),
+    subtotal: round2(s.subtotal),
+    tax: round2(s.tax),
+    shipping: round2(s.shipping),
+    discount: round2(s.discount),
+    total: round2(s.total),
   }));
 }
 
@@ -133,6 +139,13 @@ function serializeCache(cache) {
 
 // Express app
 const app = express();
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 

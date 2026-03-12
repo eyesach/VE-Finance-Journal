@@ -949,6 +949,16 @@
                                 <button class="ve-drop-btn" id="veJsonBrowse">Choose file</button>
                             </div>
                         </div>
+                        <div class="ve-import-divider">
+                            <span>or sync directly</span>
+                        </div>
+                        <div class="ve-sync-row">
+                            <button class="ve-sync-btn" id="veSyncFromServer" title="Fetch latest data from the VE Dashboard server running on localhost:3000">
+                                <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+                                Sync from VE Dashboard
+                            </button>
+                            <span class="ve-sync-hint" id="veSyncHint">Requires VE Dashboard server on localhost:3000</span>
+                        </div>
                         <div class="ve-import-footer">
                             <button class="ve-import-submit" id="veImportSubmit" disabled>Import Selected Files</button>
                             <button class="ve-import-clear" id="veClearBtn">Clear All Data</button>

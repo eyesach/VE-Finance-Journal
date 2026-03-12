@@ -6878,11 +6878,11 @@ const App = {
     veRenderSummary() {
         let subtotal = 0, tax = 0, total = 0, shipping = 0, discount = 0;
         for (const s of this._veFiltered) {
-            subtotal += s.subtotal || 0;
-            tax += s.tax || 0;
-            total += s.total || 0;
-            shipping += s.shipping || 0;
-            discount += s.discount || 0;
+            subtotal = Math.round((subtotal + (s.subtotal || 0)) * 100) / 100;
+            tax = Math.round((tax + (s.tax || 0)) * 100) / 100;
+            total = Math.round((total + (s.total || 0)) * 100) / 100;
+            shipping = Math.round((shipping + (s.shipping || 0)) * 100) / 100;
+            discount = Math.round((discount + (s.discount || 0)) * 100) / 100;
         }
         document.getElementById('ve-cardPretax').textContent = this.veFmt(subtotal);
         document.getElementById('ve-cardTax').textContent = this.veFmt(tax);
@@ -6972,16 +6972,16 @@ const App = {
                     }
                     const entry = map.get(key);
                     entry.totalQty += item.quantity || 1;
-                    entry.totalRevenue += item.amount || 0;
+                    entry.totalRevenue = Math.round((entry.totalRevenue + (item.amount || 0)) * 100) / 100;
                     if ((s.subtotal || 0) > 0) {
-                        entry.totalTax += (s.tax || 0) * ((item.amount || 0) / s.subtotal);
+                        entry.totalTax = Math.round((entry.totalTax + (s.tax || 0) * ((item.amount || 0) / s.subtotal)) * 100) / 100;
                     }
                     if (item.inferred) entry.hasInferred = true;
                     if (item.productNumber && !entry.productNumber) entry.productNumber = item.productNumber;
                 }
             } else {
-                unscrapedSubtotal += s.subtotal || 0;
-                unscrapedTax += s.tax || 0;
+                unscrapedSubtotal = Math.round((unscrapedSubtotal + (s.subtotal || 0)) * 100) / 100;
+                unscrapedTax = Math.round((unscrapedTax + (s.tax || 0)) * 100) / 100;
                 unscrapedCount++;
             }
         }
@@ -7114,10 +7114,10 @@ const App = {
 
     veParseNumber(val) {
         if (val === null || val === undefined) return 0;
-        if (typeof val === 'number') return val;
+        if (typeof val === 'number') return Math.round(val * 100) / 100;
         const cleaned = String(val).replace(/[$,\s]/g, '');
         const num = parseFloat(cleaned);
-        return isNaN(num) ? 0 : num;
+        return isNaN(num) ? 0 : Math.round(num * 100) / 100;
     },
 
     veParseDate(val) {
@@ -7380,8 +7380,8 @@ const App = {
 
         let subtotal = 0, total = 0;
         for (const s of filtered) {
-            subtotal += s.subtotal || 0;
-            total += s.total || 0;
+            subtotal = Math.round((subtotal + (s.subtotal || 0)) * 100) / 100;
+            total = Math.round((total + (s.total || 0)) * 100) / 100;
         }
 
         // Build description preview
@@ -7425,8 +7425,8 @@ const App = {
 
         let subtotal = 0, total = 0;
         for (const s of filtered) {
-            subtotal += s.subtotal || 0;
-            total += s.total || 0;
+            subtotal = Math.round((subtotal + (s.subtotal || 0)) * 100) / 100;
+            total = Math.round((total + (s.total || 0)) * 100) / 100;
         }
 
         // Build description
@@ -7540,6 +7540,37 @@ const App = {
 
         btn.textContent = 'Import Selected Files';
         this.veUpdateImportButton();
+    },
+
+    async veSyncFromServer() {
+        const btn = document.getElementById('veSyncFromServer');
+        const hint = document.getElementById('veSyncHint');
+        btn.disabled = true;
+        btn.textContent = 'Connecting...';
+        hint.textContent = '';
+
+        try {
+            const res = await fetch('http://localhost:3000/api/export', { signal: AbortSignal.timeout(5000) });
+            if (!res.ok) throw new Error(`Server returned ${res.status}`);
+            const text = await res.text();
+            this.veImportJson(text);
+            Database.setVEImportMeta({ importDate: new Date().toISOString(), source: 'json-sync' });
+            this.refreshVESales();
+            UI.showNotification('VE Sales synced from dashboard server', 'success');
+            hint.textContent = 'Synced successfully';
+            hint.style.color = 'var(--green, #28a745)';
+        } catch (err) {
+            if (err.name === 'TimeoutError' || err.message.includes('Failed to fetch') || err.message.includes('NetworkError')) {
+                hint.textContent = 'Server not running. Start it with start-ve-dashboard.bat';
+                hint.style.color = 'var(--red, #dc3545)';
+            } else {
+                hint.textContent = 'Sync failed: ' + err.message;
+                hint.style.color = 'var(--red, #dc3545)';
+            }
+        }
+
+        btn.disabled = false;
+        btn.innerHTML = '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg> Sync from VE Dashboard';
     },
 
     veApplyPreset() {
@@ -7664,6 +7695,9 @@ const App = {
 
         // Submit import
         document.getElementById('veImportSubmit').addEventListener('click', () => this.veSubmitImport());
+
+        // Sync from VE Dashboard server
+        document.getElementById('veSyncFromServer').addEventListener('click', () => this.veSyncFromServer());
 
         // Clear data
         document.getElementById('veClearBtn').addEventListener('click', () => {

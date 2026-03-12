@@ -8,16 +8,17 @@
  */
 export function generateHtmlReport(sales, itemsCache) {
   // Serialize data for embedding in the HTML
+  const round2 = (v) => Math.round(v * 100) / 100;
   const salesData = sales.map(s => ({
     transactionNo: s.transactionNo,
     date: s.date.toISOString().split('T')[0],
     billingName: s.billingName || '',
     source: s.source,
-    subtotal: s.subtotal,
-    tax: s.tax,
-    shipping: s.shipping,
-    discount: s.discount,
-    total: s.total,
+    subtotal: round2(s.subtotal),
+    tax: round2(s.tax),
+    shipping: round2(s.shipping),
+    discount: round2(s.discount),
+    total: round2(s.total),
   }));
 
   const itemsData = {};
@@ -27,9 +28,9 @@ export function generateHtmlReport(sales, itemsCache) {
       itemsData[s.transactionNo] = items.map(i => ({
         name: i.name || 'Unknown',
         productNumber: i.productNumber || null,
-        price: i.price || 0,
+        price: round2(i.price || 0),
         quantity: i.quantity || 1,
-        amount: i.amount || 0,
+        amount: round2(i.amount || 0),
         inferred: !!i.inferred,
       }));
     }
@@ -231,9 +232,10 @@ function applyPreset() {
 }
 
 function calcTotals(arr) {
+  const r2 = v => Math.round(v * 100) / 100;
   let subtotal=0, tax=0, total=0, shipping=0, discount=0;
   for (const s of arr) { subtotal+=s.subtotal; tax+=s.tax; total+=s.total; shipping+=s.shipping; discount+=s.discount; }
-  return { subtotal, tax, total, shipping, discount, count: arr.length };
+  return { subtotal: r2(subtotal), tax: r2(tax), total: r2(total), shipping: r2(shipping), discount: r2(discount), count: arr.length };
 }
 
 function buildProducts(salesArr) {
@@ -249,7 +251,7 @@ function buildProducts(salesArr) {
         const e = map.get(key);
         e.qty += item.quantity||1;
         e.revenue += item.amount||0;
-        if (s.subtotal>0) e.tax += s.tax * ((item.amount||0)/s.subtotal);
+        if (s.subtotal>0) e.tax += Math.round(s.tax * ((item.amount||0)/s.subtotal) * 100) / 100;
         if (item.productNumber && !e.productNumber) e.productNumber = item.productNumber;
       }
     } else {

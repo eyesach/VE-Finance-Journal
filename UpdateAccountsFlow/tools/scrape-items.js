@@ -483,17 +483,18 @@ async function extractLineItems(page) {
         // Regular item row — handle both 5-col (Item,Price,Qty,Taxable,Amount) and 4-col (Item,Price,Qty,Amount)
         if (firstCell && cellCount >= 4) {
           let price, quantity, taxable, amount;
+          const round2 = (v) => Math.round(v * 100) / 100;
           if (cellCount >= 5) {
-            price = parseFloat((await cells.nth(1).textContent() || '0').replace(/[$,]/g, '')) || 0;
+            price = round2(parseFloat((await cells.nth(1).textContent() || '0').replace(/[$,]/g, '')) || 0);
             quantity = parseInt((await cells.nth(2).textContent() || '1'), 10) || 1;
             taxable = (await cells.nth(3).textContent() || '').trim().toLowerCase() === 'yes';
-            amount = parseFloat((await cells.nth(4).textContent() || '0').replace(/[$,]/g, '')) || 0;
+            amount = round2(parseFloat((await cells.nth(4).textContent() || '0').replace(/[$,]/g, '')) || 0);
           } else {
             // 4-column layout: Item, Price, Quantity, Amount (no Taxable)
-            price = parseFloat((await cells.nth(1).textContent() || '0').replace(/[$,]/g, '')) || 0;
+            price = round2(parseFloat((await cells.nth(1).textContent() || '0').replace(/[$,]/g, '')) || 0);
             quantity = parseInt((await cells.nth(2).textContent() || '1'), 10) || 1;
             taxable = false;
-            amount = parseFloat((await cells.nth(3).textContent() || '0').replace(/[$,]/g, '')) || 0;
+            amount = round2(parseFloat((await cells.nth(3).textContent() || '0').replace(/[$,]/g, '')) || 0);
           }
 
           let name = firstCell;

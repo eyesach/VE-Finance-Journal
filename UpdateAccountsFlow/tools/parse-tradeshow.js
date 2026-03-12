@@ -145,10 +145,10 @@ function getCellValue(row, colIndex) {
 
 function parseNumber(val) {
   if (val === null || val === undefined) return 0;
-  if (typeof val === 'number') return val;
+  if (typeof val === 'number') return Math.round(val * 100) / 100;
   const cleaned = String(val).replace(/[$,\s]/g, '');
   const num = parseFloat(cleaned);
-  return isNaN(num) ? 0 : num;
+  return isNaN(num) ? 0 : Math.round(num * 100) / 100;
 }
 
 function parseDate(val) {
