@@ -2807,7 +2807,7 @@ const UI = {
 
     renderProductsTab(products, showDiscontinued, analytics) {
         const fmtAmt = (amt) => Utils.formatCurrency(amt);
-        analytics = analytics || { totals: { pretax_total: 0, sales_tax: 0, post_tax_total: 0 }, byProduct: [], linkedProductIds: new Set() };
+        analytics = analytics || { totals: { pretax_total: 0, sales_tax: 0, post_tax_total: 0, discount: 0, pretax_after_discount: 0, posttax_after_discount: 0 }, byProduct: [], linkedProductIds: new Set() };
         const linkedIds = analytics.linkedProductIds || new Set();
 
         // Filter products based on discontinued toggle
@@ -2825,10 +2825,15 @@ const UI = {
                 ? activeProducts.reduce((sum, p) => sum + (p.price > 0 ? ((p.price - p.cogs) / p.price) * 100 : 0), 0) / activeProducts.length : 0;
 
             const hasAnalytics = analytics.byProduct.length > 0;
+            const discountCards = hasAnalytics && analytics.totals.discount > 0 ? `
+                <div class="budget-summary-card"><span class="budget-summary-label">VE Pretax After Discounts</span><span class="budget-summary-value">${fmtAmt(analytics.totals.pretax_after_discount)}</span></div>
+                <div class="budget-summary-card"><span class="budget-summary-label">VE Post-Tax After Discounts</span><span class="budget-summary-value">${fmtAmt(analytics.totals.posttax_after_discount)}</span></div>
+            ` : '';
             const veCards = hasAnalytics ? `
                 <div class="budget-summary-card"><span class="budget-summary-label">VE Pretax Revenue</span><span class="budget-summary-value">${fmtAmt(analytics.totals.pretax_total)}</span></div>
                 <div class="budget-summary-card"><span class="budget-summary-label">VE Sales Tax</span><span class="budget-summary-value">${fmtAmt(analytics.totals.sales_tax)}</span></div>
                 <div class="budget-summary-card"><span class="budget-summary-label">VE Post-Tax Total</span><span class="budget-summary-value">${fmtAmt(analytics.totals.post_tax_total)}</span></div>
+                ${discountCards}
             ` : '';
 
             summaryEl.innerHTML = `
@@ -2864,7 +2869,8 @@ const UI = {
             const margin = p.price - (p.cogs || 0);
             const marginPct = p.price > 0 ? (margin / p.price) * 100 : 0;
             const marginClass = margin >= 0 ? 'pc-margin-positive' : 'pc-margin-negative';
-            const rowClass = p.is_discontinued ? 'pc-row-discontinued' : '';
+            const isLinked = linkedIds.has(p.id);
+            const rowClass = (p.is_discontinued ? 'pc-row-discontinued' : '') + (isLinked ? ' pc-row-linked' : '');
             const toggleTitle = p.is_discontinued ? 'Reactivate' : 'Discontinue';
             const toggleIcon = p.is_discontinued
                 ? `<svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="10"/></svg>`

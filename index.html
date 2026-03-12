@@ -204,7 +204,26 @@
                 <button class="main-tab" data-tab="projectedsales">Projected Sales</button>
                 <button class="main-tab" data-tab="products">Products</button>
                 <button class="main-tab" data-tab="vesales">VE Sales</button>
+                <button class="main-tab manage-tabs-btn" id="manageTabsBtn" title="Manage tabs">&#9881;</button>
             </nav>
+        </div>
+
+        <!-- Tab Context Menu -->
+        <div class="tab-context-menu" id="tabContextMenu" style="display:none;">
+            <button class="tab-ctx-item" id="tabCtxHide">Hide Tab</button>
+            <button class="tab-ctx-item tab-ctx-danger" id="tabCtxReset">Reset Tab</button>
+        </div>
+
+        <!-- Manage Tabs Modal -->
+        <div class="modal" id="manageTabsModal">
+            <div class="modal-content" style="max-width:400px;">
+                <h2>Manage Tabs</h2>
+                <p class="modal-subtitle">Toggle tab visibility. Hidden tabs keep their data.</p>
+                <div id="manageTabsList" class="manage-tabs-list"></div>
+                <div class="modal-actions">
+                    <button class="btn btn-primary" id="manageTabsDoneBtn">Done</button>
+                </div>
+            </div>
         </div>
 
         <!-- Journal Tab -->
@@ -720,7 +739,6 @@
                                     <code style="background:#e9ecef; padding:1px 4px; border-radius:3px; font-size:0.67rem;">sku</code>&nbsp;
                                     <code style="background:#e9ecef; padding:1px 4px; border-radius:3px; font-size:0.67rem;">price</code>&nbsp;
                                     <code style="background:#e9ecef; padding:1px 4px; border-radius:3px; font-size:0.67rem;">cogs</code>&nbsp;
-                                    <code style="background:#e9ecef; padding:1px 4px; border-radius:3px; font-size:0.67rem;">tax_rate</code>&nbsp;
                                     <code style="background:#e9ecef; padding:1px 4px; border-radius:3px; font-size:0.67rem;">notes</code>
                                     <br><span style="color:#9aa3ad;">Only <strong style="color:#495057;">name</strong> is required. Dollar signs and % symbols are stripped automatically. Existing products with the same SKU will be skipped.</span>
                                 </div>
@@ -735,7 +753,11 @@
 
                 <div id="productSummaryCards" class="pc-summary-cards"></div>
 
-                <!-- VE Sales Analytics Section (shown when products are linked) -->
+                <div id="productTableWrapper" class="pc-table-wrapper">
+                    <p class="empty-state">No products yet. Click "+ Add Product" to get started.</p>
+                </div>
+
+                <!-- VE Sales Analytics Section (shown when products are linked) — below product table -->
                 <div class="pc-analytics-filters">
                     <div class="pc-analytics-filter-group">
                         <label>From</label>
@@ -752,6 +774,14 @@
                             <option value="thisMonth">This month</option>
                             <option value="lastMonth">Last month</option>
                             <option value="thisQuarter">This quarter</option>
+                        </select>
+                    </div>
+                    <div class="pc-analytics-filter-group">
+                        <label>Channel</label>
+                        <select id="pcSourceFilter">
+                            <option value="all">All</option>
+                            <option value="online">Online</option>
+                            <option value="tradeshow">Tradeshow</option>
                         </select>
                     </div>
                     <div class="pc-analytics-filter-group pc-analytics-toggle">
@@ -785,10 +815,6 @@
                         </div>
                     </div>
                     <div class="pc-analytics-cogs" id="pcCogsTableWrapper"></div>
-                </div>
-
-                <div id="productTableWrapper" class="pc-table-wrapper">
-                    <p class="empty-state">No products yet. Click "+ Add Product" to get started.</p>
                 </div>
             </section>
         </div>
@@ -920,6 +946,14 @@
                             <div class="ve-card-value ve-discount" id="ve-cardDiscount">-$0.00</div>
                             <div class="ve-card-sub" id="ve-cardDiscountCount"></div>
                         </div>
+                        <div class="ve-card" id="ve-pretaxAfterDiscCard" style="display:none;">
+                            <div class="ve-card-label">Pretax After Discounts</div>
+                            <div class="ve-card-value ve-pretax" id="ve-cardPretaxAfterDisc">$0.00</div>
+                        </div>
+                        <div class="ve-card" id="ve-posttaxAfterDiscCard" style="display:none;">
+                            <div class="ve-card-label">Post-Tax After Discounts</div>
+                            <div class="ve-card-value ve-total" id="ve-cardPosttaxAfterDisc">$0.00</div>
+                        </div>
                         <div class="ve-card" id="ve-shippingCard" style="display:none;">
                             <div class="ve-card-label">Shipping</div>
                             <div class="ve-card-value ve-shipping" id="ve-cardShipping">$0.00</div>
@@ -929,6 +963,11 @@
 
                     <!-- Source Breakdown -->
                     <div class="ve-source-breakdown" id="ve-sourceBreakdown"></div>
+
+                    <!-- Create Journal Entry Action -->
+                    <div class="ve-journal-action">
+                        <button class="btn btn-primary" id="veCreateJournalBtn">+ Create Journal Entry</button>
+                    </div>
 
                     <!-- Product Breakdown -->
                     <div class="ve-table-section">
@@ -1000,10 +1039,6 @@
                             <input type="number" id="productPrice" step="0.01" min="0" placeholder="0.00" required>
                         </div>
                         <div class="form-group">
-                            <label for="productTaxRate">Typical Tax Rate (%)</label>
-                            <input type="number" id="productTaxRate" step="0.01" min="0" max="100" placeholder="0.00">
-                        </div>
-                        <div class="form-group">
                             <label for="productCogs">COGS</label>
                             <input type="number" id="productCogs" step="0.01" min="0" placeholder="0.00">
                         </div>
@@ -1036,12 +1071,13 @@
         <div id="pvmModal" class="modal">
             <div class="modal-content modal-wide">
                 <div class="pvm-header">
-                    <h3 class="pvm-title">Manage Links: <span id="pvmProductName"></span></h3>
+                    <h3 class="pvm-title">Manage Links: <span id="pvmProductName"></span> <span class="pvm-product-price" id="pvmProductPrice"></span></h3>
                     <p class="pvm-hint">Select which VE Sales item names map to this product. Linked items drive analytics, pie charts, and COGS on the Products tab.</p>
                 </div>
                 <input type="hidden" id="pvmProductId">
                 <div class="pvm-search-wrap">
                     <input type="text" id="pvmSearchInput" class="pvm-search" placeholder="Search VE item names...">
+                    <button type="button" id="pvmSuggestBtn" class="btn btn-secondary btn-small pvm-suggest-btn" title="Show VE items with the same price as this product">Suggest Matches</button>
                 </div>
                 <div class="pvm-list-wrap">
                     <div class="pvm-list" id="pvmItemList"></div>
@@ -1053,6 +1089,61 @@
                         <button type="button" id="pvmSaveBtn" class="btn btn-primary">Save Links</button>
                     </div>
                 </div>
+            </div>
+        </div>
+
+        <!-- VE Create Journal Entry Modal -->
+        <div id="veJournalModal" class="modal">
+            <div class="modal-content">
+                <h3>Create Sales Journal Entry</h3>
+                <p class="ve-journal-hint">Creates a journal entry from VE sales data for the selected source and date range.</p>
+                <form id="veJournalForm">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="veJournalSource">Source</label>
+                            <select id="veJournalSource" required>
+                                <option value="online">Online</option>
+                                <option value="tradeshow">Tradeshow</option>
+                                <option value="both">Both (Online + Tradeshow)</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="veJournalCategory">Sales Category</label>
+                            <select id="veJournalCategory" required>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="veJournalDateFrom">Date From</label>
+                            <input type="date" id="veJournalDateFrom" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="veJournalDateTo">Date To</label>
+                            <input type="date" id="veJournalDateTo" required>
+                        </div>
+                    </div>
+                    <div class="ve-journal-preview" id="veJournalPreview">
+                        <div class="ve-journal-preview-label">Entry Preview</div>
+                        <div class="ve-journal-preview-desc" id="veJournalPreviewDesc">--</div>
+                        <div class="ve-journal-preview-row">
+                            <span>Pretax Amount:</span>
+                            <strong id="veJournalPreviewPretax">$0.00</strong>
+                        </div>
+                        <div class="ve-journal-preview-row">
+                            <span>Post-Tax Amount:</span>
+                            <strong id="veJournalPreviewTotal">$0.00</strong>
+                        </div>
+                        <div class="ve-journal-preview-row">
+                            <span>Transactions:</span>
+                            <span id="veJournalPreviewCount">0</span>
+                        </div>
+                    </div>
+                    <div class="form-actions">
+                        <button type="button" id="veJournalCancelBtn" class="btn btn-secondary">Cancel</button>
+                        <button type="button" id="veJournalSubmitBtn" class="btn btn-primary">Create Entry</button>
+                    </div>
+                </form>
             </div>
         </div>
 

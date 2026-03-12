@@ -749,6 +749,12 @@ const Database = {
      * Get or create the system "Sales Tax" category
      * @returns {number} Category ID for the Sales Tax category
      */
+    getSalesCategories() {
+        const results = this.db.exec('SELECT id, name FROM categories WHERE is_sales = 1 ORDER BY name ASC');
+        if (results.length === 0) return [];
+        return this.rowsToObjects(results[0]);
+    },
+
     getOrCreateSalesTaxCategory() {
         const result = this.db.exec('SELECT id FROM categories WHERE is_sales_tax = 1 LIMIT 1');
         if (result.length > 0 && result[0].values.length > 0) {
@@ -2196,8 +2202,8 @@ const Database = {
      * Compute linked analytics for the Products tab.
      * Returns { totals, byProduct, monthlyCogs }
      */
-    getLinkedProductAnalytics(dateFrom, dateTo) {
-        const empty = { totals: { pretax_total: 0, sales_tax: 0, post_tax_total: 0 }, byProduct: [], monthlyCogs: [] };
+    getLinkedProductAnalytics(dateFrom, dateTo, source) {
+        const empty = { totals: { pretax_total: 0, sales_tax: 0, post_tax_total: 0, discount: 0, pretax_after_discount: 0, posttax_after_discount: 0 }, byProduct: [], monthlyCogs: [] };
         const hasMappings = this.db.exec('SELECT 1 FROM product_ve_mappings LIMIT 1');
         if (hasMappings.length === 0) return empty;
 
@@ -2205,24 +2211,29 @@ const Database = {
         const params = [];
         if (dateFrom) { conditions.push('vs.date >= ?'); params.push(dateFrom); }
         if (dateTo)   { conditions.push('vs.date <= ?'); params.push(dateTo); }
+        if (source && source !== 'all') { conditions.push('vs.source = ?'); params.push(source); }
         const whereFrag = conditions.length > 0 ? 'AND ' + conditions.join(' AND ') : '';
 
         // Totals
         const totalsResult = this.db.exec(`
             SELECT
                 COALESCE(SUM(vi.amount), 0) AS pretax_total,
-                COALESCE(SUM(CASE WHEN vs.subtotal > 0 THEN vs.tax * (vi.amount / vs.subtotal) ELSE 0 END), 0) AS sales_tax
+                COALESCE(SUM(CASE WHEN vs.subtotal > 0 THEN vs.tax * (vi.amount / vs.subtotal) ELSE 0 END), 0) AS sales_tax,
+                COALESCE(SUM(CASE WHEN vs.subtotal > 0 THEN vs.discount * (vi.amount / vs.subtotal) ELSE 0 END), 0) AS discount
             FROM ve_sale_items vi
             JOIN ve_sales vs ON vs.transaction_no = vi.transaction_no
             JOIN product_ve_mappings m ON m.ve_item_name = vi.name AND ROUND(m.ve_item_price, 2) = ROUND(vi.price, 2)
             WHERE 1=1 ${whereFrag}
         `, params);
 
-        let totals = { pretax_total: 0, sales_tax: 0, post_tax_total: 0 };
+        let totals = { pretax_total: 0, sales_tax: 0, post_tax_total: 0, discount: 0, pretax_after_discount: 0, posttax_after_discount: 0 };
         if (totalsResult.length > 0 && totalsResult[0].values.length > 0) {
             const pt = totalsResult[0].values[0][0] || 0;
             const st = totalsResult[0].values[0][1] || 0;
-            totals = { pretax_total: pt, sales_tax: st, post_tax_total: pt + st };
+            const disc = totalsResult[0].values[0][2] || 0;
+            const pretaxAfterDisc = pt - disc;
+            const taxAfterDisc = st > 0 && pt > 0 ? st * (pretaxAfterDisc / pt) : 0;
+            totals = { pretax_total: pt, sales_tax: st, post_tax_total: pt + st, discount: disc, pretax_after_discount: pretaxAfterDisc, posttax_after_discount: pretaxAfterDisc + taxAfterDisc };
         }
 
         // By-product aggregates
@@ -2485,6 +2496,69 @@ const Database = {
      */
     setTabOrder(order) {
         this.db.run("INSERT OR REPLACE INTO app_meta (key, value) VALUES ('tab_order', ?)", [JSON.stringify(order)]);
+        this.autoSave();
+    },
+
+    // ==================== HIDDEN TABS ====================
+
+    getHiddenTabs() {
+        const result = this.db.exec("SELECT value FROM app_meta WHERE key = 'hidden_tabs'");
+        if (result.length === 0 || result[0].values.length === 0) return [];
+        try {
+            return JSON.parse(result[0].values[0][0]);
+        } catch (e) {
+            return [];
+        }
+    },
+
+    setHiddenTabs(tabs) {
+        this.db.run("INSERT OR REPLACE INTO app_meta (key, value) VALUES ('hidden_tabs', ?)", [JSON.stringify(tabs)]);
+        this.autoSave();
+    },
+
+    // ==================== TAB RESET ====================
+
+    resetTabData(tabName) {
+        switch (tabName) {
+            case 'journal':
+                this.db.run('DELETE FROM transactions');
+                this.db.run('DELETE FROM categories');
+                this.db.run('DELETE FROM category_folders');
+                break;
+            case 'cashflow':
+                this.db.run('DELETE FROM cashflow_overrides');
+                break;
+            case 'pnl':
+                this.db.run('DELETE FROM pl_overrides');
+                break;
+            case 'assets':
+                this.db.run("DELETE FROM transactions WHERE source_type = 'asset_purchase'");
+                this.db.run('DELETE FROM balance_sheet_assets');
+                break;
+            case 'loan':
+                this.db.run("DELETE FROM transactions WHERE source_type IN ('loan_receivable', 'loan_payment')");
+                this.db.run('DELETE FROM loan_payment_overrides');
+                this.db.run('DELETE FROM loan_skipped_payments');
+                this.db.run('DELETE FROM loans');
+                break;
+            case 'budget':
+                this.db.run('DELETE FROM budget_expenses');
+                break;
+            case 'breakeven':
+                this.db.run("DELETE FROM app_meta WHERE key = 'breakeven_config'");
+                break;
+            case 'projectedsales':
+                this.db.run("DELETE FROM app_meta WHERE key = 'projected_sales_config'");
+                break;
+            case 'products':
+                this.db.run('DELETE FROM product_ve_mappings');
+                this.db.run('DELETE FROM products');
+                break;
+            case 'vesales':
+                this.db.run('DELETE FROM ve_sale_items');
+                this.db.run('DELETE FROM ve_sales');
+                break;
+        }
         this.autoSave();
     },
 

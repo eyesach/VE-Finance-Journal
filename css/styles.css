@@ -558,6 +558,87 @@ body {
     cursor: grabbing;
 }
 
+/* Manage Tabs gear button */
+.manage-tabs-btn {
+    font-size: 16px;
+    color: var(--color-text-muted);
+    opacity: 0.5;
+    transition: opacity 0.2s, color 0.2s;
+    padding: var(--spacing-tab-padding-v) 10px;
+    cursor: pointer;
+    border: none;
+    background: transparent;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+}
+.manage-tabs-btn:hover {
+    opacity: 1;
+    color: var(--color-text);
+}
+
+/* Tab Context Menu */
+.tab-context-menu {
+    position: fixed;
+    z-index: 9999;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+    padding: 4px 0;
+    min-width: 140px;
+}
+.tab-ctx-item {
+    display: block;
+    width: 100%;
+    padding: 8px 16px;
+    text-align: left;
+    border: none;
+    background: none;
+    cursor: pointer;
+    font-size: var(--font-size-body);
+    color: var(--color-text);
+}
+.tab-ctx-item:hover {
+    background: var(--color-bg);
+}
+.tab-ctx-danger {
+    color: var(--color-danger);
+}
+.tab-ctx-danger:hover {
+    background: rgba(239, 68, 68, 0.08);
+}
+
+/* Manage Tabs Modal List */
+.manage-tabs-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin: 12px 0;
+}
+.manage-tabs-list label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: var(--font-size-body);
+    transition: background 0.15s;
+}
+.manage-tabs-list label:hover {
+    background: var(--color-bg);
+}
+.manage-tabs-list input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--color-primary);
+}
+.modal-subtitle {
+    color: var(--color-text-muted);
+    font-size: var(--font-size-small);
+    margin: -4px 0 0 0;
+}
+
 /* Entry Modal - wider than standard modals */
 .modal-content.modal-entry {
     max-width: 700px;
@@ -5231,6 +5312,28 @@ body.view-only-mode .cf-editable-cell {
 .ve-source-stat { display: flex; justify-content: space-between; padding: 3px 0; font-size: 0.8rem; }
 .ve-source-stat .ve-stat-label { color: #6c757d; }
 
+/* VE Journal Entry Action */
+.ve-journal-action { margin-bottom: 16px; }
+.ve-journal-action .btn { font-size: 0.82rem; }
+
+.ve-journal-hint {
+    font-size: 0.8rem; color: #6c757d; margin: 0 0 14px;
+}
+.ve-journal-preview {
+    background: var(--c2, #e8f0f3); border-radius: 8px; padding: 14px; margin: 14px 0;
+}
+.ve-journal-preview-label {
+    font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.5px;
+    color: #6c757d; margin-bottom: 8px; font-weight: 600;
+}
+.ve-journal-preview-desc {
+    font-size: 0.95rem; font-weight: 600; color: #333; margin-bottom: 10px;
+}
+.ve-journal-preview-row {
+    display: flex; justify-content: space-between; padding: 3px 0;
+    font-size: 0.82rem; color: #555;
+}
+
 /* Tables */
 .ve-table-section { margin-bottom: 20px; }
 .ve-table-section h3 {
@@ -5315,7 +5418,31 @@ body.view-only-mode .cf-editable-cell {
 .pvm-title { font-size: 1rem; font-weight: 600; margin: 0 0 6px; }
 .pvm-hint { font-size: 0.8rem; color: var(--color-text-muted, #6c757d); margin: 0; }
 
-.pvm-search-wrap { margin-bottom: 10px; }
+/* Product price shown in modal title */
+.pvm-product-price {
+    display: inline-block;
+    font-size: 0.8rem;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: rgba(74, 144, 164, 0.12);
+    color: var(--color-primary, #4a90a4);
+    font-family: 'DM Mono', monospace;
+    vertical-align: middle;
+    margin-left: 4px;
+}
+
+.pvm-search-wrap { margin-bottom: 10px; position: relative; display: flex; gap: 8px; align-items: center; }
+.pvm-suggest-btn {
+    flex-shrink: 0;
+    white-space: nowrap;
+    font-size: 0.75rem;
+}
+.pvm-suggest-btn.active {
+    background: var(--color-primary, #4a90a4);
+    color: #fff;
+    border-color: var(--color-primary, #4a90a4);
+}
 .pvm-search {
     width: 100%;
     padding: 8px 12px;
@@ -5554,6 +5681,13 @@ body.view-only-mode .cf-editable-cell {
     vertical-align: middle;
     margin-left: 6px;
 }
+
+/* Linked row highlight */
+.pc-row-linked {
+    background: rgba(74, 144, 164, 0.04);
+    border-left: 3px solid var(--color-primary, #4a90a4);
+}
+.pc-row-linked td:first-child { padding-left: 11px; }
 
 /* Responsive */
 @media (max-width: 768px) {

@@ -84,9 +84,10 @@ const App = {
             // Load and apply saved theme
             this.loadAndApplyTheme();
 
-            // Restore tab order and set up tab drag-drop
+            // Restore tab order, hidden tabs, and set up tab drag-drop
             this.restoreTabOrder();
             this.setupTabDragDrop();
+            this.applyHiddenTabs();
             this.setupTabScrollFade();
 
             // Load and apply timeline
@@ -307,12 +308,12 @@ const App = {
 
         let draggedTab = null;
 
-        nav.querySelectorAll('.main-tab').forEach(btn => {
+        nav.querySelectorAll('.main-tab[data-tab]').forEach(btn => {
             btn.setAttribute('draggable', 'true');
         });
 
         nav.addEventListener('dragstart', (e) => {
-            const tab = e.target.closest('.main-tab');
+            const tab = e.target.closest('.main-tab[data-tab]');
             if (!tab) return;
             draggedTab = tab;
             tab.classList.add('tab-dragging');
@@ -322,7 +323,7 @@ const App = {
 
         nav.addEventListener('dragover', (e) => {
             e.preventDefault();
-            const tab = e.target.closest('.main-tab');
+            const tab = e.target.closest('.main-tab[data-tab]');
             if (!tab || tab === draggedTab || !draggedTab) return;
             e.dataTransfer.dropEffect = 'move';
             nav.querySelectorAll('.main-tab.tab-drag-over').forEach(t => t.classList.remove('tab-drag-over'));
@@ -336,14 +337,16 @@ const App = {
 
         nav.addEventListener('drop', (e) => {
             e.preventDefault();
-            const targetTab = e.target.closest('.main-tab');
+            const targetTab = e.target.closest('.main-tab[data-tab]');
             if (!targetTab || !draggedTab || targetTab === draggedTab) return;
 
             nav.insertBefore(draggedTab, targetTab);
             targetTab.classList.remove('tab-drag-over');
 
-            // Save new order
-            const tabs = nav.querySelectorAll('.main-tab');
+            // Save new order (keep gear button at end)
+            const gearBtn = document.getElementById('manageTabsBtn');
+            if (gearBtn) nav.appendChild(gearBtn);
+            const tabs = nav.querySelectorAll('.main-tab[data-tab]');
             const order = Array.from(tabs).map(t => t.dataset.tab);
             Database.setTabOrder(order);
         });
@@ -394,11 +397,122 @@ const App = {
         });
 
         // Append any tabs not in the saved order (e.g., newly added tabs)
-        nav.querySelectorAll('.main-tab').forEach(tab => {
+        nav.querySelectorAll('.main-tab[data-tab]').forEach(tab => {
             if (!order.includes(tab.dataset.tab)) {
                 nav.appendChild(tab);
             }
         });
+
+        // Keep manage-tabs gear button at the end
+        const gearBtn = document.getElementById('manageTabsBtn');
+        if (gearBtn) nav.appendChild(gearBtn);
+    },
+
+    // Tabs that cannot be reset (derived from other data)
+    NON_RESETTABLE_TABS: ['balancesheet'],
+
+    TAB_LABELS: {
+        journal: 'Journal', cashflow: 'Cash Flow', pnl: 'P&L',
+        balancesheet: 'Balance Sheet', assets: 'Assets & Equity',
+        loan: 'Loans', budget: 'Budget', breakeven: 'Break-Even',
+        projectedsales: 'Projected Sales', products: 'Products', vesales: 'VE Sales'
+    },
+
+    applyHiddenTabs() {
+        const hidden = Database.getHiddenTabs();
+        const nav = document.querySelector('.main-tabs');
+        nav.querySelectorAll('.main-tab[data-tab]').forEach(btn => {
+            btn.style.display = hidden.includes(btn.dataset.tab) ? 'none' : '';
+        });
+        const activeBtn = nav.querySelector('.main-tab.active');
+        if (activeBtn && hidden.includes(activeBtn.dataset.tab)) {
+            const firstVisible = nav.querySelector('.main-tab[data-tab]:not([style*="display: none"])');
+            if (firstVisible) this.switchMainTab(firstVisible.dataset.tab);
+        }
+    },
+
+    setupTabContextMenu() {
+        const menu = document.getElementById('tabContextMenu');
+        let targetTab = null;
+
+        document.querySelector('.main-tabs').addEventListener('contextmenu', (e) => {
+            const btn = e.target.closest('.main-tab[data-tab]');
+            if (!btn) return;
+            e.preventDefault();
+            targetTab = btn.dataset.tab;
+            menu.style.left = e.clientX + 'px';
+            menu.style.top = e.clientY + 'px';
+            menu.style.display = 'block';
+            document.getElementById('tabCtxReset').style.display =
+                this.NON_RESETTABLE_TABS.includes(targetTab) ? 'none' : '';
+        });
+
+        document.getElementById('tabCtxHide').addEventListener('click', () => {
+            menu.style.display = 'none';
+            if (!targetTab) return;
+            const hidden = Database.getHiddenTabs();
+            if (!hidden.includes(targetTab)) {
+                hidden.push(targetTab);
+                Database.setHiddenTabs(hidden);
+            }
+            this.applyHiddenTabs();
+        });
+
+        document.getElementById('tabCtxReset').addEventListener('click', () => {
+            menu.style.display = 'none';
+            if (!targetTab || this.NON_RESETTABLE_TABS.includes(targetTab)) return;
+            const label = this.TAB_LABELS[targetTab] || targetTab;
+            if (confirm('Reset "' + label + '"? This will delete all data in this tab. This cannot be undone.')) {
+                Database.resetTabData(targetTab);
+                this.refreshCurrentTab(targetTab);
+            }
+        });
+
+        document.addEventListener('click', () => { menu.style.display = 'none'; });
+    },
+
+    refreshCurrentTab(tab) {
+        switch (tab) {
+            case 'journal': this.refreshCategories(); this.refreshTransactions(); this.refreshSummary(); break;
+            case 'cashflow': this.refreshCashFlow(); break;
+            case 'pnl': this.refreshPnL(); break;
+            case 'balancesheet': this.refreshBalanceSheet(); break;
+            case 'assets': this.refreshFixedAssets(); break;
+            case 'loan': this.refreshLoans(); break;
+            case 'budget': this.refreshBudget(); break;
+            case 'breakeven': this.refreshBreakeven(); break;
+            case 'projectedsales': this.refreshProjectedSales(); break;
+            case 'products': this.refreshProducts(); break;
+            case 'vesales': this.refreshVESales(); break;
+        }
+    },
+
+    openManageTabsModal() {
+        const list = document.getElementById('manageTabsList');
+        const hidden = Database.getHiddenTabs();
+        const nav = document.querySelector('.main-tabs');
+        const allTabs = Array.from(nav.querySelectorAll('.main-tab[data-tab]')).map(b => b.dataset.tab);
+
+        list.innerHTML = allTabs.map(tab => {
+            const label = this.TAB_LABELS[tab] || tab;
+            const checked = !hidden.includes(tab) ? 'checked' : '';
+            return '<label><input type="checkbox" data-tab="' + tab + '" ' + checked + '><span>' + label + '</span></label>';
+        }).join('');
+
+        list.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+            cb.addEventListener('change', () => {
+                let h = Database.getHiddenTabs();
+                if (cb.checked) {
+                    h = h.filter(t => t !== cb.dataset.tab);
+                } else {
+                    if (!h.includes(cb.dataset.tab)) h.push(cb.dataset.tab);
+                }
+                Database.setHiddenTabs(h);
+                this.applyHiddenTabs();
+            });
+        });
+
+        UI.showModal('manageTabsModal');
     },
 
     /**
@@ -1390,11 +1504,18 @@ const App = {
 
         // ==================== MAIN TABS ====================
 
-        document.querySelectorAll('.main-tab').forEach(btn => {
+        document.querySelectorAll('.main-tab[data-tab]').forEach(btn => {
             btn.addEventListener('click', () => {
                 this.switchMainTab(btn.dataset.tab);
             });
         });
+
+        // Tab context menu (right-click)
+        this.setupTabContextMenu();
+
+        // Manage tabs button
+        document.getElementById('manageTabsBtn').addEventListener('click', () => this.openManageTabsModal());
+        document.getElementById('manageTabsDoneBtn').addEventListener('click', () => UI.hideModal('manageTabsModal'));
 
         // P&L Tax Mode dropdown
         document.getElementById('plTaxMode').addEventListener('change', (e) => {
@@ -1755,6 +1876,7 @@ const App = {
         document.getElementById('pcDateFrom').addEventListener('change', () => this.refreshProducts());
         document.getElementById('pcDateTo').addEventListener('change',   () => this.refreshProducts());
         document.getElementById('pcDatePreset').addEventListener('change', () => this._pcApplyDatePreset());
+        document.getElementById('pcSourceFilter').addEventListener('change', () => this.refreshProducts());
         document.getElementById('pcShowCharts').addEventListener('change', (e) => {
             const section = document.getElementById('pcAnalyticsSection');
             if (!section) return;
@@ -1789,8 +1911,12 @@ const App = {
         // Product-VE Mapping modal
         document.getElementById('pvmSaveBtn').addEventListener('click',   () => this.handleSaveProductMappings());
         document.getElementById('pvmCancelBtn').addEventListener('click', () => UI.hideModal('pvmModal'));
-        document.getElementById('pvmSearchInput').addEventListener('input', (e) => this.handlePvmSearch(e.target.value));
+        document.getElementById('pvmSearchInput').addEventListener('input', (e) => {
+            document.getElementById('pvmSuggestBtn').classList.remove('active');
+            this.handlePvmSearch(e.target.value);
+        });
         document.getElementById('pvmItemList').addEventListener('change', () => this._pvmUpdateSelectedCount());
+        document.getElementById('pvmSuggestBtn').addEventListener('click', () => this.handlePvmSuggest());
 
         // ==================== BREAK-EVEN ====================
         document.getElementById('beConfigBtn').addEventListener('click', () => this.openBeConfigModal());
@@ -4169,7 +4295,8 @@ const App = {
         const products = Database.getProducts();
         const dateFrom = document.getElementById('pcDateFrom').value || null;
         const dateTo   = document.getElementById('pcDateTo').value   || null;
-        const analytics = Database.getLinkedProductAnalytics(dateFrom, dateTo);
+        const source   = document.getElementById('pcSourceFilter').value || 'all';
+        const analytics = Database.getLinkedProductAnalytics(dateFrom, dateTo, source);
         analytics.linkedProductIds = new Set(analytics.byProduct.map(p => p.id));
         UI.renderProductsTab(products, showDiscontinued, analytics);
         this._destroyPcCharts();
@@ -4194,7 +4321,7 @@ const App = {
         const name = document.getElementById('productName').value.trim();
         const sku = document.getElementById('productSku').value.trim() || null;
         const price = parseFloat(document.getElementById('productPrice').value);
-        const taxRate = parseFloat(document.getElementById('productTaxRate').value) || 0;
+        const taxRate = 0;
         const cogs = parseFloat(document.getElementById('productCogs').value) || 0;
         const notes = document.getElementById('productNotes').value.trim() || null;
         const editingId = document.getElementById('editingProductId').value;
@@ -4229,7 +4356,6 @@ const App = {
         document.getElementById('productName').value = product.name;
         document.getElementById('productSku').value = product.sku || '';
         document.getElementById('productPrice').value = product.price;
-        document.getElementById('productTaxRate').value = product.tax_rate || '';
         document.getElementById('productCogs').value = product.cogs || '';
         document.getElementById('productNotes').value = product.notes || '';
         document.getElementById('productModalTitle').textContent = 'Edit Product';
@@ -4267,7 +4393,12 @@ const App = {
 
         document.getElementById('pvmProductId').value = productId;
         document.getElementById('pvmProductName').textContent = product.name;
+        document.getElementById('pvmProductPrice').textContent = Utils.formatCurrency(product.price);
         document.getElementById('pvmSearchInput').value = '';
+        // Reset suggest button
+        const suggestBtn = document.getElementById('pvmSuggestBtn');
+        suggestBtn.classList.remove('active');
+        suggestBtn.dataset.productPrice = product.price.toFixed(2);
 
         const list = document.getElementById('pvmItemList');
         if (allItems.length === 0) {
@@ -4296,6 +4427,27 @@ const App = {
             const name = item.querySelector('.pvm-item-name').textContent.toLowerCase();
             item.classList.toggle('pvm-item--hidden', q.length > 0 && !name.includes(q));
         });
+    },
+
+    handlePvmSuggest() {
+        const btn = document.getElementById('pvmSuggestBtn');
+        const isActive = btn.classList.toggle('active');
+        const searchInput = document.getElementById('pvmSearchInput');
+
+        if (isActive) {
+            searchInput.value = '';
+            const targetPrice = parseFloat(btn.dataset.productPrice) || 0;
+            document.querySelectorAll('#pvmItemList .pvm-item').forEach(item => {
+                const priceText = item.querySelector('.pvm-item-price').textContent.replace(/[^0-9.\-]/g, '');
+                const itemPrice = parseFloat(priceText) || 0;
+                item.classList.toggle('pvm-item--hidden', Math.abs(itemPrice - targetPrice) > 0.01);
+            });
+        } else {
+            // Deactivate: show all
+            document.querySelectorAll('#pvmItemList .pvm-item').forEach(item => {
+                item.classList.remove('pvm-item--hidden');
+            });
+        }
     },
 
     _pvmUpdateSelectedCount() {
@@ -5483,6 +5635,7 @@ const App = {
         this.loadAndApplyTheme();
         this.restoreTabOrder();
         this.setupTabDragDrop();
+        this.applyHiddenTabs();
         this.setupTabScrollFade();
         this.loadAndApplyTimeline();
         this.initBalanceSheetDate();
@@ -6319,6 +6472,7 @@ const App = {
             this.loadAndApplyTheme();
             this.restoreTabOrder();
             this.setupTabDragDrop();
+            this.applyHiddenTabs();
             this.setupTabScrollFade();
             this.loadAndApplyTimeline();
             this.refreshAll();
@@ -6621,8 +6775,9 @@ const App = {
 
     veFmtDate(isoStr) {
         if (!isoStr) return '';
-        const d = new Date(isoStr);
-        return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        const [y, m, d] = isoStr.split('-').map(Number);
+        const date = new Date(y, m - 1, d);
+        return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
     },
 
     veRenderSummary() {
@@ -6640,13 +6795,23 @@ const App = {
         document.getElementById('ve-cardCount').textContent = `${this._veFiltered.length} transaction${this._veFiltered.length !== 1 ? 's' : ''}`;
 
         const discountCard = document.getElementById('ve-discountCard');
+        const pretaxAfterDiscCard = document.getElementById('ve-pretaxAfterDiscCard');
+        const posttaxAfterDiscCard = document.getElementById('ve-posttaxAfterDiscCard');
         if (discount > 0) {
             discountCard.style.display = '';
             document.getElementById('ve-cardDiscount').textContent = '-' + this.veFmt(discount);
             const dc = this._veFiltered.filter(s => s.discount > 0).length;
             document.getElementById('ve-cardDiscountCount').textContent = `${dc} order${dc !== 1 ? 's' : ''} with discounts`;
+            const pretaxAfterDisc = subtotal - discount;
+            const taxAfterDisc = subtotal > 0 ? tax * (pretaxAfterDisc / subtotal) : 0;
+            pretaxAfterDiscCard.style.display = '';
+            document.getElementById('ve-cardPretaxAfterDisc').textContent = this.veFmt(pretaxAfterDisc);
+            posttaxAfterDiscCard.style.display = '';
+            document.getElementById('ve-cardPosttaxAfterDisc').textContent = this.veFmt(pretaxAfterDisc + taxAfterDisc);
         } else {
             discountCard.style.display = 'none';
+            pretaxAfterDiscCard.style.display = 'none';
+            posttaxAfterDiscCard.style.display = 'none';
         }
 
         const shippingCard = document.getElementById('ve-shippingCard');
@@ -7047,6 +7212,185 @@ const App = {
         return { salesCount: sales.length, itemsCount: totalItems, source: effectiveSource };
     },
 
+    // ---- VE Create Journal Entry ----
+
+    veOpenJournalModal() {
+        // Populate sales category dropdown (prefer is_sales categories, fall back to all)
+        const catSelect = document.getElementById('veJournalCategory');
+        let cats = Database.getSalesCategories();
+        if (cats.length === 0) {
+            cats = Database.getCategories().filter(c => !c.is_sales_tax && !c.is_cogs && !c.is_depreciation && !c.is_inventory_cost);
+        }
+        catSelect.innerHTML = '';
+        if (cats.length === 0) {
+            catSelect.innerHTML = '<option value="">No categories found</option>';
+            document.getElementById('veJournalSubmitBtn').disabled = true;
+        } else {
+            document.getElementById('veJournalSubmitBtn').disabled = false;
+            for (const cat of cats) {
+                const opt = document.createElement('option');
+                opt.value = cat.id;
+                opt.textContent = cat.name;
+                catSelect.appendChild(opt);
+            }
+        }
+
+        // Default source from current filter
+        const currentSource = document.getElementById('ve-filterSource').value;
+        const sourceSelect = document.getElementById('veJournalSource');
+        if (currentSource === 'online' || currentSource === 'tradeshow') {
+            sourceSelect.value = currentSource;
+        } else {
+            sourceSelect.value = 'both';
+        }
+
+        // Default dates from current filter or from data range
+        const fromInput = document.getElementById('ve-filterFrom').value;
+        const toInput = document.getElementById('ve-filterTo').value;
+        if (fromInput) {
+            document.getElementById('veJournalDateFrom').value = fromInput;
+        } else if (this._veSales.length > 0) {
+            const dates = this._veSales.map(s => s.date).filter(Boolean).sort();
+            document.getElementById('veJournalDateFrom').value = dates[0] || '';
+        }
+        if (toInput) {
+            document.getElementById('veJournalDateTo').value = toInput;
+        } else if (this._veSales.length > 0) {
+            const dates = this._veSales.map(s => s.date).filter(Boolean).sort();
+            document.getElementById('veJournalDateTo').value = dates[dates.length - 1] || '';
+        }
+
+        this.veUpdateJournalPreview();
+        UI.showModal('veJournalModal');
+    },
+
+    veGetJournalFilteredSales() {
+        const source = document.getElementById('veJournalSource').value;
+        const from = document.getElementById('veJournalDateFrom').value;
+        const to = document.getElementById('veJournalDateTo').value;
+
+        return this._veSales.filter(s => {
+            if (source !== 'both' && s.source !== source) return false;
+            if (from && s.date < from) return false;
+            if (to && s.date > to) return false;
+            return true;
+        });
+    },
+
+    veUpdateJournalPreview() {
+        const source = document.getElementById('veJournalSource').value;
+        const from = document.getElementById('veJournalDateFrom').value;
+        const to = document.getElementById('veJournalDateTo').value;
+        const filtered = this.veGetJournalFilteredSales();
+
+        let subtotal = 0, total = 0;
+        for (const s of filtered) {
+            subtotal += s.subtotal || 0;
+            total += s.total || 0;
+        }
+
+        // Build description preview
+        const sourceLabel = source === 'online' ? 'Online' : source === 'tradeshow' ? 'Tradeshow' : 'Tradeshow + Online';
+        let dateLabel = '';
+        if (from && to && from === to) {
+            dateLabel = this.veFmtDate(from);
+        } else if (from && to) {
+            dateLabel = this.veFmtDate(from) + ' - ' + this.veFmtDate(to);
+        } else if (from) {
+            dateLabel = this.veFmtDate(from) + '+';
+        } else if (to) {
+            dateLabel = 'through ' + this.veFmtDate(to);
+        }
+
+        const desc = `${sourceLabel} sales ${dateLabel}`.trim();
+        document.getElementById('veJournalPreviewDesc').textContent = desc || '--';
+        document.getElementById('veJournalPreviewPretax').textContent = this.veFmt(subtotal);
+        document.getElementById('veJournalPreviewTotal').textContent = this.veFmt(total);
+        document.getElementById('veJournalPreviewCount').textContent = filtered.length;
+
+        // Disable submit if no matching sales
+        const submitBtn = document.getElementById('veJournalSubmitBtn');
+        const hasCats = document.getElementById('veJournalCategory').value;
+        submitBtn.disabled = filtered.length === 0 || !hasCats;
+    },
+
+    veCreateJournalEntry() {
+        if (this._guardViewOnly()) return;
+
+        const source = document.getElementById('veJournalSource').value;
+        const from = document.getElementById('veJournalDateFrom').value;
+        const to = document.getElementById('veJournalDateTo').value;
+        const categoryId = parseInt(document.getElementById('veJournalCategory').value);
+        const filtered = this.veGetJournalFilteredSales();
+
+        if (filtered.length === 0) {
+            UI.showNotification('No sales data matches the selected filters', 'error');
+            return;
+        }
+
+        let subtotal = 0, total = 0;
+        for (const s of filtered) {
+            subtotal += s.subtotal || 0;
+            total += s.total || 0;
+        }
+
+        // Build description
+        const sourceLabel = source === 'online' ? 'Online' : source === 'tradeshow' ? 'Tradeshow' : 'Tradeshow + Online';
+        let dateLabel = '';
+        if (from && to && from === to) {
+            dateLabel = this.veFmtDate(from);
+        } else if (from && to) {
+            dateLabel = this.veFmtDate(from) + ' - ' + this.veFmtDate(to);
+        } else if (from) {
+            dateLabel = this.veFmtDate(from) + '+';
+        } else if (to) {
+            dateLabel = 'through ' + this.veFmtDate(to);
+        }
+        const description = `${sourceLabel} sales ${dateLabel}`.trim();
+
+        // Use the latest date as entry date; received date = last transaction date
+        const sortedDates = filtered.map(s => s.date).filter(Boolean).sort();
+        const lastTxDate = sortedDates[sortedDates.length - 1] || to || from;
+        const entryDate = to || from || Utils.getTodayDate();
+        const monthDue = entryDate.substring(0, 7);
+
+        try {
+            const parentId = Database.addTransaction({
+                entry_date: entryDate,
+                category_id: categoryId,
+                item_description: description,
+                amount: total,
+                pretax_amount: subtotal,
+                transaction_type: 'receivable',
+                status: 'received',
+                date_processed: lastTxDate || entryDate,
+                month_due: monthDue,
+                month_paid: monthDue,
+                sale_date_start: from || null,
+                sale_date_end: to || null,
+            });
+
+            // Auto-manage linked sales tax entry
+            const data = {
+                entry_date: entryDate,
+                category_id: categoryId,
+                amount: total,
+                pretax_amount: subtotal,
+                sale_date_start: from || null,
+                sale_date_end: to || null,
+                month_due: monthDue,
+            };
+            this._manageSalesTaxEntry(parentId, data);
+
+            UI.hideModal('veJournalModal');
+            this.refreshAll();
+            UI.showNotification(`Journal entry created: ${description}`, 'success');
+        } catch (error) {
+            console.error('Error creating VE journal entry:', error);
+            UI.showNotification('Failed to create journal entry', 'error');
+        }
+    },
+
     // Staged files for the import panel
     _veStagedFiles: { online: null, tradeshow: null, json: null },
 
@@ -7233,6 +7577,22 @@ const App = {
             Database.setVEImportMeta(null);
             this.refreshVESales();
             UI.showNotification('VE Sales data cleared', 'success');
+        });
+
+        // Create Journal Entry button
+        document.getElementById('veCreateJournalBtn').addEventListener('click', () => {
+            this.veOpenJournalModal();
+        });
+
+        // VE Journal modal events
+        document.getElementById('veJournalCancelBtn').addEventListener('click', () => {
+            UI.hideModal('veJournalModal');
+        });
+        document.getElementById('veJournalSource').addEventListener('change', () => this.veUpdateJournalPreview());
+        document.getElementById('veJournalDateFrom').addEventListener('change', () => this.veUpdateJournalPreview());
+        document.getElementById('veJournalDateTo').addEventListener('change', () => this.veUpdateJournalPreview());
+        document.getElementById('veJournalSubmitBtn').addEventListener('click', () => {
+            this.veCreateJournalEntry();
         });
 
         // Product table sorting
