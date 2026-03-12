@@ -28,19 +28,19 @@ const App = {
     _syncAutoSaveWrapped: false,
     _rollbackTargetVersion: null,
 
-    // Theme preset palettes: { c1: primary, c2: accent, c3: background, c4: surface, style?: string }
+    // Theme preset palettes: { c1: sidebar, c2: accent, c3: background, c4: surface, c5: border, c6: text, style?: string }
     themePresets: {
         // Color-only themes
-        default:  { c1: '#4a90a4', c2: '#e8f0f3', c3: '#f8f9fa', c4: '#ffffff' },
-        ocean:    { c1: '#9EBAC2', c2: '#BAE0EB', c3: '#f0f7fa', c4: '#ffffff' },
-        forest:   { c1: '#2d6a4f', c2: '#d8f3dc', c3: '#f0f7f0', c4: '#ffffff' },
-        sunset:   { c1: '#e76f51', c2: '#fce4d6', c3: '#fdf8f4', c4: '#ffffff' },
-        midnight: { c1: '#6c63ff', c2: '#e8e6ff', c3: '#f5f4ff', c4: '#ffffff' },
+        default:  { c1: '#1e2530', c2: '#3b82f6', c3: '#f3f4f6', c4: '#ffffff', c5: '#e5e7eb', c6: '#1f2937' },
+        ocean:    { c1: '#1a2e3a', c2: '#0ea5e9', c3: '#f0f7fa', c4: '#ffffff', c5: '#d1e3eb', c6: '#1e3a4a' },
+        forest:   { c1: '#1a2e24', c2: '#10b981', c3: '#f0f7f0', c4: '#ffffff', c5: '#c6dcd0', c6: '#1a3028' },
+        sunset:   { c1: '#2e1f1a', c2: '#e76f51', c3: '#fdf8f4', c4: '#ffffff', c5: '#e8d5c8', c6: '#3d2518' },
+        midnight: { c1: '#1e1a30', c2: '#6c63ff', c3: '#f5f4ff', c4: '#ffffff', c5: '#d5d0e8', c6: '#2a2440' },
         // Extreme design styles (CSS handles font, radius, shadows via data-theme-style)
-        modern:     { c1: '#0f172a', c2: '#f1f5f9', c3: '#f8fafc', c4: '#ffffff', style: 'modern' },
-        futuristic: { c1: '#00d4ff', c2: '#0f1729', c3: '#080e1a', c4: '#111827', style: 'futuristic' },
-        vintage:    { c1: '#7c5a3c', c2: '#f0e6d6', c3: '#faf6f0', c4: '#fffdf8', style: 'vintage' },
-        accounting: { c1: '#1e3a5f', c2: '#f0f2f5', c3: '#ffffff', c4: '#ffffff', style: 'accounting' },
+        modern:     { c1: '#0f172a', c2: '#3b82f6', c3: '#f8fafc', c4: '#ffffff', c5: '#e2e8f0', c6: '#0f172a', style: 'modern' },
+        futuristic: { c1: '#060c18', c2: '#00d4ff', c3: '#080e1a', c4: '#111827', c5: '#1e293b', c6: '#e2e8f0', style: 'futuristic' },
+        vintage:    { c1: '#3d2e20', c2: '#a0764e', c3: '#faf6f0', c4: '#fffdf8', c5: '#d6c8b4', c6: '#3d2e20', style: 'vintage' },
+        accounting: { c1: '#1e3a5f', c2: '#2563eb', c3: '#ffffff', c4: '#ffffff', c5: '#d1d5db', c6: '#1e3a5f', style: 'accounting' },
     },
 
     /**
@@ -50,6 +50,11 @@ const App = {
 
     async init() {
         try {
+            // Restore sidebar state early to prevent flash
+            if (localStorage.getItem('sidebarCollapsed') === 'true') {
+                document.querySelector('.app-container').classList.add('sidebar-collapsed');
+            }
+
             document.body.style.opacity = '0.5';
 
             // Check for share token in URL hash — enter view-only mode
@@ -107,6 +112,10 @@ const App = {
             await this.initSync();
 
             document.body.style.opacity = '1';
+
+            // Initialize tutorial system
+            if (typeof Tutorial !== 'undefined') Tutorial.init();
+
             console.log('Application initialized successfully');
         } catch (error) {
             console.error('Failed to initialize application:', error);
@@ -886,13 +895,16 @@ const App = {
 
         // Sync color inputs if custom
         if (preset === 'custom' && customColors) {
-            ['themeC1', 'themeC2', 'themeC3', 'themeC4'].forEach((id, i) => {
+            ['themeC1', 'themeC2', 'themeC3', 'themeC4', 'themeC5', 'themeC6'].forEach((id, i) => {
                 const input = document.getElementById(id);
                 if (input) input.value = customColors[`c${i + 1}`] || '#000000';
             });
         }
 
         this.applyTheme(preset, customColors);
+
+        // Load dark mode state
+        this.loadDarkMode();
     },
 
     /**
@@ -911,20 +923,70 @@ const App = {
         // Set or clear design style (drives CSS overrides for font, radius, shadows, etc.)
         root.setAttribute('data-theme-style', colors.style || '');
 
-        // Primary and derived
-        root.style.setProperty('--color-primary', colors.c1);
-        root.style.setProperty('--color-primary-hover', Utils.adjustLightness(colors.c1, -12));
-        root.style.setProperty('--color-primary-light', Utils.adjustLightness(colors.c1, -6));
-        root.style.setProperty('--color-primary-rgb', Utils.hexToRGBString(colors.c1));
+        // Sidebar (c1) — sidebar background
+        root.style.setProperty('--c1', colors.c1);
+        root.style.setProperty('--sidebar-bg', colors.c1);
 
-        // Accent (section headers, hover tints)
-        root.style.setProperty('--color-accent-bg', colors.c2);
-        root.style.setProperty('--color-accent-bg-hover', Utils.adjustLightness(colors.c2, -5));
+        // Accent (c2) — buttons, active states, focus rings, primary color
+        root.style.setProperty('--c2', colors.c2);
+        root.style.setProperty('--color-primary', colors.c2);
+        root.style.setProperty('--color-primary-hover', Utils.adjustLightness(colors.c2, -12));
+        root.style.setProperty('--color-primary-light', Utils.adjustLightness(colors.c2, -6));
+        root.style.setProperty('--color-primary-rgb', Utils.hexToRGBString(colors.c2));
+        root.style.setProperty('--color-accent', colors.c2);
+        root.style.setProperty('--color-accent-bg', Utils.adjustLightness(colors.c2, 35));
+        root.style.setProperty('--color-accent-bg-hover', Utils.adjustLightness(colors.c2, 30));
+        root.style.setProperty('--color-accent-rgb', Utils.hexToRGBString(colors.c2));
 
-        // Background and surface
+        // Background (c3) — page background
+        root.style.setProperty('--c3', colors.c3);
         root.style.setProperty('--color-bg', colors.c3);
         root.style.setProperty('--color-bg-dark', Utils.adjustLightness(colors.c3, -3));
+
+        // Surface (c4) — card/panel backgrounds
+        root.style.setProperty('--c4', colors.c4);
         root.style.setProperty('--color-white', colors.c4);
+        root.style.setProperty('--color-surface', colors.c4);
+
+        // Border (c5) — borders, dividers, table lines
+        root.style.setProperty('--c5', colors.c5 || '#e5e7eb');
+        root.style.setProperty('--color-border', colors.c5 || '#e5e7eb');
+
+        // Text (c6) — primary text color
+        root.style.setProperty('--c6', colors.c6 || '#1f2937');
+        root.style.setProperty('--color-text', colors.c6 || '#1f2937');
+        root.style.setProperty('--color-text-secondary', Utils.adjustLightness(colors.c6 || '#1f2937', 25));
+        root.style.setProperty('--color-text-muted', Utils.adjustLightness(colors.c6 || '#1f2937', 45));
+    },
+
+    /**
+     * Load dark mode preference and apply
+     */
+    loadDarkMode() {
+        const saved = localStorage.getItem('darkMode');
+        let isDark;
+        if (saved !== null) {
+            isDark = saved === 'true';
+        } else {
+            isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        }
+        this.setDarkMode(isDark);
+
+        // Listen for system preference changes
+        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+            if (localStorage.getItem('darkMode') === null) {
+                this.setDarkMode(e.matches);
+            }
+        });
+    },
+
+    /**
+     * Set dark mode on/off
+     */
+    setDarkMode(enabled) {
+        document.documentElement.setAttribute('data-theme', enabled ? 'dark' : 'light');
+        const toggle = document.getElementById('darkModeToggle');
+        if (toggle) toggle.checked = enabled;
     },
 
     /**
@@ -945,6 +1007,13 @@ const App = {
      * Set up event listeners
      */
     setupEventListeners() {
+        // ==================== SIDEBAR TOGGLE ====================
+        document.getElementById('sidebarToggleBtn').addEventListener('click', () => {
+            const container = document.querySelector('.app-container');
+            container.classList.toggle('sidebar-collapsed');
+            localStorage.setItem('sidebarCollapsed', container.classList.contains('sidebar-collapsed'));
+        });
+
         // ==================== ENTRY FORM ====================
 
         // Entry form submission
@@ -1111,15 +1180,18 @@ const App = {
             UI.updateJournalTitle(owner);
         }, 500));
 
-        // Auto-size the owner input using a hidden measurement span
+        // Auto-size the owner input by measuring actual text width
         const measureSpan = document.createElement('span');
-        measureSpan.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;font-size:1.5rem;font-weight:600;';
+        measureSpan.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;';
         document.body.appendChild(measureSpan);
-
         const autoSizeOwnerInput = () => {
+            const style = getComputedStyle(journalOwnerInput);
+            measureSpan.style.font = style.font;
+            measureSpan.style.fontWeight = style.fontWeight;
+            measureSpan.style.letterSpacing = style.letterSpacing;
             const text = journalOwnerInput.value || journalOwnerInput.placeholder;
             measureSpan.textContent = text;
-            journalOwnerInput.style.width = (measureSpan.offsetWidth + 8) + 'px';
+            journalOwnerInput.style.width = (measureSpan.offsetWidth + 2) + 'px';
         };
         journalOwnerInput.addEventListener('input', autoSizeOwnerInput);
         autoSizeOwnerInput();
@@ -1406,8 +1478,16 @@ const App = {
             e.stopPropagation();
             const popover = document.getElementById('companyPopover');
             const isOpen = popover.style.display !== 'none';
-            popover.style.display = isOpen ? 'none' : 'block';
-            if (!isOpen) CompanyManager.renderSwitcher();
+            if (isOpen) {
+                popover.style.display = 'none';
+            } else {
+                const btn = document.getElementById('companyBtn');
+                const rect = btn.getBoundingClientRect();
+                popover.style.top = (rect.bottom + 4) + 'px';
+                popover.style.left = '8px';
+                popover.style.display = 'block';
+                CompanyManager.renderSwitcher();
+            }
         });
 
         // Close company popover on outside click
@@ -1529,7 +1609,7 @@ const App = {
         document.getElementById('gearBtn').addEventListener('click', (e) => {
             e.stopPropagation();
             const popover = document.getElementById('gearPopover');
-            popover.style.display = popover.style.display === 'none' ? 'block' : 'none';
+            popover.style.display = popover.style.display === 'none' ? 'flex' : 'none';
         });
 
         // Close popover on outside click
@@ -1553,7 +1633,7 @@ const App = {
                     colors = this.themePresets.default;
                     Database.setThemeColors(colors);
                 }
-                ['themeC1', 'themeC2', 'themeC3', 'themeC4'].forEach((id, i) => {
+                ['themeC1', 'themeC2', 'themeC3', 'themeC4', 'themeC5', 'themeC6'].forEach((id, i) => {
                     const input = document.getElementById(id);
                     if (input) input.value = colors[`c${i + 1}`] || '#000000';
                 });
@@ -1565,18 +1645,31 @@ const App = {
         });
 
         // Custom color picker inputs
-        ['themeC1', 'themeC2', 'themeC3', 'themeC4'].forEach((id) => {
-            document.getElementById(id).addEventListener('input', Utils.debounce(() => {
+        ['themeC1', 'themeC2', 'themeC3', 'themeC4', 'themeC5', 'themeC6'].forEach((id) => {
+            const el = document.getElementById(id);
+            if (el) el.addEventListener('input', Utils.debounce(() => {
                 const colors = {
                     c1: document.getElementById('themeC1').value,
                     c2: document.getElementById('themeC2').value,
                     c3: document.getElementById('themeC3').value,
                     c4: document.getElementById('themeC4').value,
+                    c5: document.getElementById('themeC5').value,
+                    c6: document.getElementById('themeC6').value,
                 };
                 Database.setThemeColors(colors);
                 this.applyTheme('custom', colors);
             }, 100));
         });
+
+        // Dark mode toggle
+        const darkToggle = document.getElementById('darkModeToggle');
+        if (darkToggle) {
+            darkToggle.addEventListener('change', (e) => {
+                const isDark = e.target.checked;
+                localStorage.setItem('darkMode', isDark);
+                this.setDarkMode(isDark);
+            });
+        }
 
         // ==================== TIMELINE ====================
         ['timelineStartMonth', 'timelineStartYear', 'timelineEndMonth', 'timelineEndYear'].forEach(id => {
@@ -3335,7 +3428,7 @@ const App = {
             } else {
                 const assetId = Database.addFixedAsset(name, cost, life, date, salvage, deprMethod, deprStart, isDepreciable, notes);
                 if (autoTransaction) {
-                    this._autoCreateAssetTransaction(assetId, name, cost, date);
+                    this._autoCreateAssetTransaction(assetId, name, cost, date, deprStart);
                 }
                 UI.showNotification('Asset added', 'success');
             }
@@ -3351,7 +3444,7 @@ const App = {
     /**
      * Auto-create a payable transaction for a fixed asset purchase
      */
-    _autoCreateAssetTransaction(assetId, name, cost, date) {
+    _autoCreateAssetTransaction(assetId, name, cost, date, deprStart) {
         // Find or create an "Asset Purchases" category (hidden from P&L — capital expenditure, not OpEx)
         let categories = Database.getCategories();
         let cat = categories.find(c => c.name === 'Asset Purchases');
@@ -3363,7 +3456,8 @@ const App = {
             catId = cat.id;
         }
 
-        const month = date.substring(0, 7);
+        const dueMonth = deprStart ? deprStart.substring(0, 7) : date.substring(0, 7);
+        const paidMonth = date.substring(0, 7);
         Database.addTransaction({
             entry_date: date,
             category_id: catId,
@@ -3371,8 +3465,8 @@ const App = {
             amount: cost,
             transaction_type: 'payable',
             status: 'paid',
-            month_due: month,
-            month_paid: month,
+            month_due: dueMonth,
+            month_paid: paidMonth,
             date_processed: date,
             source_type: 'asset_purchase',
             source_id: assetId
@@ -3679,12 +3773,13 @@ const App = {
             "SELECT id FROM transactions WHERE source_type = 'loan_receivable' AND source_id = ?",
             [loanId]
         );
-        const startMonth = start_date.substring(0, 7);
+        const dueMonth = first_payment_date.substring(0, 7);
+        const paidMonth = start_date.substring(0, 7);
         if (existingReceivable.length > 0 && existingReceivable[0].values.length > 0) {
             const rxId = existingReceivable[0].values[0][0];
             Database.db.run(
                 'UPDATE transactions SET amount = ?, entry_date = ?, month_due = ?, month_paid = ?, category_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-                [principal, start_date, startMonth, startMonth, proceedsCatId, rxId]
+                [principal, start_date, dueMonth, paidMonth, proceedsCatId, rxId]
             );
         } else {
             Database.addTransaction({
@@ -3695,8 +3790,8 @@ const App = {
                 transaction_type: 'receivable',
                 status: 'received',
                 date_processed: start_date,
-                month_due: startMonth,
-                month_paid: startMonth,
+                month_due: dueMonth,
+                month_paid: paidMonth,
                 source_type: 'loan_receivable',
                 source_id: loanId
             });

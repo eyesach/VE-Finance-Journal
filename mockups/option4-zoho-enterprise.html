@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Option 4: Zoho Books Enterprise</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Roboto', 'Segoe UI', system-ui, sans-serif; background: #eef1f5; color: #212529; font-size: 13px; }
+
+  /* Layout */
+  .app { display: grid; grid-template-columns: 200px 1fr; grid-template-rows: 48px 1fr; height: 100vh; }
+
+  /* Top Bar */
+  .topbar {
+    grid-column: 1 / -1; background: #fff; border-bottom: 1px solid #dde1e6;
+    display: flex; align-items: center; padding: 0 16px; gap: 16px; z-index: 10;
+  }
+  .topbar-brand { font-size: 14px; font-weight: 700; color: #1565c0; display: flex; align-items: center; gap: 8px; }
+  .topbar-brand .dot { width: 20px; height: 20px; background: #1565c0; border-radius: 4px; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 11px; font-weight: 800; }
+  .topbar-search {
+    flex: 1; max-width: 360px;
+    padding: 6px 12px; border: 1px solid #dde1e6; border-radius: 4px;
+    font-size: 12px; background: #f4f6f8; color: #495057;
+  }
+  .topbar-search:focus { outline: 2px solid #1565c0; background: #fff; }
+  .topbar-actions { display: flex; gap: 4px; margin-left: auto; }
+  .topbar-icon {
+    width: 30px; height: 30px; border-radius: 4px; border: none;
+    background: transparent; cursor: pointer; display: flex;
+    align-items: center; justify-content: center; color: #6c757d;
+  }
+  .topbar-icon:hover { background: #e9ecef; color: #212529; }
+
+  /* Sidebar */
+  .sidebar {
+    background: #f4f6f8; border-right: 1px solid #dde1e6;
+    overflow-y: auto; padding: 8px 0;
+  }
+  .sidebar-group-label {
+    padding: 10px 14px 4px; font-size: 10px; font-weight: 700;
+    color: #868e96; text-transform: uppercase; letter-spacing: 1.2px;
+  }
+  .sidebar-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 14px; font-size: 12.5px; font-weight: 500;
+    color: #495057; cursor: pointer; border-left: 3px solid transparent;
+    text-decoration: none;
+  }
+  .sidebar-item:hover { background: #e9ecef; color: #212529; }
+  .sidebar-item.active { background: #e3f2fd; color: #1565c0; border-left-color: #1565c0; font-weight: 600; }
+  .sidebar-item svg { width: 15px; height: 15px; flex-shrink: 0; opacity: 0.6; }
+  .sidebar-item.active svg { opacity: 1; }
+
+  /* Content */
+  .content { overflow-y: auto; display: flex; flex-direction: column; }
+
+  /* Summary Strip */
+  .summary-strip {
+    display: flex; gap: 0; background: #fff; border-bottom: 1px solid #dde1e6;
+    padding: 0;
+  }
+  .summary-item {
+    flex: 1; padding: 12px 18px; border-right: 1px solid #eef1f5;
+    display: flex; flex-direction: column;
+  }
+  .summary-item:last-child { border-right: none; }
+  .summary-item .s-label { font-size: 10px; font-weight: 600; color: #868e96; text-transform: uppercase; letter-spacing: 0.5px; }
+  .summary-item .s-value { font-size: 20px; font-weight: 700; margin-top: 2px; font-family: 'Cascadia Code', monospace; }
+  .summary-item.green .s-value { color: #2e7d32; }
+  .summary-item.amber .s-value { color: #ef6c00; }
+  .summary-item.red .s-value { color: #c62828; }
+
+  /* Toolbar */
+  .toolbar {
+    display: flex; align-items: center; gap: 6px; padding: 8px 16px;
+    background: #fff; border-bottom: 1px solid #eef1f5;
+    flex-wrap: wrap;
+  }
+  .toolbar select, .toolbar input {
+    padding: 4px 8px; border: 1px solid #ced4da; border-radius: 3px;
+    font-size: 12px; background: #fff;
+  }
+  .toolbar label { font-size: 11px; color: #6c757d; font-weight: 600; }
+  .toolbar-sep { width: 1px; height: 24px; background: #dde1e6; margin: 0 4px; }
+  .btn-sm {
+    padding: 5px 12px; border-radius: 3px; font-size: 12px; font-weight: 600;
+    cursor: pointer; border: 1px solid transparent;
+  }
+  .btn-blue { background: #1565c0; color: #fff; border-color: #1565c0; }
+  .btn-outline-sm { background: #fff; color: #495057; border-color: #ced4da; }
+
+  /* Table */
+  .table-area { flex: 1; overflow: auto; padding: 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  thead th {
+    padding: 8px 12px; text-align: left; font-weight: 700; font-size: 11px;
+    color: #6c757d; background: #f8f9fa; border-bottom: 2px solid #dee2e6;
+    position: sticky; top: 0; white-space: nowrap;
+  }
+  tbody td {
+    padding: 7px 12px; border-bottom: 1px solid #eef1f5;
+    white-space: nowrap;
+  }
+  tbody tr:hover { background: #e3f2fd; }
+  .pill {
+    display: inline-block; padding: 1px 8px; border-radius: 3px;
+    font-size: 10.5px; font-weight: 700; letter-spacing: 0.3px;
+  }
+  .pill-green { background: #e8f5e9; color: #2e7d32; }
+  .pill-amber { background: #fff8e1; color: #ef6c00; }
+  .pill-red { background: #ffebee; color: #c62828; }
+  .pill-blue { background: #e3f2fd; color: #1565c0; }
+  .amount { font-family: 'Cascadia Code', monospace; font-weight: 600; font-size: 12px; }
+  .amt-pos { color: #2e7d32; }
+  .amt-neg { color: #c62828; }
+  .row-actions { display: flex; gap: 2px; }
+  .row-action {
+    width: 24px; height: 24px; border-radius: 3px; border: none;
+    background: transparent; cursor: pointer; color: #adb5bd;
+    display: flex; align-items: center; justify-content: center; font-size: 12px;
+  }
+  .row-action:hover { background: #e9ecef; color: #495057; }
+
+  /* Status bar */
+  .statusbar {
+    background: #fff; border-top: 1px solid #dde1e6;
+    padding: 6px 16px; font-size: 11px; color: #868e96;
+    display: flex; justify-content: space-between;
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- Top Bar -->
+  <header class="topbar">
+    <div class="topbar-brand"><div class="dot">A</div> Acme Corp</div>
+    <input type="text" class="topbar-search" placeholder="Search transactions, categories, amounts...">
+    <div class="topbar-actions">
+      <button class="topbar-icon" title="Sync">&#x21bb;</button>
+      <button class="topbar-icon" title="Save">&#x1F4BE;</button>
+      <button class="topbar-icon" title="Settings">&#x2699;</button>
+    </div>
+  </header>
+
+  <!-- Sidebar -->
+  <nav class="sidebar">
+    <div class="sidebar-group-label">Journals</div>
+    <a class="sidebar-item active">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
+      Journal
+    </a>
+    <div class="sidebar-group-label">Reports</div>
+    <a class="sidebar-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-4"/></svg> Cash Flow</a>
+    <a class="sidebar-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg> P&amp;L</a>
+    <a class="sidebar-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg> Balance Sheet</a>
+    <div class="sidebar-group-label">Assets</div>
+    <a class="sidebar-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v3"/></svg> Assets &amp; Equity</a>
+    <a class="sidebar-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1v22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg> Loans</a>
+    <div class="sidebar-group-label">Planning</div>
+    <a class="sidebar-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg> Budget</a>
+    <a class="sidebar-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg> Break-Even</a>
+    <a class="sidebar-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg> Projected Sales</a>
+    <div class="sidebar-group-label">Sales</div>
+    <a class="sidebar-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/></svg> Products</a>
+    <a class="sidebar-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg> VE Sales</a>
+  </nav>
+
+  <!-- Content -->
+  <main class="content">
+    <!-- Summary Strip -->
+    <div class="summary-strip">
+      <div class="summary-item green">
+        <span class="s-label">Cash Balance</span>
+        <span class="s-value">$24,580.00</span>
+      </div>
+      <div class="summary-item amber">
+        <span class="s-label">Accounts Receivable</span>
+        <span class="s-value">$8,350.00</span>
+      </div>
+      <div class="summary-item red">
+        <span class="s-label">Accounts Payable</span>
+        <span class="s-value">$3,200.00</span>
+      </div>
+    </div>
+
+    <!-- Toolbar -->
+    <div class="toolbar">
+      <button class="btn-sm btn-blue">+ New Entry</button>
+      <button class="btn-sm btn-outline-sm">+ Folder</button>
+      <button class="btn-sm btn-outline-sm">Categories</button>
+      <div class="toolbar-sep"></div>
+      <label>Sort:</label>
+      <select><option>Entry Date</option><option>Month Due</option><option>Category</option></select>
+      <select><option>All Folders</option></select>
+      <select><option>All Types</option></select>
+      <select><option>All Status</option></select>
+      <select><option>All Months</option></select>
+      <select><option>All Categories</option></select>
+      <div class="toolbar-sep"></div>
+      <button class="btn-sm btn-outline-sm">Export CSV</button>
+    </div>
+
+    <!-- Table -->
+    <div class="table-area">
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th><th>Category</th><th>Type</th><th>Amount</th>
+            <th>Pretax</th><th>Status</th><th>Month Due</th><th>Month Paid</th>
+            <th>Payment For</th><th>Notes</th><th style="width:80px">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>2026-03-10</td><td>Online Sales</td>
+            <td><span class="pill pill-green">RECV</span></td>
+            <td class="amount amt-pos">$1,250.00</td>
+            <td class="amount">$1,086.96</td>
+            <td><span class="pill pill-green">Received</span></td>
+            <td>2026-03</td><td>2026-03</td><td>-</td>
+            <td>Shopify #4521</td>
+            <td><div class="row-actions"><button class="row-action">&#9998;</button><button class="row-action">&#128203;</button><button class="row-action">&#10005;</button></div></td>
+          </tr>
+          <tr>
+            <td>2026-03-08</td><td>Inventory</td>
+            <td><span class="pill pill-red">PAY</span></td>
+            <td class="amount amt-neg">$3,200.00</td>
+            <td class="amount">-</td>
+            <td><span class="pill pill-amber">Pending</span></td>
+            <td>2026-03</td><td>-</td><td>-</td>
+            <td>Q2 stock order</td>
+            <td><div class="row-actions"><button class="row-action">&#9998;</button><button class="row-action">&#128203;</button><button class="row-action">&#10005;</button></div></td>
+          </tr>
+          <tr>
+            <td>2026-03-05</td><td>Consulting</td>
+            <td><span class="pill pill-green">RECV</span></td>
+            <td class="amount amt-pos">$4,800.00</td>
+            <td class="amount">$4,800.00</td>
+            <td><span class="pill pill-green">Received</span></td>
+            <td>2026-03</td><td>2026-03</td><td>-</td>
+            <td>Website redesign</td>
+            <td><div class="row-actions"><button class="row-action">&#9998;</button><button class="row-action">&#128203;</button><button class="row-action">&#10005;</button></div></td>
+          </tr>
+          <tr>
+            <td>2026-03-01</td><td>Office Rent</td>
+            <td><span class="pill pill-red">PAY</span></td>
+            <td class="amount amt-neg">$2,100.00</td>
+            <td class="amount">-</td>
+            <td><span class="pill pill-green">Paid</span></td>
+            <td>2026-03</td><td>2026-03</td><td>-</td>
+            <td>Monthly lease</td>
+            <td><div class="row-actions"><button class="row-action">&#9998;</button><button class="row-action">&#128203;</button><button class="row-action">&#10005;</button></div></td>
+          </tr>
+          <tr>
+            <td>2026-02-28</td><td>Tradeshow</td>
+            <td><span class="pill pill-green">RECV</span></td>
+            <td class="amount amt-pos">$2,300.00</td>
+            <td class="amount">$2,000.00</td>
+            <td><span class="pill pill-amber">Pending</span></td>
+            <td>2026-02</td><td>-</td><td>-</td>
+            <td>Portland craft fair</td>
+            <td><div class="row-actions"><button class="row-action">&#9998;</button><button class="row-action">&#128203;</button><button class="row-action">&#10005;</button></div></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Status Bar -->
+    <div class="statusbar">
+      <span>5 entries &middot; Showing all</span>
+      <span>Last saved: 2 min ago</span>
+    </div>
+  </main>
+</div>
+</body>
+</html>

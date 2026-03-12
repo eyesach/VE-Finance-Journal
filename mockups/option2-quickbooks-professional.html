@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Option 2: QuickBooks Professional</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Nunito', 'Segoe UI', system-ui, sans-serif; background: #f0f3f5; color: #2d3748; }
+
+  /* Top Nav */
+  .topnav {
+    background: #0d3b2e; color: #fff; height: 56px;
+    display: flex; align-items: center; padding: 0 24px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    position: sticky; top: 0; z-index: 100;
+  }
+  .topnav-brand { font-size: 15px; font-weight: 700; margin-right: 36px; display: flex; align-items: center; gap: 10px; }
+  .topnav-brand .logo { width: 28px; height: 28px; background: #2ca01c; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 14px; }
+  .topnav-items { display: flex; gap: 0; flex: 1; }
+  .topnav-item {
+    position: relative; padding: 16px 20px; font-size: 13.5px; font-weight: 600;
+    color: rgba(255,255,255,0.8); cursor: pointer; transition: all 0.15s;
+  }
+  .topnav-item:hover { color: #fff; background: rgba(255,255,255,0.08); }
+  .topnav-item.active { color: #fff; }
+  .topnav-item.active::after { content: ''; position: absolute; bottom: 0; left: 16px; right: 16px; height: 3px; background: #2ca01c; border-radius: 3px 3px 0 0; }
+  .topnav-item .dropdown-arrow { font-size: 10px; margin-left: 4px; opacity: 0.6; }
+  .topnav-right { display: flex; align-items: center; gap: 12px; }
+  .topnav-icon { width: 34px; height: 34px; border-radius: 50%; background: rgba(255,255,255,0.1); display: flex; align-items: center; justify-content: center; cursor: pointer; }
+  .topnav-icon:hover { background: rgba(255,255,255,0.2); }
+  .topnav-icon svg { width: 16px; height: 16px; stroke: #fff; fill: none; stroke-width: 2; }
+
+  /* Sub-header */
+  .subheader {
+    background: #fff; border-bottom: 1px solid #e2e8f0;
+    padding: 12px 28px; display: flex; align-items: center; justify-content: space-between;
+  }
+  .breadcrumb { font-size: 13px; color: #718096; }
+  .breadcrumb strong { color: #2d3748; font-weight: 700; }
+  .subheader-actions { display: flex; gap: 8px; }
+  .btn {
+    padding: 8px 18px; border-radius: 20px; font-size: 13px; font-weight: 600;
+    cursor: pointer; border: none; transition: all 0.15s;
+  }
+  .btn-green { background: #2ca01c; color: #fff; }
+  .btn-green:hover { background: #248a17; }
+  .btn-outline { background: #fff; color: #2d3748; border: 1.5px solid #cbd5e0; }
+  .btn-outline:hover { border-color: #2ca01c; color: #2ca01c; }
+
+  /* Mega Menu Preview */
+  .mega-preview {
+    background: #fff; border: 1px solid #e2e8f0; border-radius: 12px;
+    margin: 16px 28px; padding: 20px 24px; box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+  }
+  .mega-preview-title { font-size: 11px; font-weight: 700; color: #a0aec0; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; }
+  .mega-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .mega-item {
+    padding: 10px 14px; border-radius: 8px; font-size: 13px; font-weight: 600;
+    color: #2d3748; cursor: pointer; display: flex; align-items: center; gap: 10px;
+  }
+  .mega-item:hover { background: #f0fff4; color: #2ca01c; }
+  .mega-item.active { background: #f0fff4; color: #2ca01c; }
+  .mega-dot { width: 8px; height: 8px; border-radius: 50%; background: #cbd5e0; flex-shrink: 0; }
+  .mega-item.active .mega-dot { background: #2ca01c; }
+
+  /* Content */
+  .content { padding: 24px 28px; }
+
+  /* Summary Cards */
+  .summary-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 24px; }
+  .summary-card {
+    background: #fff; border-radius: 12px; padding: 22px 24px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  }
+  .summary-card .label { font-size: 13px; color: #718096; font-weight: 600; }
+  .summary-card .value { font-size: 30px; font-weight: 800; margin-top: 6px; }
+  .summary-card .sub { font-size: 12px; color: #a0aec0; margin-top: 4px; }
+  .card-green .value { color: #2ca01c; }
+  .card-amber .value { color: #d69e2e; }
+  .card-red .value { color: #e53e3e; }
+  .card-green { border-left: 4px solid #2ca01c; }
+  .card-amber { border-left: 4px solid #d69e2e; }
+  .card-red { border-left: 4px solid #e53e3e; }
+
+  /* Table */
+  .table-card {
+    background: #fff; border-radius: 12px; overflow: hidden;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  }
+  .table-card-header {
+    padding: 16px 20px; display: flex; align-items: center; justify-content: space-between;
+    border-bottom: 1px solid #edf2f7;
+  }
+  .table-card-header h3 { font-size: 16px; font-weight: 700; }
+  .filter-pills { display: flex; gap: 6px; }
+  .filter-pill {
+    padding: 5px 14px; border-radius: 16px; font-size: 12px; font-weight: 600;
+    background: #edf2f7; color: #4a5568; cursor: pointer; border: none;
+  }
+  .filter-pill.active { background: #f0fff4; color: #2ca01c; border: 1.5px solid #2ca01c; }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  thead th {
+    padding: 12px 16px; text-align: left; font-weight: 700; font-size: 12px;
+    color: #a0aec0; text-transform: uppercase; letter-spacing: 0.5px;
+    background: #fafbfc; border-bottom: 2px solid #edf2f7;
+  }
+  tbody td { padding: 14px 16px; border-bottom: 1px solid #f7fafc; }
+  tbody tr:hover { background: #f0fff4; }
+  .badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 700; }
+  .badge-green { background: #c6f6d5; color: #22543d; }
+  .badge-amber { background: #fefcbf; color: #744210; }
+  .badge-red { background: #fed7d7; color: #742a2a; }
+  .amount { font-family: 'Cascadia Code', monospace; font-weight: 700; }
+  .amt-pos { color: #2ca01c; }
+  .amt-neg { color: #e53e3e; }
+</style>
+</head>
+<body>
+  <!-- Top Navigation -->
+  <nav class="topnav">
+    <div class="topnav-brand">
+      <div class="logo">A</div>
+      Acme Corp
+    </div>
+    <div class="topnav-items">
+      <div class="topnav-item active">Transactions <span class="dropdown-arrow">&#9662;</span></div>
+      <div class="topnav-item">Reports <span class="dropdown-arrow">&#9662;</span></div>
+      <div class="topnav-item">Planning <span class="dropdown-arrow">&#9662;</span></div>
+      <div class="topnav-item">Sales <span class="dropdown-arrow">&#9662;</span></div>
+    </div>
+    <div class="topnav-right">
+      <div class="topnav-icon"><svg viewBox="0 0 24 24"><path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg></div>
+      <div class="topnav-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></div>
+    </div>
+  </nav>
+
+  <!-- Sub-header -->
+  <div class="subheader">
+    <div class="breadcrumb">Transactions &rsaquo; <strong>Journal</strong></div>
+    <div class="subheader-actions">
+      <button class="btn btn-green">+ New Entry</button>
+      <button class="btn btn-outline">+ Add Folder</button>
+      <button class="btn btn-outline">Categories</button>
+      <button class="btn btn-outline">Export CSV</button>
+    </div>
+  </div>
+
+  <!-- Mega Menu Preview -->
+  <div class="mega-preview">
+    <div class="mega-preview-title">Navigation Preview (dropdown from top nav)</div>
+    <div class="mega-grid">
+      <div class="mega-item active"><span class="mega-dot"></span> Journal</div>
+      <div class="mega-item"><span class="mega-dot"></span> Cash Flow</div>
+      <div class="mega-item"><span class="mega-dot"></span> P&amp;L</div>
+      <div class="mega-item"><span class="mega-dot"></span> Balance Sheet</div>
+      <div class="mega-item"><span class="mega-dot"></span> Assets &amp; Equity</div>
+      <div class="mega-item"><span class="mega-dot"></span> Loans</div>
+      <div class="mega-item"><span class="mega-dot"></span> Budget</div>
+      <div class="mega-item"><span class="mega-dot"></span> Break-Even</div>
+      <div class="mega-item"><span class="mega-dot"></span> Projected Sales</div>
+      <div class="mega-item"><span class="mega-dot"></span> Products</div>
+      <div class="mega-item"><span class="mega-dot"></span> VE Sales</div>
+    </div>
+  </div>
+
+  <!-- Content -->
+  <main class="content">
+    <div class="summary-row">
+      <div class="summary-card card-green">
+        <div class="label">Cash Balance</div>
+        <div class="value">$24,580.00</div>
+        <div class="sub">Updated today</div>
+      </div>
+      <div class="summary-card card-amber">
+        <div class="label">Accounts Receivable</div>
+        <div class="value">$8,350.00</div>
+        <div class="sub">3 pending invoices</div>
+      </div>
+      <div class="summary-card card-red">
+        <div class="label">Accounts Payable</div>
+        <div class="value">$3,200.00</div>
+        <div class="sub">1 overdue</div>
+      </div>
+    </div>
+
+    <div class="table-card">
+      <div class="table-card-header">
+        <h3>Recent Transactions</h3>
+        <div class="filter-pills">
+          <button class="filter-pill active">All</button>
+          <button class="filter-pill">Receivable</button>
+          <button class="filter-pill">Payable</button>
+          <button class="filter-pill">Pending</button>
+        </div>
+      </div>
+      <table>
+        <thead>
+          <tr><th>Date</th><th>Category</th><th>Type</th><th>Amount</th><th>Status</th><th>Month Due</th><th>Notes</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>2026-03-10</td><td>Online Sales</td><td><span class="badge badge-green">Receivable</span></td><td class="amount amt-pos">$1,250.00</td><td><span class="badge badge-green">Received</span></td><td>Mar 2026</td><td>Shopify #4521</td></tr>
+          <tr><td>2026-03-08</td><td>Inventory</td><td><span class="badge badge-red">Payable</span></td><td class="amount amt-neg">$3,200.00</td><td><span class="badge badge-amber">Pending</span></td><td>Mar 2026</td><td>Q2 stock order</td></tr>
+          <tr><td>2026-03-05</td><td>Consulting</td><td><span class="badge badge-green">Receivable</span></td><td class="amount amt-pos">$4,800.00</td><td><span class="badge badge-green">Received</span></td><td>Mar 2026</td><td>Website redesign</td></tr>
+          <tr><td>2026-03-01</td><td>Office Rent</td><td><span class="badge badge-red">Payable</span></td><td class="amount amt-neg">$2,100.00</td><td><span class="badge badge-green">Paid</span></td><td>Mar 2026</td><td>Monthly lease</td></tr>
+          <tr><td>2026-02-28</td><td>Tradeshow</td><td><span class="badge badge-green">Receivable</span></td><td class="amount amt-pos">$2,300.00</td><td><span class="badge badge-amber">Pending</span></td><td>Feb 2026</td><td>Portland craft fair</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </main>
+</body>
+</html>
