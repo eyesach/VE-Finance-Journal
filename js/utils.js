@@ -613,8 +613,7 @@ const Utils = {
         if (!startStr) return {};
 
         const startDate = new Date(startStr + 'T00:00:00');
-        // Depreciation begins the month after the start date
-        startDate.setMonth(startDate.getMonth() + 1);
+        // Depreciation begins in the month of the start date
 
         const schedule = {};
 

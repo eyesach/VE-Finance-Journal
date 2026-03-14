@@ -202,6 +202,15 @@ const Database = {
         `);
 
         this.db.run(`
+            CREATE TABLE IF NOT EXISTS budget_groups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                sort_order INTEGER DEFAULT 0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
+        this.db.run(`
             CREATE TABLE IF NOT EXISTS budget_expenses (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
@@ -209,9 +218,11 @@ const Database = {
                 start_month TEXT NOT NULL,
                 end_month TEXT,
                 category_id INTEGER,
+                group_id INTEGER,
                 notes TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (category_id) REFERENCES categories(id)
+                FOREIGN KEY (category_id) REFERENCES categories(id),
+                FOREIGN KEY (group_id) REFERENCES budget_groups(id)
             )
         `);
 
@@ -243,6 +254,7 @@ const Database = {
                 discount DECIMAL(10,2) DEFAULT 0,
                 total DECIMAL(10,2) DEFAULT 0,
                 source TEXT NOT NULL DEFAULT 'online',
+                event_id INTEGER,
                 UNIQUE(transaction_no, source)
             )
         `);
@@ -258,6 +270,17 @@ const Database = {
                 taxable INTEGER DEFAULT 0,
                 amount DECIMAL(10,2) DEFAULT 0,
                 inferred INTEGER DEFAULT 0
+            )
+        `);
+
+        this.db.run(`
+            CREATE TABLE IF NOT EXISTS ve_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                type TEXT NOT NULL DEFAULT 'tradeshow',
+                start_date DATE NOT NULL,
+                end_date DATE NOT NULL,
+                notes TEXT
             )
         `);
 
@@ -558,6 +581,16 @@ const Database = {
         try { this.db.exec('SELECT ve_item_price FROM product_ve_mappings LIMIT 1'); }
         catch (e) { this.db.run('ALTER TABLE product_ve_mappings ADD COLUMN ve_item_price REAL NOT NULL DEFAULT 0'); }
 
+        // === Create budget_groups table ===
+        this.db.run(`
+            CREATE TABLE IF NOT EXISTS budget_groups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                sort_order INTEGER DEFAULT 0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
         // === Create budget_expenses table ===
         this.db.run(`
             CREATE TABLE IF NOT EXISTS budget_expenses (
@@ -567,11 +600,16 @@ const Database = {
                 start_month TEXT NOT NULL,
                 end_month TEXT,
                 category_id INTEGER,
+                group_id INTEGER,
                 notes TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (category_id) REFERENCES categories(id)
+                FOREIGN KEY (category_id) REFERENCES categories(id),
+                FOREIGN KEY (group_id) REFERENCES budget_groups(id)
             )
         `);
+
+        // Migrate: add group_id to budget_expenses if missing
+        try { this.db.run('ALTER TABLE budget_expenses ADD COLUMN group_id INTEGER REFERENCES budget_groups(id)'); } catch(e) {}
 
         // === Create VE sales tables ===
         this.db.run(`
@@ -635,6 +673,22 @@ const Database = {
         // === Add is_discontinued column to products (if table existed before this migration) ===
         try { this.db.exec('SELECT is_discontinued FROM products LIMIT 1'); }
         catch (e) { this.db.run('ALTER TABLE products ADD COLUMN is_discontinued INTEGER DEFAULT 0'); }
+
+        // === Create ve_events table ===
+        this.db.run(`
+            CREATE TABLE IF NOT EXISTS ve_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                type TEXT NOT NULL DEFAULT 'tradeshow',
+                start_date DATE NOT NULL,
+                end_date DATE NOT NULL,
+                notes TEXT
+            )
+        `);
+
+        // === Add event_id column to ve_sales ===
+        try { this.db.exec('SELECT event_id FROM ve_sales LIMIT 1'); }
+        catch (e) { this.db.run('ALTER TABLE ve_sales ADD COLUMN event_id INTEGER'); }
     },
 
     // ==================== FOLDER OPERATIONS ====================
@@ -1090,6 +1144,44 @@ const Database = {
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
             `, [status, monthPaid, id]);
+        }
+        this.autoSave();
+    },
+
+    /**
+     * Bulk set date paid for multiple transactions
+     * @param {Array} updates - Array of { id, status } objects
+     * @param {string} dateProcessed - Date processed value
+     * @param {string} monthPaid - Month paid value (YYYY-MM)
+     */
+    bulkSetDatePaid(updates, dateProcessed, monthPaid) {
+        for (const { id, status } of updates) {
+            this.db.run(`
+                UPDATE transactions SET
+                    status = ?,
+                    date_processed = ?,
+                    month_paid = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            `, [status, dateProcessed, monthPaid, id]);
+        }
+        this.autoSave();
+    },
+
+    /**
+     * Bulk reset transactions to pending
+     * @param {Array} ids - Array of transaction IDs
+     */
+    bulkResetToPending(ids) {
+        for (const id of ids) {
+            this.db.run(`
+                UPDATE transactions SET
+                    status = 'pending',
+                    date_processed = NULL,
+                    month_paid = NULL,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            `, [id]);
         }
         this.autoSave();
     },
@@ -1993,10 +2085,11 @@ const Database = {
      */
     getBudgetExpenses() {
         const results = this.db.exec(`
-            SELECT be.*, c.name as category_name
+            SELECT be.*, c.name as category_name, bg.name as group_name, bg.sort_order as group_sort_order
             FROM budget_expenses be
             LEFT JOIN categories c ON be.category_id = c.id
-            ORDER BY be.start_month ASC, be.name ASC
+            LEFT JOIN budget_groups bg ON be.group_id = bg.id
+            ORDER BY bg.sort_order ASC, be.name ASC
         `);
         if (results.length === 0) return [];
         return this.rowsToObjects(results[0]);
@@ -2009,9 +2102,10 @@ const Database = {
      */
     getBudgetExpenseById(id) {
         const results = this.db.exec(`
-            SELECT be.*, c.name as category_name
+            SELECT be.*, c.name as category_name, bg.name as group_name
             FROM budget_expenses be
             LEFT JOIN categories c ON be.category_id = c.id
+            LEFT JOIN budget_groups bg ON be.group_id = bg.id
             WHERE be.id = ?
         `, [id]);
         if (results.length === 0) return null;
@@ -2028,10 +2122,10 @@ const Database = {
      * @param {string|null} notes
      * @returns {number} New ID
      */
-    addBudgetExpense(name, monthlyAmount, startMonth, endMonth = null, categoryId = null, notes = null) {
+    addBudgetExpense(name, monthlyAmount, startMonth, endMonth = null, categoryId = null, notes = null, groupId = null) {
         this.db.run(
-            'INSERT INTO budget_expenses (name, monthly_amount, start_month, end_month, category_id, notes) VALUES (?, ?, ?, ?, ?, ?)',
-            [name.trim(), monthlyAmount, startMonth, endMonth || null, categoryId || null, notes || null]
+            'INSERT INTO budget_expenses (name, monthly_amount, start_month, end_month, category_id, notes, group_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            [name.trim(), monthlyAmount, startMonth, endMonth || null, categoryId || null, notes || null, groupId || null]
         );
         const result = this.db.exec('SELECT last_insert_rowid() as id');
         this.autoSave();
@@ -2048,10 +2142,10 @@ const Database = {
      * @param {number|null} categoryId
      * @param {string|null} notes
      */
-    updateBudgetExpense(id, name, monthlyAmount, startMonth, endMonth = null, categoryId = null, notes = null) {
+    updateBudgetExpense(id, name, monthlyAmount, startMonth, endMonth = null, categoryId = null, notes = null, groupId = null) {
         this.db.run(
-            'UPDATE budget_expenses SET name = ?, monthly_amount = ?, start_month = ?, end_month = ?, category_id = ?, notes = ? WHERE id = ?',
-            [name.trim(), monthlyAmount, startMonth, endMonth || null, categoryId || null, notes || null, id]
+            'UPDATE budget_expenses SET name = ?, monthly_amount = ?, start_month = ?, end_month = ?, category_id = ?, notes = ?, group_id = ? WHERE id = ?',
+            [name.trim(), monthlyAmount, startMonth, endMonth || null, categoryId || null, notes || null, groupId || null, id]
         );
         this.autoSave();
     },
@@ -2080,6 +2174,46 @@ const Database = {
         `, [month, month]);
         if (results.length === 0) return [];
         return this.rowsToObjects(results[0]);
+    },
+
+    // ==================== BUDGET GROUPS ====================
+
+    getBudgetGroups() {
+        const results = this.db.exec('SELECT * FROM budget_groups ORDER BY sort_order ASC, name ASC');
+        if (results.length === 0) return [];
+        return this.rowsToObjects(results[0]);
+    },
+
+    addBudgetGroup(name) {
+        const maxOrder = this.db.exec('SELECT COALESCE(MAX(sort_order), -1) + 1 as next_order FROM budget_groups');
+        const nextOrder = maxOrder.length > 0 ? maxOrder[0].values[0][0] : 0;
+        this.db.run('INSERT INTO budget_groups (name, sort_order) VALUES (?, ?)', [name.trim(), nextOrder]);
+        const result = this.db.exec('SELECT last_insert_rowid() as id');
+        this.autoSave();
+        return result[0].values[0][0];
+    },
+
+    updateBudgetGroup(id, name) {
+        this.db.run('UPDATE budget_groups SET name = ? WHERE id = ?', [name.trim(), id]);
+        this.autoSave();
+    },
+
+    deleteBudgetGroup(id) {
+        this.db.run('UPDATE budget_expenses SET group_id = NULL WHERE group_id = ?', [id]);
+        this.db.run('DELETE FROM budget_groups WHERE id = ?', [id]);
+        this.autoSave();
+    },
+
+    updateBudgetGroupOrder(orderedIds) {
+        orderedIds.forEach((id, index) => {
+            this.db.run('UPDATE budget_groups SET sort_order = ? WHERE id = ?', [index, id]);
+        });
+        this.autoSave();
+    },
+
+    moveBudgetExpenseToGroup(expenseId, groupId) {
+        this.db.run('UPDATE budget_expenses SET group_id = ? WHERE id = ?', [groupId || null, expenseId]);
+        this.autoSave();
     },
 
     // ==================== PRODUCTS ====================
@@ -2543,6 +2677,7 @@ const Database = {
                 break;
             case 'budget':
                 this.db.run('DELETE FROM budget_expenses');
+                this.db.run('DELETE FROM budget_groups');
                 break;
             case 'breakeven':
                 this.db.run("DELETE FROM app_meta WHERE key = 'breakeven_config'");
@@ -3293,6 +3428,53 @@ const Database = {
 
     setVEImportMeta(meta) {
         this.db.run("INSERT OR REPLACE INTO app_meta (key, value) VALUES ('ve_import_meta', ?)", [JSON.stringify(meta)]);
+        this.autoSave();
+    },
+
+    // ==================== VE EVENTS ====================
+
+    createVEEvent(event) {
+        this.db.run(
+            'INSERT INTO ve_events (name, type, start_date, end_date, notes) VALUES (?, ?, ?, ?, ?)',
+            [event.name, event.type || 'tradeshow', event.start_date, event.end_date, event.notes || null]
+        );
+        const result = this.db.exec('SELECT last_insert_rowid() as id');
+        const id = result[0].values[0][0];
+        this.autoSave();
+        return id;
+    },
+
+    updateVEEvent(id, event) {
+        this.db.run(
+            'UPDATE ve_events SET name = ?, type = ?, start_date = ?, end_date = ?, notes = ? WHERE id = ?',
+            [event.name, event.type, event.start_date, event.end_date, event.notes || null, id]
+        );
+        this.autoSave();
+    },
+
+    deleteVEEvent(id) {
+        this.db.run('UPDATE ve_sales SET event_id = NULL WHERE event_id = ?', [id]);
+        this.db.run('DELETE FROM ve_events WHERE id = ?', [id]);
+        this.autoSave();
+    },
+
+    getAllVEEvents() {
+        const results = this.db.exec('SELECT * FROM ve_events ORDER BY start_date DESC');
+        if (results.length === 0) return [];
+        return this.rowsToObjects(results[0]);
+    },
+
+    assignSalesToEvent(eventId, transactionNos) {
+        const stmt = this.db.prepare('UPDATE ve_sales SET event_id = ? WHERE transaction_no = ?');
+        for (const txNo of transactionNos) {
+            stmt.run([eventId, txNo]);
+        }
+        stmt.free();
+        this.autoSave();
+    },
+
+    unassignSalesFromEvent(eventId) {
+        this.db.run('UPDATE ve_sales SET event_id = NULL WHERE event_id = ?', [eventId]);
         this.autoSave();
     },
 

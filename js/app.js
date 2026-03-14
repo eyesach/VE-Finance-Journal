@@ -13,10 +13,15 @@ const App = {
     selectedAssetId: null,
     selectedLoanId: null,
     selectedBudgetExpenseId: null,
+    collapsedBudgetGroups: new Set(),
     folderCreatedFromCategory: false,
     pendingFileLoad: null,
     pendingLoadBuffer: null,
     pendingInlineStatusChange: null, // {id, newStatus, selectElement}
+    bulkSelectMode: false,
+    bulkSelectDirection: 'to-paid', // 'to-paid' or 'to-pending'
+    bulkSelectedIds: new Set(),
+    pendingBulkAction: false,
     currentSortMode: 'entryDate',
     _timeline: null,
     _beChartBreakeven: null,
@@ -128,7 +133,7 @@ const App = {
      * Refresh all UI components
      */
     refreshAll() {
-        this.syncAllLoanJournalEntries();
+        this.syncAllBudgetJournalEntries();
         this.refreshCategories();
         this.refreshTransactions();
         this.refreshSummary();
@@ -831,11 +836,16 @@ const App = {
      * @param {string} tab - 'journal' | 'cashflow' | 'pnl' | 'balancesheet' | 'assets' | 'loan' | 'budget' | 'breakeven'
      */
     switchMainTab(tab) {
+        // Exit bulk select mode when switching tabs
+        if (this.bulkSelectMode) {
+            this.exitBulkSelectMode();
+        }
+
         document.querySelectorAll('.main-tab').forEach(btn => {
             btn.classList.toggle('active', btn.dataset.tab === tab);
         });
 
-        const tabs = ['journalTab', 'cashflowTab', 'pnlTab', 'balancesheetTab', 'assetsTab', 'loanTab', 'budgetTab', 'breakevenTab', 'projectedsalesTab', 'productsTab', 'vesalesTab'];
+        const tabs = ['journalTab', 'cashflowTab', 'pnlTab', 'balancesheetTab', 'assetsTab', 'loanTab', 'budgetTab', 'breakevenTab', 'projectedsalesTab', 'productsTab', 'vesalesTab', 'changelogTab'];
         tabs.forEach(id => {
             const el = document.getElementById(id);
             if (el) el.style.display = 'none';
@@ -871,6 +881,9 @@ const App = {
         } else if (tab === 'vesales') {
             document.getElementById('vesalesTab').style.display = 'block';
             this.refreshVESales();
+        } else if (tab === 'changelog') {
+            document.getElementById('changelogTab').style.display = 'block';
+            this.renderChangelog();
         } else {
             document.getElementById('journalTab').style.display = 'block';
         }
@@ -1204,10 +1217,59 @@ const App = {
             this.openCategoryModal();
         });
 
-        // Add category button (from budget expense form)
+        // Add category button (from budget expense form) - auto-create from expense name
         document.getElementById('addCategoryFromBudgetBtn').addEventListener('click', () => {
-            this._categoryModalOrigin = 'budget';
-            this.openCategoryModal();
+            // Auto-use the expense name as the category name
+            const catName = document.getElementById('budgetExpenseName').value.trim();
+            if (!catName) {
+                UI.showNotification('Please enter an expense name first', 'error');
+                return;
+            }
+
+            // Check if a category with this name already exists
+            const existingCats = Database.getCategories();
+            const duplicate = existingCats.find(c => c.name.toLowerCase() === catName.toLowerCase());
+            if (duplicate) {
+                UI.showNotification(`A category named "${duplicate.name}" already exists — please select it from the dropdown`, 'error');
+                return;
+            }
+
+            // Find the Monthly Expenses folder (auto-created payable folder)
+            const folders = Database.getFolders();
+            const expenseFolder = folders.find(f => f.folder_type === 'payable');
+            const folderId = expenseFolder ? expenseFolder.id : null;
+
+            // Use the budget amount as typical price if entered
+            const amountVal = document.getElementById('budgetExpenseAmount').value;
+            const typicalPrice = amountVal ? parseFloat(amountVal) : null;
+
+            try {
+                const newId = Database.addCategory(
+                    catName,
+                    false,           // isMonthly
+                    typicalPrice,    // defaultAmount
+                    'payable',       // defaultType
+                    folderId,        // folderId
+                    false, false, false, false, false, null, false
+                );
+                this.refreshCategories();
+
+                // Repopulate budget expense category dropdown and select new category
+                const catSelect = document.getElementById('budgetExpenseCategory');
+                catSelect.innerHTML = '<option value="">None (won\'t record)</option>';
+                const cats = Database.getCategories();
+                cats.forEach(cat => {
+                    const opt = document.createElement('option');
+                    opt.value = cat.id;
+                    opt.textContent = cat.folder_name ? `${cat.folder_name} / ${cat.name}` : cat.name;
+                    catSelect.appendChild(opt);
+                });
+                catSelect.value = newId;
+                UI.showNotification('Category added', 'success');
+            } catch (error) {
+                console.error('Error adding category from budget:', error);
+                UI.showNotification('Failed to add category', 'error');
+            }
         });
 
         // Category form submission (handles both add and edit)
@@ -1412,11 +1474,13 @@ const App = {
         // Sort mode change
         document.getElementById('sortMode').addEventListener('change', (e) => {
             this.currentSortMode = e.target.value;
+            this.clearBulkSelection();
             this.refreshTransactions();
         });
 
         ['filterType', 'filterStatus', 'filterMonth', 'filterCategory'].forEach(id => {
             document.getElementById(id).addEventListener('change', () => {
+                this.clearBulkSelection();
                 this.refreshTransactions();
             });
         });
@@ -1438,6 +1502,7 @@ const App = {
             }
 
             document.getElementById('filterCategory').value = '';
+            this.clearBulkSelection();
             this.refreshTransactions();
         });
 
@@ -1712,6 +1777,75 @@ const App = {
             this.handleExportCsv();
         });
 
+        // ==================== BULK SELECT ====================
+
+        document.getElementById('bulkSelectBtn').addEventListener('click', () => {
+            this.toggleBulkSelectMode();
+        });
+
+        document.getElementById('bulkModePaid').addEventListener('click', () => {
+            this.switchBulkMode('to-paid');
+        });
+
+        document.getElementById('bulkModePending').addEventListener('click', () => {
+            this.switchBulkMode('to-pending');
+        });
+
+        document.getElementById('bulkMarkPaidBtn').addEventListener('click', () => {
+            this.handleBulkMarkPaid();
+        });
+
+        document.getElementById('bulkResetPendingBtn').addEventListener('click', () => {
+            this.handleBulkResetPending();
+        });
+
+        document.getElementById('bulkCancelBtn').addEventListener('click', () => {
+            this.exitBulkSelectMode();
+        });
+
+        // Delegated checkbox handlers for bulk select
+        document.getElementById('transactionsContainer').addEventListener('change', (e) => {
+            if (e.target.classList.contains('bulk-checkbox')) {
+                const id = parseInt(e.target.dataset.id);
+                this.handleBulkCheckboxChange(id, e.target.checked);
+            } else if (e.target.classList.contains('bulk-select-all')) {
+                this.handleBulkSelectAll(e.target.checked);
+            }
+        });
+
+        // Drag-to-select for bulk checkboxes
+        const container = document.getElementById('transactionsContainer');
+        this._bulkDragState = null;
+
+        container.addEventListener('mousedown', (e) => {
+            const cb = e.target.closest('.bulk-checkbox');
+            if (!cb || !this.bulkSelectMode) return;
+            // The checkbox toggles on click naturally; record the resulting state as the drag value
+            const dragValue = !cb.checked; // will become cb.checked after the click completes
+            this._bulkDragState = { active: true, value: dragValue };
+        });
+
+        container.addEventListener('mouseover', (e) => {
+            if (!this._bulkDragState || !this._bulkDragState.active) return;
+            const cb = e.target.closest('.bulk-checkbox');
+            if (!cb) return;
+            const id = parseInt(cb.dataset.id);
+            cb.checked = this._bulkDragState.value;
+            if (this._bulkDragState.value) {
+                this.bulkSelectedIds.add(id);
+            } else {
+                this.bulkSelectedIds.delete(id);
+            }
+            this.updateBulkSelectCount();
+            this.updateBulkSelectAllState();
+        });
+
+        document.addEventListener('mouseup', () => {
+            if (this._bulkDragState) {
+                this._bulkDragState = null;
+            }
+        });
+
         // ==================== BALANCE SHEET ====================
 
         // BS month/year change — persist selection
@@ -1844,7 +1978,7 @@ const App = {
                 const paymentNum = parseInt(skipBtn.dataset.payment);
                 Database.toggleSkipLoanPayment(loanId, paymentNum);
                 const skippedLoan = Database.getLoanById(loanId);
-                if (skippedLoan) this._syncLoanJournalEntries(loanId, skippedLoan);
+                if (skippedLoan) this._syncLoanReceivable(loanId, skippedLoan);
                 this.refreshLoans();
                 return;
             }
@@ -1877,7 +2011,7 @@ const App = {
                     Database.setLoanPaymentOverride(loanId, paymentNum, parseFloat(val));
                 }
                 const overrideLoan = Database.getLoanById(loanId);
-                if (overrideLoan) this._syncLoanJournalEntries(loanId, overrideLoan);
+                if (overrideLoan) this._syncLoanReceivable(loanId, overrideLoan);
                 this.refreshLoans();
             };
 
@@ -1890,6 +2024,7 @@ const App = {
 
         // ==================== BUDGET TAB ====================
 
+        document.getElementById('addBudgetGroupBtn').addEventListener('click', () => this.handleAddBudgetGroup());
         document.getElementById('addBudgetExpenseBtn').addEventListener('click', () => this.openBudgetExpenseModal());
         document.getElementById('budgetExpenseForm').addEventListener('submit', (e) => {
             e.preventDefault();
@@ -1904,7 +2039,7 @@ const App = {
             this.deleteBudgetExpenseTargetId = null;
         });
 
-        // Budget list panel click delegation
+        // Budget list panel click delegation (original two-panel)
         document.getElementById('budgetListPanel').addEventListener('click', (e) => {
             const editBtn = e.target.closest('.edit-budget-btn');
             const deleteBtn = e.target.closest('.delete-budget-btn');
@@ -1921,6 +2056,109 @@ const App = {
                 this.selectedBudgetExpenseId = parseInt(item.dataset.id);
                 this.refreshBudget();
             }
+        });
+
+        // Budget groups container click delegation
+        const budgetContainer = document.getElementById('budgetGroupsContainer');
+        budgetContainer.addEventListener('click', (e) => {
+            // Group actions
+            const groupHeader = e.target.closest('.budget-group-section-header');
+            const editGroupBtn = e.target.closest('.edit-budget-group-btn');
+            const deleteGroupBtn = e.target.closest('.delete-budget-group-btn');
+
+            if (editGroupBtn) {
+                this.handleRenameBudgetGroup(parseInt(editGroupBtn.dataset.groupId));
+                return;
+            }
+            if (deleteGroupBtn) {
+                this.handleDeleteBudgetGroup(parseInt(deleteGroupBtn.dataset.groupId));
+                return;
+            }
+            if (groupHeader && !e.target.closest('.budget-group-actions') && !e.target.closest('.budget-group-name')) {
+                const groupId = groupHeader.dataset.groupId;
+                if (groupId === '') return; // ungrouped header — no collapse
+                const gid = parseInt(groupId);
+                if (this.collapsedBudgetGroups.has(gid)) {
+                    this.collapsedBudgetGroups.delete(gid);
+                } else {
+                    this.collapsedBudgetGroups.add(gid);
+                }
+                this.refreshBudget();
+                return;
+            }
+
+            // Expense actions
+            const editBtn = e.target.closest('.edit-budget-btn');
+            const deleteBtn = e.target.closest('.delete-budget-btn');
+            const item = e.target.closest('.budget-expense-row');
+            if (editBtn) {
+                this.handleEditBudgetExpense(parseInt(editBtn.dataset.id));
+                return;
+            }
+            if (deleteBtn) {
+                this.handleDeleteBudgetExpense(parseInt(deleteBtn.dataset.id));
+                return;
+            }
+            if (item) {
+                this.selectedBudgetExpenseId = parseInt(item.dataset.id);
+                this.refreshBudget();
+            }
+        });
+
+        // Budget detail panel close button
+        document.getElementById('budgetDetailPanel').addEventListener('click', (e) => {
+            if (e.target.closest('.budget-detail-close')) {
+                this.selectedBudgetExpenseId = null;
+                this.refreshBudget();
+            }
+        });
+
+        // Budget groups container double-click for inline rename
+        budgetContainer.addEventListener('dblclick', (e) => {
+            const groupName = e.target.closest('.budget-group-name');
+            if (groupName && groupName.dataset.groupId) {
+                this.handleRenameBudgetGroup(parseInt(groupName.dataset.groupId));
+            }
+        });
+
+        // Budget drag-and-drop
+        budgetContainer.addEventListener('dragstart', (e) => {
+            const item = e.target.closest('.budget-expense-row');
+            if (item) {
+                e.dataTransfer.setData('text/plain', item.dataset.id);
+                e.dataTransfer.effectAllowed = 'move';
+                item.classList.add('dragging');
+            }
+        });
+        budgetContainer.addEventListener('dragend', (e) => {
+            const item = e.target.closest('.budget-expense-row');
+            if (item) item.classList.remove('dragging');
+            budgetContainer.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+        });
+        budgetContainer.addEventListener('dragover', (e) => {
+            const header = e.target.closest('.budget-group-section-header');
+            if (header) {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+                budgetContainer.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+                header.classList.add('drag-over');
+            }
+        });
+        budgetContainer.addEventListener('dragleave', (e) => {
+            const header = e.target.closest('.budget-group-section-header');
+            if (header) header.classList.remove('drag-over');
+        });
+        budgetContainer.addEventListener('drop', (e) => {
+            e.preventDefault();
+            budgetContainer.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+            const expenseId = parseInt(e.dataTransfer.getData('text/plain'));
+            if (isNaN(expenseId)) return;
+            const header = e.target.closest('.budget-group-section-header');
+            if (!header) return;
+            const groupId = header.dataset.groupId ? parseInt(header.dataset.groupId) : null;
+            Database.moveBudgetExpenseToGroup(expenseId, groupId);
+            this.refreshBudget();
+            UI.showNotification('Expense moved', 'success');
         });
 
         // Record budget to journal
@@ -2802,6 +3040,13 @@ const App = {
             return;
         }
 
+        // Bulk action path
+        if (this.pendingBulkAction) {
+            this.executeBulkDatePaid(dateProcessed);
+            UI.hideModal('monthPaidPromptModal');
+            return;
+        }
+
         const monthPaid = dateProcessed.substring(0, 7);
 
         if (this.pendingInlineStatusChange) {
@@ -2830,6 +3075,13 @@ const App = {
      * Quick "Paid Today" / "Received Today" - sets status, month_paid, and date_processed to today
      */
     confirmPaidToday() {
+        // Bulk action path
+        if (this.pendingBulkAction) {
+            this.executeBulkDatePaid(Utils.getTodayDate());
+            UI.hideModal('monthPaidPromptModal');
+            return;
+        }
+
         if (!this.pendingInlineStatusChange) return;
 
         const { id, newStatus, selectElement } = this.pendingInlineStatusChange;
@@ -2865,6 +3117,184 @@ const App = {
         }
         UI.hideModal('monthPaidPromptModal');
         this.pendingInlineStatusChange = null;
+        this.pendingBulkAction = false;
+    },
+
+    // ==================== BULK SELECT ====================
+
+    toggleBulkSelectMode() {
+        if (this.bulkSelectMode) {
+            this.exitBulkSelectMode();
+        } else {
+            this.bulkSelectMode = true;
+            this.bulkSelectDirection = 'to-paid';
+            this.bulkSelectedIds = new Set();
+            document.getElementById('bulkSelectBtn').textContent = 'Done';
+            document.getElementById('bulkActionBar').style.display = 'flex';
+            document.getElementById('bulkModePaid').classList.add('active');
+            document.getElementById('bulkModePending').classList.remove('active');
+            document.getElementById('bulkMarkPaidBtn').style.display = '';
+            document.getElementById('bulkResetPendingBtn').style.display = 'none';
+            this.updateBulkSelectCount();
+            this.refreshTransactions();
+        }
+    },
+
+    exitBulkSelectMode() {
+        this.bulkSelectMode = false;
+        this.bulkSelectedIds = new Set();
+        this.pendingBulkAction = false;
+        document.getElementById('bulkSelectBtn').textContent = 'Select';
+        document.getElementById('bulkActionBar').style.display = 'none';
+        this.refreshTransactions();
+    },
+
+    switchBulkMode(direction) {
+        this.bulkSelectDirection = direction;
+        this.bulkSelectedIds = new Set();
+
+        document.getElementById('bulkModePaid').classList.toggle('active', direction === 'to-paid');
+        document.getElementById('bulkModePending').classList.toggle('active', direction === 'to-pending');
+        document.getElementById('bulkMarkPaidBtn').style.display = direction === 'to-paid' ? '' : 'none';
+        document.getElementById('bulkResetPendingBtn').style.display = direction === 'to-pending' ? '' : 'none';
+
+        this.updateBulkSelectCount();
+        this.refreshTransactions();
+    },
+
+    handleBulkCheckboxChange(id, checked) {
+        if (checked) {
+            this.bulkSelectedIds.add(id);
+        } else {
+            this.bulkSelectedIds.delete(id);
+        }
+        this.updateBulkSelectCount();
+        this.updateBulkSelectAllState();
+    },
+
+    updateBulkSelectAllState() {
+        const allCheckboxes = document.querySelectorAll('.bulk-checkbox');
+        const selectAll = document.querySelector('.bulk-select-all');
+        if (selectAll && allCheckboxes.length > 0) {
+            selectAll.checked = Array.from(allCheckboxes).every(cb => cb.checked);
+        }
+    },
+
+    handleBulkSelectAll(checked) {
+        const checkboxes = document.querySelectorAll('.bulk-checkbox');
+        checkboxes.forEach(cb => {
+            cb.checked = checked;
+            const id = parseInt(cb.dataset.id);
+            if (checked) {
+                this.bulkSelectedIds.add(id);
+            } else {
+                this.bulkSelectedIds.delete(id);
+            }
+        });
+        this.updateBulkSelectCount();
+    },
+
+    updateBulkSelectCount() {
+        const count = this.bulkSelectedIds.size;
+        document.getElementById('bulkSelectCount').textContent = `${count} selected`;
+    },
+
+    clearBulkSelection() {
+        if (this.bulkSelectMode) {
+            this.bulkSelectedIds = new Set();
+            this.updateBulkSelectCount();
+        }
+    },
+
+    handleBulkMarkPaid() {
+        if (this.bulkSelectedIds.size === 0) {
+            UI.showNotification('No transactions selected', 'error');
+            return;
+        }
+
+        this.pendingBulkAction = true;
+
+        // Determine title based on selected transaction types
+        let hasPayable = false;
+        let hasReceivable = false;
+        for (const id of this.bulkSelectedIds) {
+            const t = Database.getTransactionById(id);
+            if (t) {
+                if (t.transaction_type === 'payable') hasPayable = true;
+                if (t.transaction_type === 'receivable') hasReceivable = true;
+            }
+        }
+
+        let title = 'Mark as Paid';
+        let btnText = 'Paid Today';
+        if (hasReceivable && !hasPayable) {
+            title = 'Mark as Received';
+            btnText = 'Received Today';
+        } else if (hasReceivable && hasPayable) {
+            title = 'Mark as Paid/Received';
+            btnText = 'Paid/Received Today';
+        }
+
+        document.getElementById('monthPaidPromptTitle').textContent = title;
+        document.getElementById('paidTodayBtn').textContent = btnText;
+        document.getElementById('promptDateProcessed').value = Utils.getTodayDate();
+
+        UI.showModal('monthPaidPromptModal');
+    },
+
+    executeBulkDatePaid(dateProcessed) {
+        const monthPaid = dateProcessed.substring(0, 7);
+        const updates = [];
+
+        for (const id of this.bulkSelectedIds) {
+            const t = Database.getTransactionById(id);
+            if (t) {
+                const status = t.transaction_type === 'receivable' ? 'received' : 'paid';
+                updates.push({ id, status });
+            }
+        }
+
+        try {
+            Database.bulkSetDatePaid(updates, dateProcessed, monthPaid);
+            this.refreshSummary();
+            this.refreshTransactions();
+            if (document.getElementById('cashflowTab').style.display !== 'none') this.refreshCashFlow();
+            if (document.getElementById('pnlTab').style.display !== 'none') this.refreshPnL();
+            UI.showNotification(`${updates.length} transaction${updates.length !== 1 ? 's' : ''} marked as paid`, 'success');
+        } catch (error) {
+            console.error('Error bulk updating:', error);
+            UI.showNotification('Failed to update transactions', 'error');
+        }
+
+        this.exitBulkSelectMode();
+    },
+
+    handleBulkResetPending() {
+        if (this.bulkSelectedIds.size === 0) {
+            UI.showNotification('No transactions selected', 'error');
+            return;
+        }
+
+        const count = this.bulkSelectedIds.size;
+        if (!confirm(`Reset ${count} transaction${count !== 1 ? 's' : ''} to pending? This will clear their paid dates.`)) {
+            return;
+        }
+
+        const ids = Array.from(this.bulkSelectedIds);
+
+        try {
+            Database.bulkResetToPending(ids);
+            this.refreshSummary();
+            this.refreshTransactions();
+            if (document.getElementById('cashflowTab').style.display !== 'none') this.refreshCashFlow();
+            if (document.getElementById('pnlTab').style.display !== 'none') this.refreshPnL();
+            UI.showNotification(`${count} transaction${count !== 1 ? 's' : ''} reset to pending`, 'success');
+        } catch (error) {
+            console.error('Error bulk resetting:', error);
+            UI.showNotification('Failed to reset transactions', 'error');
+        }
+
+        this.exitBulkSelectMode();
     },
 
     /**
@@ -3622,15 +4052,6 @@ const App = {
             document.getElementById('loanStartDate').value = Utils.getTodayDate();
         }
 
-        // Show auto-create checkbox only for new loans
-        const autoCreateGroup = document.getElementById('loanAutoCreate').closest('.form-group');
-        if (editId) {
-            autoCreateGroup.style.display = 'none';
-        } else {
-            autoCreateGroup.style.display = '';
-            document.getElementById('loanAutoCreate').checked = true;
-        }
-
         UI.showModal('loanConfigModal');
         document.getElementById('loanName').focus();
     },
@@ -3655,15 +4076,13 @@ const App = {
 
         if (editingId) {
             Database.updateLoan(parseInt(editingId), params);
-            this._syncLoanJournalEntries(parseInt(editingId), params);
+            this._syncLoanReceivable(parseInt(editingId), params);
             UI.showNotification('Loan updated', 'success');
         } else {
             const loanId = Database.addLoan(params);
             this.selectedLoanId = loanId;
-            this._syncLoanJournalEntries(loanId, params);
-            if (document.getElementById('loanAutoCreate').checked) {
-                this._autoCreateLoanBudgetAndCategory(loanId, name, params);
-            }
+            this._syncLoanReceivable(loanId, params);
+            this._autoCreateLoanBudgetAndCategory(loanId, name, params);
             UI.showNotification('Loan added', 'success');
         }
 
@@ -3681,12 +4100,33 @@ const App = {
 
     confirmDeleteLoan() {
         if (this.deleteLoanTargetId) {
+            // Delete budget expenses that were auto-created from this loan
+            const budgetExpenses = Database.getBudgetExpenses();
+            const autoCreatedNote = `Auto-created from loan #${this.deleteLoanTargetId}`;
+            budgetExpenses.forEach(be => {
+                if (be.notes === autoCreatedNote) {
+                    Database.deleteBudgetExpense(be.id);
+                }
+            });
+
+            // Delete loan receivable journal entry
+            Database.db.run(
+                "DELETE FROM transactions WHERE source_type = 'loan_receivable' AND source_id = ?",
+                [this.deleteLoanTargetId]
+            );
+
+            // Delete any old loan_payment journal entries (legacy, before budget-driven flow)
+            Database.db.run(
+                "DELETE FROM transactions WHERE source_type = 'loan_payment' AND source_id = ?",
+                [this.deleteLoanTargetId]
+            );
+
             Database.deleteLoan(this.deleteLoanTargetId);
             if (this.selectedLoanId === this.deleteLoanTargetId) {
                 this.selectedLoanId = null;
             }
             UI.showNotification('Loan deleted', 'success');
-            this.refreshLoans();
+            this.refreshAll();
         }
         UI.hideModal('deleteLoanModal');
         this.deleteLoanTargetId = null;
@@ -3715,11 +4155,9 @@ const App = {
             catId = cat.id;
         }
 
-        // Compute start/end months from amortization schedule
         const firstPayMonth = schedule[0].month;
         const lastPayMonth = schedule[schedule.length - 1].month;
 
-        // Create budget expense for the loan payment
         Database.addBudgetExpense(
             `${loanName} Payment`,
             monthlyPayment,
@@ -3731,14 +4169,11 @@ const App = {
     },
 
     /**
-     * Sync journal entries for a single loan:
-     * - Upserts the loan receivable (principal amount, status=received, dated start_date)
-     * - Adds/updates pending payable entries for each payment month up to currentMonth
-     * - Removes pending entries for months no longer in schedule (e.g. loan shortened)
-     * - Paid entries are never touched
+     * Create the loan receivable journal entry (one-time, on loan add/edit).
+     * Payment entries are handled entirely by the budget auto-sync.
      */
-    _syncLoanJournalEntries(loanId, params) {
-        const { name, principal, annual_rate, term_months, payments_per_year, start_date, first_payment_date } = params;
+    _syncLoanReceivable(loanId, params) {
+        const { name, principal, start_date, first_payment_date } = params;
 
         // --- Category: Loan Proceeds (receivable, hidden from P&L) ---
         let categories = Database.getCategories();
@@ -3748,23 +4183,8 @@ const App = {
             proceedsCatId = Database.addCategory('Loan Proceeds', false, null, 'receivable', null, true);
         } else {
             proceedsCatId = proceedsCat.id;
-            // Ensure existing Loan Proceeds category is hidden from P&L
             if (!proceedsCat.show_on_pl) {
                 Database.db.run('UPDATE categories SET show_on_pl = 1 WHERE id = ?', [proceedsCatId]);
-            }
-        }
-
-        // --- Category: loan name (payable, hidden from P&L — only interest belongs on P&L) ---
-        categories = Database.getCategories();
-        let paymentCat = categories.find(c => c.name === name);
-        let paymentCatId;
-        if (!paymentCat) {
-            paymentCatId = Database.addCategory(name, true, null, 'payable', null, true);
-        } else {
-            paymentCatId = paymentCat.id;
-            // Ensure existing loan payment category is hidden from P&L
-            if (!paymentCat.show_on_pl) {
-                Database.db.run('UPDATE categories SET show_on_pl = 1 WHERE id = ?', [paymentCatId]);
             }
         }
 
@@ -3773,7 +4193,8 @@ const App = {
             "SELECT id FROM transactions WHERE source_type = 'loan_receivable' AND source_id = ?",
             [loanId]
         );
-        const dueMonth = first_payment_date.substring(0, 7);
+        const fpd = first_payment_date || start_date;
+        const dueMonth = fpd.substring(0, 7);
         const paidMonth = start_date.substring(0, 7);
         if (existingReceivable.length > 0 && existingReceivable[0].values.length > 0) {
             const rxId = existingReceivable[0].values[0][0];
@@ -3797,61 +4218,82 @@ const App = {
             });
         }
 
-        // --- Sync payment entries ---
-        const skipped = Database.getLoanSkippedPayments(loanId);
-        const overrides = Database.getLoanPaymentOverrides(loanId);
-        const schedule = Utils.computeAmortizationSchedule(
-            { principal, annual_rate, payments_per_year, term_months, start_date, first_payment_date },
-            skipped, overrides
-        );
+        Database.autoSave();
+    },
+
+    // ==================== BUDGET AUTO-SYNC ====================
+
+    /**
+     * Sync budget expenses to journal entries for all months up to the current month.
+     * Similar to syncAllLoanJournalEntries — idempotent, runs on every refreshAll().
+     */
+    syncAllBudgetJournalEntries() {
+        const expenses = Database.getBudgetExpenses();
         const currentMonth = Utils.getCurrentMonth();
 
-        // Build set of months that should have entries (up to currentMonth, non-skipped)
-        const scheduledMonths = new Set();
-        schedule.forEach(p => {
-            if (!p.skipped && p.payment > 0 && p.month <= currentMonth) scheduledMonths.add(p.month);
-        });
-
-        // Get existing payment transactions for this loan
-        const existingPayments = Database.db.exec(
-            "SELECT id, payment_for_month, amount, status FROM transactions WHERE source_type = 'loan_payment' AND source_id = ?",
-            [loanId]
+        // Get all existing budget transactions in one query
+        const existingResult = Database.db.exec(
+            "SELECT id, source_id, payment_for_month, amount, status FROM transactions WHERE source_type = 'budget'"
         );
-        const existingByMonth = {};
-        if (existingPayments.length > 0) {
-            existingPayments[0].values.forEach(([id, month, amount, status]) => {
-                existingByMonth[month] = { id, amount, status };
+        const existingByExpenseMonth = {};
+        if (existingResult.length > 0) {
+            existingResult[0].values.forEach(([id, sourceId, month, amount, status]) => {
+                const key = `${sourceId}:${month}`;
+                existingByExpenseMonth[key] = { id, amount, status };
             });
         }
 
-        // Add or update payment entries
-        schedule.forEach(p => {
-            if (p.skipped || p.payment <= 0 || p.month > currentMonth) return;
-            const existing = existingByMonth[p.month];
-            if (!existing) {
-                Database.addTransaction({
-                    entry_date: p.month + '-01',
-                    category_id: paymentCatId,
-                    item_description: `${name} \u2013 Payment`,
-                    amount: p.payment,
-                    transaction_type: 'payable',
-                    status: 'pending',
-                    month_due: p.month,
-                    payment_for_month: p.month,
-                    source_type: 'loan_payment',
-                    source_id: loanId
-                });
-            } else if (existing.status === 'pending' && existing.amount !== p.payment) {
-                Database.db.run(
-                    'UPDATE transactions SET amount = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-                    [p.payment, existing.id]
-                );
-            }
+        expenses.forEach(exp => {
+            // Skip expenses without a category — can't create journal entries without one
+            if (!exp.category_id) return;
+
+            // Determine the month range: start_month to min(end_month, currentMonth)
+            const endMonth = exp.end_month && exp.end_month < currentMonth ? exp.end_month : currentMonth;
+            if (exp.start_month > currentMonth) return; // Not active yet
+
+            const months = Utils.generateMonthRange(exp.start_month, endMonth);
+            const activeMonths = new Set(months);
+
+            // Create missing entries, update pending entries with changed amounts
+            months.forEach(month => {
+                const key = `${exp.id}:${month}`;
+                const existing = existingByExpenseMonth[key];
+                if (!existing) {
+                    Database.addTransaction({
+                        entry_date: month + '-01',
+                        category_id: exp.category_id,
+                        item_description: exp.name,
+                        amount: exp.monthly_amount,
+                        transaction_type: 'payable',
+                        status: 'pending',
+                        month_due: month,
+                        payment_for_month: month,
+                        source_type: 'budget',
+                        source_id: exp.id
+                    });
+                } else if (existing.status === 'pending' && existing.amount !== exp.monthly_amount) {
+                    // Update amount if budget changed and entry hasn't been paid yet
+                    Database.db.run(
+                        'UPDATE transactions SET amount = ?, item_description = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+                        [exp.monthly_amount, exp.name, existing.id]
+                    );
+                }
+            });
+
+            // Remove pending entries for months no longer in range (end_month was shortened)
+            Object.entries(existingByExpenseMonth).forEach(([key, tx]) => {
+                const [sourceId, month] = key.split(':');
+                if (parseInt(sourceId) === exp.id && !activeMonths.has(month) && tx.status === 'pending') {
+                    Database.db.run('DELETE FROM transactions WHERE id = ?', [tx.id]);
+                }
+            });
         });
 
-        // Remove pending entries for months no longer in schedule (loan was shortened/edited)
-        Object.entries(existingByMonth).forEach(([month, tx]) => {
-            if (!scheduledMonths.has(month) && tx.status === 'pending') {
+        // Also clean up entries for deleted budget expenses
+        const expenseIds = new Set(expenses.map(e => e.id));
+        Object.entries(existingByExpenseMonth).forEach(([key, tx]) => {
+            const sourceId = parseInt(key.split(':')[0]);
+            if (!expenseIds.has(sourceId) && tx.status === 'pending') {
                 Database.db.run('DELETE FROM transactions WHERE id = ?', [tx.id]);
             }
         });
@@ -3859,29 +4301,12 @@ const App = {
         Database.autoSave();
     },
 
-    /**
-     * Sync journal entries for all loans. Called from refreshAll() so new months auto-appear.
-     */
-    syncAllLoanJournalEntries() {
-        const loans = Database.getLoans();
-        loans.forEach(loan => {
-            this._syncLoanJournalEntries(loan.id, {
-                name: loan.name,
-                principal: loan.principal,
-                annual_rate: loan.annual_rate,
-                term_months: loan.term_months,
-                payments_per_year: loan.payments_per_year,
-                start_date: loan.start_date,
-                first_payment_date: loan.first_payment_date
-            });
-        });
-    },
-
     // ==================== BUDGET HANDLERS ====================
 
     refreshBudget() {
         const expenses = Database.getBudgetExpenses();
-        UI.renderBudgetTab(expenses, this.selectedBudgetExpenseId);
+        const groups = Database.getBudgetGroups();
+        UI.renderBudgetTab(expenses, groups, this.selectedBudgetExpenseId, this.collapsedBudgetGroups);
     },
 
     openBudgetExpenseModal(editId) {
@@ -3901,13 +4326,36 @@ const App = {
             catSelect.appendChild(opt);
         });
 
+        // Populate group dropdown
+        const groupSelect = document.getElementById('budgetExpenseGroup');
+        groupSelect.innerHTML = '<option value="">No Group</option>';
+        Database.getBudgetGroups().forEach(g => {
+            const opt = document.createElement('option');
+            opt.value = g.id;
+            opt.textContent = g.name;
+            groupSelect.appendChild(opt);
+        });
+
         // Populate year dropdowns
         this._populateBudgetYearDropdowns();
 
         if (!editId) {
-            const [year, month] = Utils.getCurrentMonth().split('-');
-            document.getElementById('budgetStartMonth').value = month;
-            document.getElementById('budgetStartYear').value = year;
+            // Auto-fill start/end from timeline settings
+            const timeline = Database.getTimeline();
+            if (timeline.start) {
+                const [startYear, startMonth] = timeline.start.split('-');
+                document.getElementById('budgetStartMonth').value = startMonth;
+                document.getElementById('budgetStartYear').value = startYear;
+            } else {
+                const [year, month] = Utils.getCurrentMonth().split('-');
+                document.getElementById('budgetStartMonth').value = month;
+                document.getElementById('budgetStartYear').value = year;
+            }
+            if (timeline.end) {
+                const [endYear, endMonth] = timeline.end.split('-');
+                document.getElementById('budgetEndMonth').value = endMonth;
+                document.getElementById('budgetEndYear').value = endYear;
+            }
         }
 
         UI.showModal('budgetExpenseModal');
@@ -3939,6 +4387,7 @@ const App = {
         const endMonth = document.getElementById('budgetEndMonth').value;
         const endYear = document.getElementById('budgetEndYear').value;
         const categoryId = document.getElementById('budgetExpenseCategory').value || null;
+        const groupId = document.getElementById('budgetExpenseGroup').value || null;
         const notes = document.getElementById('budgetExpenseNotes').value.trim() || null;
         const editingId = document.getElementById('editingBudgetExpenseId').value;
 
@@ -3967,10 +4416,10 @@ const App = {
 
         try {
             if (editingId) {
-                Database.updateBudgetExpense(parseInt(editingId), name, amount, start, end, categoryId ? parseInt(categoryId) : null, notes);
+                Database.updateBudgetExpense(parseInt(editingId), name, amount, start, end, categoryId ? parseInt(categoryId) : null, notes, groupId ? parseInt(groupId) : null);
                 UI.showNotification('Expense updated', 'success');
             } else {
-                const id = Database.addBudgetExpense(name, amount, start, end, categoryId ? parseInt(categoryId) : null, notes);
+                const id = Database.addBudgetExpense(name, amount, start, end, categoryId ? parseInt(categoryId) : null, notes, groupId ? parseInt(groupId) : null);
                 this.selectedBudgetExpenseId = id;
                 UI.showNotification('Expense added', 'success');
             }
@@ -3991,6 +4440,7 @@ const App = {
         document.getElementById('budgetExpenseName').value = expense.name;
         document.getElementById('budgetExpenseAmount').value = expense.monthly_amount;
         document.getElementById('budgetExpenseCategory').value = expense.category_id || '';
+        document.getElementById('budgetExpenseGroup').value = expense.group_id || '';
         document.getElementById('budgetExpenseNotes').value = expense.notes || '';
         document.getElementById('budgetExpenseModalTitle').textContent = 'Edit Budget Expense';
         document.getElementById('saveBudgetExpenseBtn').textContent = 'Save Changes';
@@ -4013,15 +4463,67 @@ const App = {
 
     confirmDeleteBudgetExpense() {
         if (this.deleteBudgetExpenseTargetId) {
+            // Delete pending journal entries created by budget auto-sync for this expense
+            Database.db.run(
+                "DELETE FROM transactions WHERE source_type = 'budget' AND source_id = ? AND status = 'pending'",
+                [this.deleteBudgetExpenseTargetId]
+            );
             Database.deleteBudgetExpense(this.deleteBudgetExpenseTargetId);
             if (this.selectedBudgetExpenseId === this.deleteBudgetExpenseTargetId) {
                 this.selectedBudgetExpenseId = null;
             }
             UI.showNotification('Expense deleted', 'success');
-            this.refreshBudget();
+            this.refreshAll();
         }
         UI.hideModal('deleteBudgetExpenseModal');
         this.deleteBudgetExpenseTargetId = null;
+    },
+
+    handleAddBudgetGroup() {
+        const name = prompt('Enter group name:');
+        if (!name || !name.trim()) return;
+        try {
+            Database.addBudgetGroup(name.trim());
+            this.refreshBudget();
+            UI.showNotification('Group created', 'success');
+        } catch (e) {
+            UI.showNotification('Failed to create group', 'error');
+        }
+    },
+
+    handleRenameBudgetGroup(groupId) {
+        const nameEl = document.querySelector(`.budget-group-name[data-group-id="${groupId}"]`);
+        if (!nameEl || nameEl.querySelector('input')) return;
+        const currentName = nameEl.textContent;
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'budget-group-rename-input';
+        input.value = currentName;
+        nameEl.textContent = '';
+        nameEl.appendChild(input);
+        input.focus();
+        input.select();
+
+        const save = () => {
+            const newName = input.value.trim();
+            if (newName && newName !== currentName) {
+                Database.updateBudgetGroup(groupId, newName);
+                UI.showNotification('Group renamed', 'success');
+            }
+            this.refreshBudget();
+        };
+        input.addEventListener('blur', save);
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+            if (e.key === 'Escape') { input.removeEventListener('blur', save); this.refreshBudget(); }
+        });
+    },
+
+    handleDeleteBudgetGroup(groupId) {
+        if (!confirm('Delete this group? Expenses in this group will become ungrouped.')) return;
+        Database.deleteBudgetGroup(groupId);
+        this.refreshBudget();
+        UI.showNotification('Group deleted', 'success');
     },
 
     openRecordBudgetModal() {
@@ -4129,21 +4631,35 @@ const App = {
         let count = 0;
         try {
             recordable.forEach(exp => {
-                Database.addTransaction({
-                    entry_date: entryDate,
-                    category_id: exp.category_id,
-                    item_description: exp.name,
-                    amount: exp.monthly_amount,
-                    transaction_type: 'payable',
-                    status: status,
-                    date_processed: status !== 'pending' ? dateProcessed : null,
-                    month_due: targetMonth,
-                    month_paid: status !== 'pending' ? entryDate.substring(0, 7) : null,
-                    payment_for_month: targetMonth,
-                    notes: null,
-                    source_type: 'budget',
-                    source_id: exp.id
-                });
+                // Check if auto-sync already created an entry for this expense+month
+                const existingResult = Database.db.exec(
+                    "SELECT id, status FROM transactions WHERE source_type = 'budget' AND source_id = ? AND payment_for_month = ?",
+                    [exp.id, targetMonth]
+                );
+                if (existingResult.length > 0 && existingResult[0].values.length > 0) {
+                    const [existingId, existingStatus] = existingResult[0].values[0];
+                    // Update the existing entry with the user's chosen status/date
+                    Database.db.run(
+                        'UPDATE transactions SET entry_date = ?, status = ?, date_processed = ?, month_paid = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+                        [entryDate, status, status !== 'pending' ? dateProcessed : null, status !== 'pending' ? entryDate.substring(0, 7) : null, existingId]
+                    );
+                } else {
+                    Database.addTransaction({
+                        entry_date: entryDate,
+                        category_id: exp.category_id,
+                        item_description: exp.name,
+                        amount: exp.monthly_amount,
+                        transaction_type: 'payable',
+                        status: status,
+                        date_processed: status !== 'pending' ? dateProcessed : null,
+                        month_due: targetMonth,
+                        month_paid: status !== 'pending' ? entryDate.substring(0, 7) : null,
+                        payment_for_month: targetMonth,
+                        notes: null,
+                        source_type: 'budget',
+                        source_id: exp.id
+                    });
+                }
                 count++;
             });
 
@@ -6796,12 +7312,15 @@ const App = {
     _veSales: [],
     _veFiltered: [],
     _veItemsCache: new Map(),
+    _veEventsMap: new Map(),
     _veProductSortCol: 'qty',
     _veProductSortDir: 'desc',
 
     refreshVESales() {
         this._veSales = Database.getVESales();
         this._veItemsCache = Database.getAllVESaleItems();
+        const events = Database.getAllVEEvents();
+        this._veEventsMap = new Map(events.map(e => [e.id, e.name]));
         const meta = Database.getVEImportMeta();
 
         // Show import info
@@ -6825,9 +7344,81 @@ const App = {
             panel.classList.add('open');
         }
 
+        document.getElementById('veSubtabs').style.display = hasData ? 'flex' : 'none';
+
         if (hasData) {
+            this.vePopulatePresetDropdown();
+            this.vePopulateEventDropdown();
             this.veApplyFilters();
+            // Re-render events panel if it's the active sub-tab
+            const eventsTab = document.getElementById('veSubtabEvents');
+            if (eventsTab && eventsTab.style.display !== 'none') this.veRenderEventsPanel();
         }
+    },
+
+    vePopulatePresetDropdown() {
+        const sel = document.getElementById('ve-filterPreset');
+        const current = sel.value;
+        const timeline = this.getTimeline();
+        const now = new Date();
+        const currentYM = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+
+        let start = timeline.start;
+        let end = timeline.end;
+        if (!start && this._veSales.length > 0) {
+            const dates = this._veSales.map(s => s.date).filter(Boolean).sort();
+            start = dates[0] ? dates[0].substring(0, 7) : null;
+        }
+        if (!end && this._veSales.length > 0) {
+            const dates = this._veSales.map(s => s.date).filter(Boolean).sort();
+            end = dates[dates.length - 1] ? dates[dates.length - 1].substring(0, 7) : null;
+        }
+
+        sel.innerHTML = '<option value="">Date preset...</option><option value="all">All time</option>';
+        if (!start || !end) return;
+        if (end > currentYM) end = currentYM;
+
+        const months = [];
+        let [sy, sm] = start.split('-').map(Number);
+        const [ey, em] = end.split('-').map(Number);
+        while (sy < ey || (sy === ey && sm <= em)) {
+            const val = `${sy}-${String(sm).padStart(2, '0')}`;
+            const label = new Date(sy, sm - 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+            months.push({ value: val, label, year: sy });
+            sm++;
+            if (sm > 12) { sm = 1; sy++; }
+        }
+        months.reverse();
+
+        let currentYear = null;
+        let optgroup = null;
+        for (const m of months) {
+            if (m.year !== currentYear) {
+                currentYear = m.year;
+                optgroup = document.createElement('optgroup');
+                optgroup.label = String(m.year);
+                sel.appendChild(optgroup);
+            }
+            const opt = document.createElement('option');
+            opt.value = m.value;
+            opt.textContent = m.label;
+            optgroup.appendChild(opt);
+        }
+        sel.value = current;
+    },
+
+    vePopulateEventDropdown() {
+        const events = Database.getAllVEEvents();
+        const sel = document.getElementById('ve-filterEvent');
+        const current = sel.value;
+        sel.innerHTML = '<option value="">All sales</option><option value="__unassigned__">Unassigned only</option>';
+        for (const evt of events) {
+            const opt = document.createElement('option');
+            opt.value = evt.id;
+            opt.textContent = evt.name;
+            sel.appendChild(opt);
+        }
+        sel.value = current;
     },
 
     veApplyFilters() {
@@ -6835,11 +7426,14 @@ const App = {
         const from = document.getElementById('ve-filterFrom').value;
         const to = document.getElementById('ve-filterTo').value;
         const sortBy = document.getElementById('ve-sortBy').value;
+        const eventFilter = document.getElementById('ve-filterEvent').value;
 
         this._veFiltered = this._veSales.filter(s => {
             if (source !== 'both' && s.source !== source) return false;
             if (from && s.date < from) return false;
             if (to && s.date > to) return false;
+            if (eventFilter === '__unassigned__' && s.event_id) return false;
+            if (eventFilter && eventFilter !== '__unassigned__' && String(s.event_id) !== eventFilter) return false;
             return true;
         });
 
@@ -7072,7 +7666,7 @@ const App = {
         document.getElementById('ve-txCount').textContent = `(${this._veFiltered.length})`;
 
         if (this._veFiltered.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#6c757d;padding:20px;">No transactions match filters</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#6c757d;padding:20px;">No transactions match filters</td></tr>';
             return;
         }
 
@@ -7089,10 +7683,14 @@ const App = {
                 statusHtml = '<span class="ve-status-dot unknown"></span>Unknown';
             }
 
+            const eventName = s.event_id && this._veEventsMap ? (this._veEventsMap.get(s.event_id) || '') : '';
+            const eventBadge = eventName ? `<span class="ve-event-badge">${Utils.escapeHtml(eventName)}</span>` : '<span class="ve-no-event">&mdash;</span>';
+
             html += `<tr>
                 <td>${Utils.escapeHtml(s.transaction_no)}</td>
                 <td>${this.veFmtDate(s.date)}</td>
                 <td><span class="ve-source-badge ${s.source}">${s.source === 'online' ? 'Online' : 'Trade Show'}</span></td>
+                <td>${eventBadge}</td>
                 <td>${Utils.escapeHtml(s.billing_name || '')}</td>
                 <td class="num">${this.veFmt(s.subtotal)}</td>
                 <td class="num">${this.veFmt(s.tax)}</td>
@@ -7310,6 +7908,7 @@ const App = {
     // ---- VE Create Journal Entry ----
 
     veOpenJournalModal() {
+        this._veJournalEventId = null;
         // Populate sales category dropdown (prefer is_sales categories, fall back to all)
         const catSelect = document.getElementById('veJournalCategory');
         let cats = Database.getSalesCategories();
@@ -7359,12 +7958,45 @@ const App = {
         UI.showModal('veJournalModal');
     },
 
+    veOpenJournalModalForEvent(eventId) {
+        const evt = Database.getAllVEEvents().find(e => e.id === eventId);
+        if (!evt) return;
+
+        const eventSales = this._veSales.filter(s => s.event_id === eventId);
+        if (eventSales.length === 0) {
+            UI.showNotification('No sales in this event.', 'info');
+            return;
+        }
+
+        // Open the normal journal modal first (populates categories etc.)
+        this.veOpenJournalModal();
+
+        // Override the source, dates, and preview with event-specific data
+        const sources = new Set(eventSales.map(s => s.source));
+        const sourceSelect = document.getElementById('veJournalSource');
+        if (sources.size === 1) {
+            sourceSelect.value = [...sources][0];
+        } else {
+            sourceSelect.value = 'both';
+        }
+
+        document.getElementById('veJournalDateFrom').value = evt.start_date;
+        document.getElementById('veJournalDateTo').value = evt.end_date;
+
+        // Store the event ID so veGetJournalFilteredSales can use it
+        this._veJournalEventId = eventId;
+
+        this.veUpdateJournalPreview();
+    },
+
     veGetJournalFilteredSales() {
         const source = document.getElementById('veJournalSource').value;
         const from = document.getElementById('veJournalDateFrom').value;
         const to = document.getElementById('veJournalDateTo').value;
 
         return this._veSales.filter(s => {
+            // When creating journal for a specific event, only include that event's sales
+            if (this._veJournalEventId && s.event_id !== this._veJournalEventId) return false;
             if (source !== 'both' && s.source !== source) return false;
             if (from && s.date < from) return false;
             if (to && s.date > to) return false;
@@ -7378,11 +8010,13 @@ const App = {
         const to = document.getElementById('veJournalDateTo').value;
         const filtered = this.veGetJournalFilteredSales();
 
-        let subtotal = 0, total = 0;
+        let subtotal = 0, total = 0, discount = 0;
         for (const s of filtered) {
             subtotal = Math.round((subtotal + (s.subtotal || 0)) * 100) / 100;
             total = Math.round((total + (s.total || 0)) * 100) / 100;
+            discount = Math.round((discount + (s.discount || 0)) * 100) / 100;
         }
+        const pretaxAfterDisc = Math.round((subtotal - discount) * 100) / 100;
 
         // Build description preview
         const sourceLabel = source === 'online' ? 'Online' : source === 'tradeshow' ? 'Tradeshow' : 'Tradeshow + Online';
@@ -7399,7 +8033,7 @@ const App = {
 
         const desc = `${sourceLabel} sales ${dateLabel}`.trim();
         document.getElementById('veJournalPreviewDesc').textContent = desc || '--';
-        document.getElementById('veJournalPreviewPretax').textContent = this.veFmt(subtotal);
+        document.getElementById('veJournalPreviewPretax').textContent = this.veFmt(pretaxAfterDisc);
         document.getElementById('veJournalPreviewTotal').textContent = this.veFmt(total);
         document.getElementById('veJournalPreviewCount').textContent = filtered.length;
 
@@ -7423,11 +8057,13 @@ const App = {
             return;
         }
 
-        let subtotal = 0, total = 0;
+        let subtotal = 0, total = 0, discount = 0;
         for (const s of filtered) {
             subtotal = Math.round((subtotal + (s.subtotal || 0)) * 100) / 100;
             total = Math.round((total + (s.total || 0)) * 100) / 100;
+            discount = Math.round((discount + (s.discount || 0)) * 100) / 100;
         }
+        const pretaxAfterDisc = Math.round((subtotal - discount) * 100) / 100;
 
         // Build description
         const sourceLabel = source === 'online' ? 'Online' : source === 'tradeshow' ? 'Tradeshow' : 'Tradeshow + Online';
@@ -7455,7 +8091,7 @@ const App = {
                 category_id: categoryId,
                 item_description: description,
                 amount: total,
-                pretax_amount: subtotal,
+                pretax_amount: pretaxAfterDisc,
                 transaction_type: 'receivable',
                 status: 'received',
                 date_processed: lastTxDate || entryDate,
@@ -7470,7 +8106,7 @@ const App = {
                 entry_date: entryDate,
                 category_id: categoryId,
                 amount: total,
-                pretax_amount: subtotal,
+                pretax_amount: pretaxAfterDisc,
                 sale_date_start: from || null,
                 sale_date_end: to || null,
                 month_due: monthDue,
@@ -7577,38 +8213,257 @@ const App = {
         const preset = document.getElementById('ve-filterPreset').value;
         const fromEl = document.getElementById('ve-filterFrom');
         const toEl = document.getElementById('ve-filterTo');
-        const now = new Date();
 
-        switch (preset) {
-            case 'all':
-                fromEl.value = ''; toEl.value = '';
-                break;
-            case 'thisMonth': {
-                const y = now.getFullYear(), m = String(now.getMonth() + 1).padStart(2, '0');
-                fromEl.value = `${y}-${m}-01`;
-                const lastDay = new Date(y, now.getMonth() + 1, 0).getDate();
-                toEl.value = `${y}-${m}-${String(lastDay).padStart(2, '0')}`;
-                break;
-            }
-            case 'lastMonth': {
-                const last = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-                const y = last.getFullYear(), m = String(last.getMonth() + 1).padStart(2, '0');
-                fromEl.value = `${y}-${m}-01`;
-                const lastDay = new Date(y, last.getMonth() + 1, 0).getDate();
-                toEl.value = `${y}-${m}-${String(lastDay).padStart(2, '0')}`;
-                break;
-            }
-            case 'thisQuarter': {
-                const qMonth = Math.floor(now.getMonth() / 3) * 3;
-                const y = now.getFullYear();
-                fromEl.value = `${y}-${String(qMonth + 1).padStart(2, '0')}-01`;
-                const lastQMonth = qMonth + 2;
-                const lastDay = new Date(y, lastQMonth + 1, 0).getDate();
-                toEl.value = `${y}-${String(lastQMonth + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
-                break;
-            }
+        if (!preset) return;
+        if (preset === 'all') {
+            fromEl.value = '';
+            toEl.value = '';
+        } else if (/^\d{4}-\d{2}$/.test(preset)) {
+            const [y, m] = preset.split('-').map(Number);
+            fromEl.value = `${preset}-01`;
+            const lastDay = new Date(y, m, 0).getDate();
+            toEl.value = `${preset}-${String(lastDay).padStart(2, '0')}`;
         }
         this.veApplyFilters();
+    },
+
+    // ==================== VE EVENTS SUB-TAB ====================
+
+    veSwitchSubtab(tab) {
+        document.querySelectorAll('.ve-subtab').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.veSubtab === tab);
+        });
+        document.getElementById('veSubtabSales').style.display = tab === 'sales' ? '' : 'none';
+        document.getElementById('veSubtabEvents').style.display = tab === 'events' ? '' : 'none';
+        if (tab === 'events') this.veRenderEventsPanel();
+    },
+
+    veRenderEventsPanel() {
+        const events = Database.getAllVEEvents();
+        const list = document.getElementById('veEventsList');
+        document.getElementById('veEventsCount').textContent = `(${events.length})`;
+
+        if (events.length === 0) {
+            list.innerHTML = '<div class="ve-events-empty">No events yet. Use Auto-Detect or create one manually.</div>';
+            return;
+        }
+
+        let html = '';
+        for (const evt of events) {
+            const salesCount = this._veSales.filter(s => s.event_id === evt.id).length;
+            const salesTotal = this._veSales.filter(s => s.event_id === evt.id).reduce((sum, s) => sum + (s.total || 0), 0);
+            const dateRange = evt.start_date === evt.end_date
+                ? this.veFmtDate(evt.start_date)
+                : `${this.veFmtDate(evt.start_date)} — ${this.veFmtDate(evt.end_date)}`;
+
+            html += `<div class="ve-event-card" data-event-id="${evt.id}">
+                <div class="ve-event-card-header">
+                    <input class="ve-event-name-input" type="text" value="${Utils.escapeHtml(evt.name)}" data-event-id="${evt.id}" data-field="name">
+                    <button class="ve-event-delete" data-event-id="${evt.id}" title="Delete event">&times;</button>
+                </div>
+                <div class="ve-event-card-meta">
+                    <select class="ve-event-type-select" data-event-id="${evt.id}" data-field="type">
+                        <option value="tradeshow"${evt.type === 'tradeshow' ? ' selected' : ''}>Trade Show</option>
+                        <option value="online_event"${evt.type === 'online_event' ? ' selected' : ''}>Online Event</option>
+                        <option value="custom"${evt.type !== 'tradeshow' && evt.type !== 'online_event' ? ' selected' : ''}>Custom</option>
+                    </select>
+                    <span class="ve-event-dates">${dateRange}</span>
+                </div>
+                <div class="ve-event-card-stats">
+                    <span>${salesCount} sale${salesCount !== 1 ? 's' : ''}</span>
+                    <span>${this.veFmt(salesTotal)}</span>
+                </div>
+                <div class="ve-event-card-actions">
+                    <button class="btn btn-sm ve-event-journal-btn" data-event-id="${evt.id}" ${salesCount === 0 ? 'disabled' : ''}>+ Add to Journal</button>
+                </div>
+            </div>`;
+        }
+        list.innerHTML = html;
+
+        // Attach inline edit listeners
+        list.querySelectorAll('.ve-event-name-input').forEach(input => {
+            input.addEventListener('change', (e) => {
+                const id = Number(e.target.dataset.eventId);
+                const evt = Database.getAllVEEvents().find(ev => ev.id === id);
+                if (evt) {
+                    Database.updateVEEvent(id, { ...evt, name: e.target.value });
+                    this._veEventsMap.set(id, e.target.value);
+                    this.vePopulateEventDropdown();
+                    this.veRenderTransactions();
+                }
+            });
+        });
+        list.querySelectorAll('.ve-event-type-select').forEach(sel => {
+            sel.addEventListener('change', (e) => {
+                const id = Number(e.target.dataset.eventId);
+                const evt = Database.getAllVEEvents().find(ev => ev.id === id);
+                if (evt) {
+                    Database.updateVEEvent(id, { ...evt, type: e.target.value });
+                }
+            });
+        });
+        list.querySelectorAll('.ve-event-delete').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const id = Number(e.target.dataset.eventId);
+                if (confirm('Delete this event? Sales will be unassigned.')) {
+                    Database.deleteVEEvent(id);
+                    this.refreshVESales();
+                }
+            });
+        });
+        list.querySelectorAll('.ve-event-journal-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const id = Number(e.target.dataset.eventId);
+                this.veOpenJournalModalForEvent(id);
+            });
+        });
+    },
+
+    veAutoDetectEvents() {
+        const unassigned = this._veSales.filter(s => !s.event_id && s.date);
+        if (unassigned.length === 0) {
+            UI.showNotification('No unassigned sales to group into events.', 'info');
+            return;
+        }
+
+        // Split by source first — online and tradeshow sales never group together
+        const bySource = { online: [], tradeshow: [] };
+        for (const s of unassigned) {
+            (bySource[s.source] || (bySource[s.source] = [])).push(s);
+        }
+
+        // Cluster consecutive sales within each source where date gap <= 1 day
+        const clusters = [];
+        for (const source of Object.keys(bySource)) {
+            const sorted = bySource[source].sort((a, b) => a.date.localeCompare(b.date));
+            if (sorted.length === 0) continue;
+            let current = [sorted[0]];
+            for (let i = 1; i < sorted.length; i++) {
+                const lastDate = new Date(current[current.length - 1].date + 'T00:00:00');
+                const thisDate = new Date(sorted[i].date + 'T00:00:00');
+                const diffDays = (thisDate - lastDate) / (1000 * 60 * 60 * 24);
+                if (diffDays <= 1) {
+                    current.push(sorted[i]);
+                } else {
+                    clusters.push([...current]);
+                    current = [sorted[i]];
+                }
+            }
+            clusters.push(current);
+        }
+        // Sort clusters by start date
+        clusters.sort((a, b) => a[0].date.localeCompare(b[0].date));
+
+        // Show preview
+        const list = document.getElementById('veEventsList');
+        let html = '<div class="ve-autodetect-preview"><h4>Detected Events</h4>';
+        html += '<p class="ve-autodetect-hint">Select events to create:</p>';
+        for (let i = 0; i < clusters.length; i++) {
+            const c = clusters[i];
+            const dates = c.map(s => s.date).sort();
+            const startDate = dates[0];
+            const endDate = dates[dates.length - 1];
+            const sources = new Set(c.map(s => s.source));
+            const suggestedType = sources.has('tradeshow') ? 'tradeshow' : 'online_event';
+            const suggestedName = suggestedType === 'tradeshow'
+                ? `Trade Show ${startDate}` : `Online Event ${startDate}`;
+            const dateRange = startDate === endDate ? this.veFmtDate(startDate) : `${this.veFmtDate(startDate)} — ${this.veFmtDate(endDate)}`;
+            const total = c.reduce((sum, s) => sum + (s.total || 0), 0);
+
+            html += `<label class="ve-autodetect-item">
+                <input type="checkbox" checked data-cluster-idx="${i}">
+                <div class="ve-autodetect-item-info">
+                    <input type="text" class="ve-autodetect-name" value="${Utils.escapeHtml(suggestedName)}" data-cluster-idx="${i}">
+                    <span class="ve-autodetect-details">${dateRange} &middot; ${c.length} sale${c.length !== 1 ? 's' : ''} &middot; ${this.veFmt(total)}</span>
+                </div>
+            </label>`;
+        }
+        html += '<div class="ve-autodetect-actions"><button class="btn btn-primary btn-sm" id="veAutoDetectConfirm">Create Selected</button> <button class="btn btn-sm" id="veAutoDetectCancel">Cancel</button></div></div>';
+        list.innerHTML = html;
+
+        // Store clusters for confirm handler
+        this._veAutoDetectClusters = clusters;
+
+        document.getElementById('veAutoDetectConfirm').addEventListener('click', () => {
+            const checkboxes = list.querySelectorAll('.ve-autodetect-item input[type="checkbox"]');
+            let created = 0;
+            checkboxes.forEach(cb => {
+                if (!cb.checked) return;
+                const idx = Number(cb.dataset.clusterIdx);
+                const cluster = this._veAutoDetectClusters[idx];
+                const nameInput = list.querySelector(`.ve-autodetect-name[data-cluster-idx="${idx}"]`);
+                const name = nameInput ? nameInput.value : `Event ${idx + 1}`;
+                const dates = cluster.map(s => s.date).sort();
+                const sources = new Set(cluster.map(s => s.source));
+                const type = sources.has('tradeshow') ? 'tradeshow' : 'online_event';
+
+                const eventId = Database.createVEEvent({
+                    name,
+                    type,
+                    start_date: dates[0],
+                    end_date: dates[dates.length - 1]
+                });
+                Database.assignSalesToEvent(eventId, cluster.map(s => s.transaction_no));
+                created++;
+            });
+            UI.showNotification(`Created ${created} event${created !== 1 ? 's' : ''}.`, 'success');
+            this.refreshVESales();
+        });
+
+        document.getElementById('veAutoDetectCancel').addEventListener('click', () => {
+            this.veRenderEventsPanel();
+        });
+    },
+
+    veShowNewEventForm() {
+        const list = document.getElementById('veEventsList');
+        const existingForm = list.querySelector('.ve-new-event-form');
+        if (existingForm) return;
+
+        const form = document.createElement('div');
+        form.className = 've-new-event-form ve-event-card';
+        form.innerHTML = `
+            <div class="ve-event-card-header">
+                <input class="ve-event-name-input" type="text" placeholder="Event name..." id="veNewEventName" autofocus>
+            </div>
+            <div class="ve-event-card-meta">
+                <select id="veNewEventType">
+                    <option value="tradeshow">Trade Show</option>
+                    <option value="online_event">Online Event</option>
+                    <option value="custom">Custom</option>
+                </select>
+                <input type="date" id="veNewEventStart" style="flex:1;">
+                <input type="date" id="veNewEventEnd" style="flex:1;">
+            </div>
+            <div class="ve-autodetect-actions">
+                <button class="btn btn-primary btn-sm" id="veNewEventSave">Save</button>
+                <button class="btn btn-sm" id="veNewEventCancel">Cancel</button>
+            </div>
+        `;
+        list.insertBefore(form, list.firstChild);
+
+        document.getElementById('veNewEventSave').addEventListener('click', () => {
+            const name = document.getElementById('veNewEventName').value.trim();
+            const type = document.getElementById('veNewEventType').value;
+            const startDate = document.getElementById('veNewEventStart').value;
+            const endDate = document.getElementById('veNewEventEnd').value || startDate;
+            if (!name || !startDate) {
+                UI.showNotification('Name and start date are required.', 'error');
+                return;
+            }
+            const eventId = Database.createVEEvent({ name, type, start_date: startDate, end_date: endDate });
+            // Auto-assign sales within date range
+            const matching = this._veSales.filter(s => !s.event_id && s.date >= startDate && s.date <= endDate);
+            if (matching.length > 0) {
+                Database.assignSalesToEvent(eventId, matching.map(s => s.transaction_no));
+            }
+            UI.showNotification(`Event "${name}" created${matching.length > 0 ? ` with ${matching.length} sales` : ''}.`, 'success');
+            this.refreshVESales();
+        });
+
+        document.getElementById('veNewEventCancel').addEventListener('click', () => {
+            this.veRenderEventsPanel();
+        });
     },
 
     setupVESalesListeners() {
@@ -7618,7 +8473,17 @@ const App = {
         document.getElementById('ve-filterTo').addEventListener('change', () => this.veApplyFilters());
         document.getElementById('ve-sortBy').addEventListener('change', () => this.veApplyFilters());
         document.getElementById('ve-filterPreset').addEventListener('change', () => this.veApplyPreset());
+        document.getElementById('ve-filterEvent').addEventListener('change', () => this.veApplyFilters());
         document.getElementById('ve-highlightDupes').addEventListener('change', () => this.veRenderProducts());
+
+        // Sub-tabs
+        document.querySelectorAll('.ve-subtab').forEach(btn => {
+            btn.addEventListener('click', () => this.veSwitchSubtab(btn.dataset.veSubtab));
+        });
+
+        // Events panel
+        document.getElementById('veAutoDetectBtn').addEventListener('click', () => this.veAutoDetectEvents());
+        document.getElementById('veAddEventBtn').addEventListener('click', () => this.veShowNewEventForm());
 
         // Import panel toggle
         document.getElementById('veImportToggle').addEventListener('click', () => {
@@ -7739,6 +8604,159 @@ const App = {
                 this.veRenderProducts();
             });
         });
+    },
+
+    // ==================== CHANGE LOG ====================
+
+    changelogData: [
+        {
+            version: '1.8',
+            date: '2026-03-13',
+            title: 'Change Log',
+            changes: [
+                { type: 'feature', text: 'Added Change Log page — view all versions, features, fixes, and changes in a timeline' },
+                { type: 'feature', text: 'New "Info" section in sidebar with Change Log tab' },
+                { type: 'feature', text: 'Tagged change items (New, Fix, Removed) with color-coded badges' },
+                { type: 'feature', text: 'Dark mode support for changelog styles' }
+            ]
+        },
+        {
+            version: '1.7',
+            date: '2026-03-12',
+            title: 'Precision & Connectivity',
+            changes: [
+                { type: 'fix', text: 'Fixed floating-point rounding — all monetary values now round to 2 decimal places across parsers, exports, and UI aggregations' },
+                { type: 'feature', text: 'Added "Sync from VE Dashboard" button for direct localhost data import without file upload' },
+                { type: 'feature', text: 'Added CORS middleware to Express server for cross-origin requests' }
+            ]
+        },
+        {
+            version: '1.6',
+            date: '2026-03-12',
+            title: 'UI Redesign',
+            changes: [
+                { type: 'feature', text: 'Replaced top header with collapsible sidebar navigation (Zoho/Wave hybrid design)' },
+                { type: 'feature', text: 'Added interactive tutorial system with guided walkthrough' },
+                { type: 'feature', text: 'Extended theme presets with sidebar, border, and text color channels' },
+                { type: 'feature', text: 'Complete CSS rewrite with new design tokens' }
+            ]
+        },
+        {
+            version: '1.5',
+            date: '2026-03-11',
+            title: 'Tab Management & VE Journal Entries',
+            changes: [
+                { type: 'feature', text: 'Added tab context menu — right-click to hide/reset tabs' },
+                { type: 'feature', text: 'Added manage tabs modal with gear button for tab visibility control' },
+                { type: 'feature', text: 'VE Sales: create journal entries from filtered sales data with preview' },
+                { type: 'feature', text: 'VE Sales: after-discount summary cards (pre-tax and post-tax)' },
+                { type: 'feature', text: 'Products: source filter dropdown and linked row highlighting' },
+                { type: 'feature', text: 'Product-VE mapping: suggest button for price-based matching' },
+                { type: 'feature', text: 'Product-VE mapping: show product price in modal title' },
+                { type: 'fix', text: 'Fixed date parsing in VE date formatter to avoid timezone offset issues' },
+                { type: 'removed', text: 'Removed unused product tax rate field' }
+            ]
+        },
+        {
+            version: '1.4',
+            date: '2026-03-11',
+            title: 'Export Tools & Product Catalog Enhancements',
+            changes: [
+                { type: 'feature', text: 'Added Excel and HTML export tools for UpdateAccountsFlow with filtered data export' },
+                { type: 'feature', text: 'Added company name autocomplete' },
+                { type: 'feature', text: 'Improved product VE mapping display' },
+                { type: 'feature', text: 'Save All workflow refinements' },
+                { type: 'feature', text: 'Siply products CSV import support' }
+            ]
+        },
+        {
+            version: '1.3',
+            date: '2026-03-11',
+            title: 'Save All & Price-Based Mappings',
+            changes: [
+                { type: 'feature', text: 'Added Save All button — exports all company databases as a zip file with file picker' },
+                { type: 'feature', text: 'Added price-aware product-VE linking (ve_item_price in mappings)' },
+                { type: 'feature', text: 'Mappings now join on both name and price for accurate sales attribution' },
+                { type: 'feature', text: 'Show prices next to VE item names in mapping modal' },
+                { type: 'removed', text: 'Replaced Save As with Save — now always prompts for file location' },
+                { type: 'removed', text: 'Removed tax rate column from product catalog table' }
+            ]
+        },
+        {
+            version: '1.2',
+            date: '2026-03-10',
+            title: 'Product Catalog & Companies',
+            changes: [
+                { type: 'feature', text: 'Added product catalog with full CRUD, SKU tracking, cost/price fields, and notes' },
+                { type: 'feature', text: 'Added company management module with company switcher in sidebar' },
+                { type: 'feature', text: 'Icon-only action buttons for products (edit, discontinue, reactivate, delete)' },
+                { type: 'feature', text: 'Product CSV import with drag-and-drop file upload' },
+                { type: 'feature', text: 'Inline notes tooltip indicator on product names' },
+                { type: 'feature', text: 'Added example database (Siply Accounting Journal)' }
+            ]
+        },
+        {
+            version: '1.1',
+            date: '2026-03-10',
+            title: 'VE Sales Dashboard',
+            changes: [
+                { type: 'feature', text: 'Added VE Sales Dashboard with smart scraping and product breakdown' },
+                { type: 'feature', text: 'Extract product data from Excel line items instead of web scraping' },
+                { type: 'feature', text: 'Added discount and shipping summary cards that auto-show when data exists' },
+                { type: 'feature', text: 'Added pretax after-discounts summary card' },
+                { type: 'fix', text: 'Fixed Excel parsers to handle negative discount values with Math.abs()' }
+            ]
+        },
+        {
+            version: '1.0',
+            date: '2026-03-10',
+            title: 'Initial Release',
+            changes: [
+                { type: 'feature', text: 'Journal entry management with debit/credit tracking' },
+                { type: 'feature', text: 'Cash Flow statement generation' },
+                { type: 'feature', text: 'Profit & Loss report' },
+                { type: 'feature', text: 'Balance Sheet report' },
+                { type: 'feature', text: 'Assets & Equity tracking' },
+                { type: 'feature', text: 'Loan management' },
+                { type: 'feature', text: 'Budget planning' },
+                { type: 'feature', text: 'Break-Even analysis' },
+                { type: 'feature', text: 'Projected Sales forecasting' },
+                { type: 'feature', text: 'SQLite database with browser persistence' },
+                { type: 'feature', text: 'Theme system with multiple presets and dark mode' },
+                { type: 'feature', text: 'Timeline-based filtering' }
+            ]
+        }
+    ],
+
+    renderChangelog() {
+        const container = document.getElementById('changelogTimeline');
+        if (!container) return;
+
+        const typeConfig = {
+            feature: { label: 'New', cls: 'changelog-tag-feature' },
+            fix: { label: 'Fix', cls: 'changelog-tag-fix' },
+            removed: { label: 'Removed', cls: 'changelog-tag-removed' },
+            improved: { label: 'Improved', cls: 'changelog-tag-improved' }
+        };
+
+        container.innerHTML = this.changelogData.map((release, i) => {
+            const changesHtml = release.changes.map(c => {
+                const cfg = typeConfig[c.type] || typeConfig.feature;
+                return '<li class="changelog-item"><span class="changelog-tag ' + cfg.cls + '">' + cfg.label + '</span><span class="changelog-text">' + c.text + '</span></li>';
+            }).join('');
+
+            return '<div class="changelog-release' + (i === 0 ? ' changelog-latest' : '') + '">' +
+                '<div class="changelog-release-header">' +
+                    '<div class="changelog-version-badge">v' + release.version + '</div>' +
+                    '<div class="changelog-release-meta">' +
+                        '<h3 class="changelog-release-title">' + release.title + '</h3>' +
+                        '<span class="changelog-date">' + release.date + '</span>' +
+                    '</div>' +
+                    (i === 0 ? '<span class="changelog-latest-badge">Latest</span>' : '') +
+                '</div>' +
+                '<ul class="changelog-changes">' + changesHtml + '</ul>' +
+            '</div>';
+        }).join('');
     }
 };
 

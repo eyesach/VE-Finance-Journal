@@ -95,6 +95,11 @@
                         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
                         VE Sales
                     </button>
+                    <span class="sidebar-nav-group">Info</span>
+                    <button class="main-tab" data-tab="changelog">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="10"/></svg>
+                        Change Log
+                    </button>
                     <button class="main-tab manage-tabs-btn" id="manageTabsBtn" title="Manage tabs">&#9881;</button>
                 </nav>
             </div>
@@ -313,6 +318,7 @@
             <!-- Toolbar -->
             <section class="toolbar-section">
                 <div class="toolbar-right">
+                    <button id="bulkSelectBtn" class="btn btn-secondary btn-small">Select</button>
                     <button id="exportCsvBtn" class="btn btn-secondary btn-small">Export CSV</button>
                 </div>
             </section>
@@ -462,6 +468,18 @@
                 </select>
             </div>
         </section>
+
+        <!-- Bulk Action Bar -->
+        <div id="bulkActionBar" class="bulk-action-bar" style="display:none;">
+            <div class="bulk-mode-toggle">
+                <button id="bulkModePaid" class="btn btn-small bulk-mode-btn active">Pending → Paid</button>
+                <button id="bulkModePending" class="btn btn-small bulk-mode-btn">Paid → Pending</button>
+            </div>
+            <span id="bulkSelectCount">0 selected</span>
+            <button id="bulkMarkPaidBtn" class="btn btn-primary btn-small">Mark as Paid</button>
+            <button id="bulkResetPendingBtn" class="btn btn-primary btn-small" style="display:none;">Reset to Pending</button>
+            <button id="bulkCancelBtn" class="btn btn-secondary btn-small">Cancel</button>
+        </div>
 
         <!-- Transactions Table -->
         <section class="transactions-section">
@@ -615,6 +633,7 @@
                 <div class="budget-header">
                     <h3>Monthly Budget</h3>
                     <div class="budget-controls">
+                        <button id="addBudgetGroupBtn" class="btn btn-secondary btn-small">+ Add Group</button>
                         <button id="addBudgetExpenseBtn" class="btn btn-primary btn-small">+ Add Expense</button>
                         <button id="recordBudgetBtn" class="btn btn-secondary btn-small">Record to Journal</button>
                     </div>
@@ -627,6 +646,13 @@
                     </div>
                 </div>
             </section>
+            <div id="budgetGroupsContainer" class="budget-groups-container"></div>
+            <div id="budgetChartSection" class="budget-chart-section" style="display:none">
+                <div class="budget-chart-header"><h4>Expense Breakdown</h4></div>
+                <div class="budget-chart-wrapper">
+                    <canvas id="budgetPieChart"></canvas>
+                </div>
+            </div>
         </div>
 
         <!-- Break-Even Analysis Tab -->
@@ -988,10 +1014,13 @@
                         <label>&nbsp;</label>
                         <select id="ve-filterPreset">
                             <option value="">Date preset...</option>
-                            <option value="all">All time</option>
-                            <option value="thisMonth">This month</option>
-                            <option value="lastMonth">Last month</option>
-                            <option value="thisQuarter">This quarter</option>
+                        </select>
+                    </div>
+                    <div class="ve-control-group">
+                        <label>Event</label>
+                        <select id="ve-filterEvent">
+                            <option value="">All sales</option>
+                            <option value="__unassigned__">Unassigned only</option>
                         </select>
                     </div>
                     <div style="flex:1;"></div>
@@ -1007,6 +1036,12 @@
                     </div>
                 </div>
 
+                <!-- Sub-tabs -->
+                <div class="ve-subtabs" id="veSubtabs" style="display:none;">
+                    <button class="ve-subtab active" data-ve-subtab="sales">Sales</button>
+                    <button class="ve-subtab" data-ve-subtab="events">Events</button>
+                </div>
+
                 <!-- Empty State -->
                 <div id="veEmptyState" class="ve-empty-state">
                     <div class="ve-empty-icon">
@@ -1018,6 +1053,9 @@
 
                 <!-- Dashboard (hidden until data loaded) -->
                 <div id="veDashboard" style="display: none;">
+
+                <!-- Sales Sub-tab Content -->
+                <div class="ve-subtab-content active" id="veSubtabSales">
                     <!-- Summary Cards -->
                     <div class="ve-cards">
                         <div class="ve-card">
@@ -1094,6 +1132,7 @@
                                         <th data-vetxsort="txno">Tx No <span class="ve-sort-arrow"></span></th>
                                         <th data-vetxsort="date">Date <span class="ve-sort-arrow"></span></th>
                                         <th data-vetxsort="source">Source <span class="ve-sort-arrow"></span></th>
+                                        <th>Event</th>
                                         <th>Customer</th>
                                         <th class="num" data-vetxsort="subtotal">Subtotal <span class="ve-sort-arrow"></span></th>
                                         <th class="num" data-vetxsort="tax">Tax <span class="ve-sort-arrow"></span></th>
@@ -1105,7 +1144,32 @@
                             </table>
                         </div>
                     </div>
+                </div><!-- /#veSubtabSales -->
+
+                <!-- Events Sub-tab Content -->
+                <div class="ve-subtab-content" id="veSubtabEvents" style="display:none;">
+                    <div class="ve-events-header">
+                        <h3>Events <span class="ve-count" id="veEventsCount">(0)</span></h3>
+                        <div class="ve-events-header-actions">
+                            <button class="btn btn-sm" id="veAutoDetectBtn">Auto-Detect</button>
+                            <button class="btn btn-sm btn-primary" id="veAddEventBtn">+ New Event</button>
+                        </div>
+                    </div>
+                    <div class="ve-events-grid" id="veEventsList"></div>
+                </div><!-- /#veSubtabEvents -->
+
+                </div><!-- /#veDashboard -->
+            </section>
+        </div>
+
+        <!-- Change Log Tab -->
+        <div id="changelogTab" style="display: none;">
+            <section class="changelog-section">
+                <div class="changelog-header">
+                    <h2 class="changelog-title">Change Log</h2>
+                    <p class="changelog-subtitle">Version history and updates to the Accounting Journal</p>
                 </div>
+                <div class="changelog-timeline" id="changelogTimeline"></div>
             </section>
         </div>
 
@@ -1399,6 +1463,14 @@
                                 </select>
                                 <button type="button" id="addCategoryFromBudgetBtn" class="btn btn-small">+ New</button>
                             </div>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="budgetExpenseGroup">Budget Group</label>
+                            <select id="budgetExpenseGroup">
+                                <option value="">No Group</option>
+                            </select>
                         </div>
                     </div>
                     <div class="form-row">
@@ -1706,12 +1778,6 @@
                             <label for="loanNotes">Notes</label>
                             <input type="text" id="loanNotes" placeholder="Optional notes">
                         </div>
-                    </div>
-                    <div class="form-group">
-                        <label class="checkbox-label">
-                            <input type="checkbox" id="loanAutoCreate" checked>
-                            Auto-create budget expense & journal category
-                        </label>
                     </div>
                     <div class="form-actions">
                         <button type="button" id="cancelLoanConfigBtn" class="btn btn-secondary">Cancel</button>
