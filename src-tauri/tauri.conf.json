@@ -2,9 +2,11 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Accounting Journal",
   "version": "1.0.0",
-  "identifier": "com.accountingjournal.app",
+  "identifier": "com.accountingjournal.desktop",
   "build": {
-    "frontendDist": "../"
+    "frontendDist": "../dist",
+    "beforeBuildCommand": "npm run build:frontend",
+    "beforeDevCommand": "npm run build:frontend"
   },
   "app": {
     "windows": [

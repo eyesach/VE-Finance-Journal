@@ -1,4 +1,5 @@
 node_modules/
+dist/
 src-tauri/target/
 app-icon.png
 build-tauri.bat
