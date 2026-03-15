@@ -168,6 +168,11 @@ const App = {
             // Restore tab order, hidden tabs, and set up tab drag-drop
             this.restoreTabOrder();
             this.setupTabDragDrop();
+            // Clean stale 'changelog' from hidden tabs (it's always visible)
+            const ht = Database.getHiddenTabs();
+            if (ht.includes('changelog')) {
+                Database.setHiddenTabs(ht.filter(t => t !== 'changelog'));
+            }
             this.applyHiddenTabs();
             this.setupTabScrollFade();
 
@@ -524,7 +529,12 @@ const App = {
 
         nav.querySelectorAll('.main-tab[data-tab]').forEach(btn => {
             const tab = btn.dataset.tab;
-            if (!modeTabs.includes(tab) && tab !== 'changelog') {
+            if (tab === 'changelog') {
+                // Changelog is always visible — not mode-dependent or hideable
+                btn.style.display = '';
+                return;
+            }
+            if (!modeTabs.includes(tab)) {
                 btn.style.display = 'none';
             } else if (hidden.includes(tab)) {
                 btn.style.display = 'none';
@@ -589,7 +599,7 @@ const App = {
 
         document.getElementById('tabCtxHide').addEventListener('click', () => {
             menu.style.display = 'none';
-            if (!targetTab) return;
+            if (!targetTab || targetTab === 'changelog') return;
             const hidden = Database.getHiddenTabs();
             if (!hidden.includes(targetTab)) {
                 hidden.push(targetTab);
