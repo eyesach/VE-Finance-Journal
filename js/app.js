@@ -428,9 +428,8 @@ const App = {
             nav.insertBefore(draggedTab, targetTab);
             targetTab.classList.remove('tab-drag-over');
 
-            // Save new order (keep gear button at end)
-            const gearBtn = document.getElementById('manageTabsBtn');
-            if (gearBtn) nav.appendChild(gearBtn);
+            // Save new order (keep Info group + changelog + gear at end)
+            this._pinInfoGroup(nav);
             const tabs = nav.querySelectorAll('.main-tab[data-tab]');
             const order = Array.from(tabs).map(t => t.dataset.tab);
             Database.setTabOrder(order);
@@ -488,12 +487,15 @@ const App = {
             }
         });
 
-        // Keep Info group label + changelog + gear button at the end
+        this._pinInfoGroup(nav);
+    },
+
+    _pinInfoGroup(nav) {
         const infoLabel = Array.from(nav.querySelectorAll('.sidebar-nav-group')).find(el => el.textContent.trim() === 'Info');
         const changelogBtn = nav.querySelector('.main-tab[data-tab="changelog"]');
+        const gearBtn = document.getElementById('manageTabsBtn');
         if (infoLabel) nav.appendChild(infoLabel);
         if (changelogBtn) nav.appendChild(changelogBtn);
-        const gearBtn = document.getElementById('manageTabsBtn');
         if (gearBtn) nav.appendChild(gearBtn);
     },
 
@@ -530,6 +532,9 @@ const App = {
                 btn.style.display = '';
             }
         });
+
+        // Ensure Info group + changelog are positioned correctly before checking visibility
+        this._pinInfoGroup(nav);
 
         // Hide sidebar group labels that have no visible tabs beneath them
         this.updateSidebarGroupLabels();
