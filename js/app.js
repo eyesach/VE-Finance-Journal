@@ -1578,8 +1578,8 @@ const App = {
                 const pct = isNaN(numVal) ? 0 : Math.min(100, Math.max(0, (numVal / max) * 100));
                 const color = pct > 60 ? 'var(--color-success, #10b981)' : pct > 30 ? 'var(--color-warning, #f59e0b)' : 'var(--color-danger, #ef4444)';
                 return '<div class="analyze-gauge">' +
-                    '<div class="analyze-gauge-ring" style="background: conic-gradient(' + color + ' ' + (pct * 3.6) + 'deg, var(--c5, #e5e7eb) ' + (pct * 3.6) + 'deg);">' +
-                    '<div class="analyze-gauge-value" style="background:var(--c4,#fff);width:60px;height:60px;border-radius:50%;display:flex;align-items:center;justify-content:center;">' + value + '</div>' +
+                    '<div class="analyze-gauge-ring" style="background: conic-gradient(' + color + ' ' + (pct * 3.6) + 'deg, var(--border, #e5e7eb) ' + (pct * 3.6) + 'deg);">' +
+                    '<div class="analyze-gauge-value" style="background:var(--surface,#fff);width:60px;height:60px;border-radius:50%;display:flex;align-items:center;justify-content:center;">' + value + '</div>' +
                     '</div>' +
                     '<div class="analyze-gauge-label">' + label + '</div>' +
                     '</div>';
@@ -2037,9 +2037,25 @@ const App = {
      * Set dark mode on/off
      */
     setDarkMode(enabled) {
-        document.documentElement.setAttribute('data-theme', enabled ? 'dark' : 'light');
+        const root = document.documentElement;
+        root.setAttribute('data-theme', enabled ? 'dark' : 'light');
         const toggle = document.getElementById('darkModeToggle');
         if (toggle) toggle.checked = enabled;
+
+        if (enabled) {
+            // Remove inline --c vars for bg/surface/border/text so CSS dark mode overrides take effect
+            // Keep --c1 (sidebar) and --c2 (accent) since they're design choices that work in both modes
+            ['--c3', '--c4', '--c5', '--c6',
+             '--color-bg', '--color-bg-dark', '--color-white', '--color-surface',
+             '--color-border', '--color-text', '--color-text-secondary', '--color-text-muted',
+             '--color-accent-bg', '--color-accent-bg-hover'
+            ].forEach(prop => root.style.removeProperty(prop));
+        } else {
+            // Re-apply theme to restore inline vars for light mode
+            const preset = Database.getThemePreset();
+            const customColors = Database.getThemeColors();
+            this.applyTheme(preset, customColors);
+        }
     },
 
     /**
@@ -3058,7 +3074,7 @@ const App = {
                 Database.toggleSkipLoanPayment(loanId, paymentNum);
                 const skippedLoan = Database.getLoanById(loanId);
                 if (skippedLoan) this._syncLoanReceivable(loanId, skippedLoan);
-                this.refreshLoans();
+                this.refreshAll();
                 return;
             }
 
@@ -3091,7 +3107,7 @@ const App = {
                 }
                 const overrideLoan = Database.getLoanById(loanId);
                 if (overrideLoan) this._syncLoanReceivable(loanId, overrideLoan);
-                this.refreshLoans();
+                this.refreshAll();
             };
 
             input.addEventListener('blur', save);
@@ -3666,8 +3682,11 @@ const App = {
 
         if (category && category.is_sales) {
             const taxAmount = data.amount - (data.pretax_amount || data.amount);
+            const parentName = data.item_description ? data.item_description.trim() : '';
             const dateLabel = Utils.formatSaleDateRange(data.sale_date_start, data.sale_date_end);
-            const description = dateLabel ? `Sales Tax ${dateLabel}` : 'Sales Tax';
+            const description = parentName
+                ? `Sales Tax – ${parentName}`
+                : (dateLabel ? `Sales Tax ${dateLabel}` : 'Sales Tax');
 
             if (taxAmount > 0) {
                 if (existingChildId) {
@@ -5252,7 +5271,7 @@ const App = {
         }
 
         UI.hideModal('loanConfigModal');
-        this.refreshLoans();
+        this.refreshAll();
     },
 
     handleDeleteLoan(id) {
@@ -5265,11 +5284,15 @@ const App = {
 
     confirmDeleteLoan() {
         if (this.deleteLoanTargetId) {
-            // Delete budget expenses that were auto-created from this loan
+            // Delete budget expenses and ALL their journal entries (pending + paid)
             const budgetExpenses = Database.getBudgetExpenses();
             const autoCreatedNote = `Auto-created from loan #${this.deleteLoanTargetId}`;
             budgetExpenses.forEach(be => {
                 if (be.notes === autoCreatedNote) {
+                    Database.db.run(
+                        "DELETE FROM transactions WHERE source_type = 'budget' AND source_id = ?",
+                        [be.id]
+                    );
                     Database.deleteBudgetExpense(be.id);
                 }
             });
@@ -5408,6 +5431,27 @@ const App = {
             });
         }
 
+        // Build loan schedule lookup for loan-linked budget expenses
+        const loanScheduleByMonth = {};
+        expenses.forEach(exp => {
+            if (!exp.notes) return;
+            const loanMatch = exp.notes.match(/^Auto-created from loan #(\d+)$/);
+            if (!loanMatch) return;
+            const loanId = parseInt(loanMatch[1]);
+            const loan = Database.getLoanById(loanId);
+            if (!loan) return;
+            const skippedPayments = Database.getSkippedPayments(loanId);
+            const paymentOverrides = Database.getLoanPaymentOverrides(loanId);
+            const schedule = Utils.computeAmortizationSchedule({
+                principal: loan.principal, annual_rate: loan.annual_rate,
+                payments_per_year: loan.payments_per_year, term_months: loan.term_months,
+                start_date: loan.start_date, first_payment_date: loan.first_payment_date
+            }, skippedPayments, paymentOverrides);
+            const byMonth = {};
+            schedule.forEach(p => { byMonth[p.month] = p; });
+            loanScheduleByMonth[exp.id] = byMonth;
+        });
+
         expenses.forEach(exp => {
             // Skip expenses without a category — can't create journal entries without one
             if (!exp.category_id) return;
@@ -5418,17 +5462,41 @@ const App = {
 
             const months = Utils.generateMonthRange(exp.start_month, endMonth);
             const activeMonths = new Set(months);
+            const loanSchedule = loanScheduleByMonth[exp.id];
 
             // Create missing entries, update pending entries with changed amounts
             months.forEach(month => {
                 const key = `${exp.id}:${month}`;
                 const existing = existingByExpenseMonth[key];
+
+                // For loan-linked expenses, use schedule amounts and respect skips
+                let amount = exp.monthly_amount;
+                let isSkipped = false;
+                if (loanSchedule) {
+                    const entry = loanSchedule[month];
+                    if (entry) {
+                        if (entry.skipped) {
+                            isSkipped = true;
+                        } else {
+                            amount = entry.payment;
+                        }
+                    }
+                }
+
+                if (isSkipped) {
+                    // Remove existing entry for skipped payment months
+                    if (existing && existing.status === 'pending') {
+                        Database.db.run('DELETE FROM transactions WHERE id = ?', [existing.id]);
+                    }
+                    return;
+                }
+
                 if (!existing) {
                     Database.addTransaction({
                         entry_date: month + '-01',
                         category_id: exp.category_id,
                         item_description: exp.name,
-                        amount: exp.monthly_amount,
+                        amount: amount,
                         transaction_type: 'payable',
                         status: 'pending',
                         month_due: month,
@@ -5436,11 +5504,11 @@ const App = {
                         source_type: 'budget',
                         source_id: exp.id
                     });
-                } else if (existing.status === 'pending' && existing.amount !== exp.monthly_amount) {
-                    // Update amount if budget changed and entry hasn't been paid yet
+                } else if (existing.status === 'pending' && existing.amount !== amount) {
+                    // Update amount if budget/schedule changed and entry hasn't been paid yet
                     Database.db.run(
                         'UPDATE transactions SET amount = ?, item_description = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-                        [exp.monthly_amount, exp.name, existing.id]
+                        [amount, exp.name, existing.id]
                     );
                 }
             });
@@ -9197,7 +9265,20 @@ const App = {
             dateLabel = 'through ' + this.veFmtDate(to);
         }
 
-        const desc = `${sourceLabel} sales ${dateLabel}`.trim();
+        // Use event name when available
+        let nameLabel;
+        if (this._veJournalEventId) {
+            const evt = Database.getAllVEEvents().find(e => e.id === this._veJournalEventId);
+            nameLabel = evt ? evt.name : 'Event';
+        } else {
+            const eventNames = [...new Set(
+                filtered.map(s => s.event_id && this._veEventsMap ? this._veEventsMap.get(s.event_id) : null).filter(Boolean)
+            )];
+            nameLabel = eventNames.length > 0
+                ? `${sourceLabel} sales (${eventNames.join(', ')})`
+                : `${sourceLabel} sales`;
+        }
+        const desc = `${nameLabel} ${dateLabel}`.trim();
         document.getElementById('veJournalPreviewDesc').textContent = desc || '--';
         document.getElementById('veJournalPreviewPretax').textContent = this.veFmt(pretaxAfterDisc);
         document.getElementById('veJournalPreviewTotal').textContent = this.veFmt(total);
@@ -9247,7 +9328,14 @@ const App = {
             const evt = Database.getAllVEEvents().find(e => e.id === this._veJournalEventId);
             nameLabel = evt ? evt.name : 'Event';
         } else {
-            nameLabel = (source === 'online' ? 'Online' : source === 'tradeshow' ? 'Tradeshow' : 'Tradeshow + Online') + ' sales';
+            // Collect unique event names from filtered sales
+            const eventNames = [...new Set(
+                filtered.map(s => s.event_id && this._veEventsMap ? this._veEventsMap.get(s.event_id) : null).filter(Boolean)
+            )];
+            const sourceLabel = source === 'online' ? 'Online' : source === 'tradeshow' ? 'Tradeshow' : 'Tradeshow + Online';
+            nameLabel = eventNames.length > 0
+                ? `${sourceLabel} sales (${eventNames.join(', ')})`
+                : `${sourceLabel} sales`;
         }
         const description = `${nameLabel} ${dateLabel}`.trim();
 
@@ -9282,6 +9370,7 @@ const App = {
             const data = {
                 entry_date: entryDate,
                 category_id: categoryId,
+                item_description: description,
                 amount: total,
                 pretax_amount: pretaxAfterDisc,
                 sale_date_start: from || null,
@@ -9837,6 +9926,23 @@ const App = {
     // ==================== CHANGE LOG ====================
 
     changelogData: [
+        {
+            version: '2.0',
+            date: '2026-03-14',
+            title: 'Design Polish & Data Integrity',
+            changes: [
+                { type: 'feature', text: 'Rich empty states with SVG icons, descriptions, and call-to-action buttons across all tabs' },
+                { type: 'feature', text: 'Enhanced notifications with type-specific icons and animated progress bar' },
+                { type: 'feature', text: 'Item description labels shown inline on journal entry rows' },
+                { type: 'feature', text: 'Sales tax entries now include parent item name in description' },
+                { type: 'improved', text: 'CSS transitions unified via design token variables (--transition-fast)' },
+                { type: 'improved', text: 'Input fields refined with softer borders, subtle shadows, and consistent focus rings' },
+                { type: 'improved', text: 'Loan payment summary shows most common (mode) payment amount instead of first payment' },
+                { type: 'improved', text: 'Budget expenses from loans now respect skip and override schedules' },
+                { type: 'fix', text: 'Fixed dark mode not overriding inline theme colors for background, surface, border, and text' },
+                { type: 'fix', text: 'Loan deletion now properly cleans up all associated budget journal entries' }
+            ]
+        },
         {
             version: '1.9',
             date: '2026-03-14',

@@ -403,13 +403,16 @@ const UI = {
             ? `<span class="late-info">in ${Utils.formatMonthShort(t.month_paid)}</span>`
             : '';
 
-        // Category name with payment for month if applicable
+        // Category name with item description and payment for month if applicable
         let categoryDisplay = Utils.escapeHtml(t.category_name || 'Unknown');
+        if (t.item_description && t.item_description !== t.category_name) {
+            categoryDisplay += ` <span class="item-description-label">${Utils.escapeHtml(t.item_description)}</span>`;
+        }
         if (t.payment_for_month) {
             categoryDisplay += `<span class="payment-for-label"> for ${Utils.formatMonthShort(t.payment_for_month)}</span>`;
         }
         // Sale date range display
-        if (t.sale_date_start) {
+        if (t.sale_date_start && !t.item_description) {
             categoryDisplay += ` <span class="sale-date-range">${Utils.formatSaleDateRange(t.sale_date_start, t.sale_date_end)}</span>`;
         }
 
@@ -1893,11 +1896,24 @@ const UI = {
         const skippedCount = schedule.filter(p => p.skipped).length;
         const termYears = (selectedLoan.term_months / 12).toFixed(1);
 
+        // Use the most common (mode) payment amount, ignoring skipped and overridden payments
+        const standardPayments = schedule.filter(p => !p.skipped && !p.overridden).map(p => p.payment);
+        let modePayment = schedule[0]?.payment || 0;
+        if (standardPayments.length > 0) {
+            const freq = {};
+            standardPayments.forEach(amt => {
+                const key = amt.toFixed(2);
+                freq[key] = (freq[key] || 0) + 1;
+            });
+            const modeKey = Object.keys(freq).reduce((a, b) => freq[a] >= freq[b] ? a : b);
+            modePayment = parseFloat(modeKey);
+        }
+
         let html = '<div class="loan-summary">';
         html += `<div class="loan-summary-item"><div class="loan-summary-label">Principal</div><div class="loan-summary-value">${fmtAmt(selectedLoan.principal)}</div></div>`;
         html += `<div class="loan-summary-item"><div class="loan-summary-label">Rate</div><div class="loan-summary-value">${selectedLoan.annual_rate}%</div></div>`;
         html += `<div class="loan-summary-item"><div class="loan-summary-label">Term</div><div class="loan-summary-value">${termYears} yr</div></div>`;
-        html += `<div class="loan-summary-item"><div class="loan-summary-label">Payment</div><div class="loan-summary-value">${fmtAmt(schedule[0]?.payment || 0)}</div></div>`;
+        html += `<div class="loan-summary-item"><div class="loan-summary-label">Payment</div><div class="loan-summary-value">${fmtAmt(modePayment)}</div></div>`;
         html += `<div class="loan-summary-item"><div class="loan-summary-label">Total Interest</div><div class="loan-summary-value amount-payable">${fmtAmt(totalInterest)}</div></div>`;
         html += `<div class="loan-summary-item"><div class="loan-summary-label">Total Paid</div><div class="loan-summary-value">${fmtAmt(totalPaid)}</div></div>`;
         if (skippedCount > 0) {
@@ -2556,13 +2572,21 @@ const UI = {
      * @param {string} message - Message to show
      * @param {string} type - 'success', 'error', or 'info'
      */
-    showNotification(message, type = 'info') {
+    showNotification(message, type = 'info', duration = 3000) {
         const existing = document.querySelector('.notification');
         if (existing) existing.remove();
 
         const notification = document.createElement('div');
         notification.className = `notification notification-${type}`;
-        notification.textContent = message;
+
+        // Icon map
+        const icons = {
+            success: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>',
+            error: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
+            warning: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
+            info: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>'
+        };
+        notification.innerHTML = `${icons[type] || icons.info}<span>${message}</span><div class="notification-progress" style="width: 100%"></div>`;
 
         document.body.appendChild(notification);
 
@@ -2570,10 +2594,17 @@ const UI = {
         notification.offsetHeight;
         notification.classList.add('visible');
 
+        // Animate progress bar
+        const progress = notification.querySelector('.notification-progress');
+        if (progress) {
+            progress.style.transitionDuration = duration + 'ms';
+            requestAnimationFrame(() => { progress.style.width = '0%'; });
+        }
+
         setTimeout(() => {
             notification.classList.remove('visible');
-            setTimeout(() => notification.remove(), 300);
-        }, 3000);
+            setTimeout(() => notification.remove(), 200);
+        }, duration);
     },
 
     /**

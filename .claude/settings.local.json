@@ -6,7 +6,8 @@
       "Bash(git push:*)",
       "Bash(git reset:*)",
       "Bash(node -c js/ui.js)",
-      "Bash(cd /c/Users/mrisa/Accounting Journal Calculator)"
+      "Bash(cd /c/Users/mrisa/Accounting Journal Calculator)",
+      "Bash(unzip ~/Downloads/ideate.skill -d ~/.claude/skills/ideate)"
     ]
   }
 }

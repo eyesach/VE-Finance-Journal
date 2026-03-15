@@ -570,7 +570,12 @@
         <!-- Transactions Table -->
         <section class="transactions-section">
             <div id="transactionsContainer">
-                <p class="empty-state">No transactions yet. Add your first entry above.</p>
+                <div class="empty-state">
+                    <svg class="empty-state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
+                    <h3 class="empty-state-title">No transactions yet</h3>
+                    <p class="empty-state-desc">Add your first entry to start tracking your finances.</p>
+                    <button class="btn btn-primary empty-state-cta" onclick="document.getElementById('newEntryBtn').click()">+ New Entry</button>
+                </div>
             </div>
         </section>
         </div><!-- /journalTab -->
@@ -597,7 +602,11 @@
                     </div>
                 </div>
                 <div id="cashflowSpreadsheet" class="cashflow-spreadsheet-wrapper">
-                    <p class="empty-state">No completed transactions yet.</p>
+                    <div class="empty-state">
+                        <svg class="empty-state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-4"/></svg>
+                        <h3 class="empty-state-title">No cash flow data yet</h3>
+                        <p class="empty-state-desc">Completed transactions will appear here.</p>
+                    </div>
                 </div>
                 <div id="cashflowSummary" class="cashflow-summary"></div>
             </section>
@@ -632,7 +641,11 @@
                     </div>
                 </div>
                 <div id="pnlSpreadsheet" class="pnl-spreadsheet-wrapper">
-                    <p class="empty-state">No completed transactions yet.</p>
+                    <div class="empty-state">
+                        <svg class="empty-state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg>
+                        <h3 class="empty-state-title">No P&L data yet</h3>
+                        <p class="empty-state-desc">Completed transactions will appear here.</p>
+                    </div>
                 </div>
             </section>
         </div>
@@ -670,7 +683,11 @@
                     </div>
                 </div>
                 <div id="balanceSheetContent" class="bs-content">
-                    <p class="empty-state">Select a date to view the Balance Sheet.</p>
+                    <div class="empty-state">
+                        <svg class="empty-state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+                        <h3 class="empty-state-title">Balance Sheet</h3>
+                        <p class="empty-state-desc">Select a date to view the Balance Sheet.</p>
+                    </div>
                 </div>
             </section>
 
@@ -692,7 +709,10 @@
                 <div class="assets-layout">
                     <div id="assetsListPanel" class="assets-list-panel"></div>
                     <div id="assetsDetailPanel" class="assets-detail-panel">
-                        <p class="empty-state">Select an asset to view its depreciation schedule.</p>
+                        <div class="empty-state">
+                            <svg class="empty-state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v3"/></svg>
+                            <p class="empty-state-desc">Select an asset to view its depreciation schedule.</p>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -719,7 +739,10 @@
                 <div class="loan-layout">
                     <div id="loanListPanel" class="loan-list-panel"></div>
                     <div id="loanDetailPanel" class="loan-detail-panel">
-                        <p class="empty-state">Select a loan to view its amortization schedule.</p>
+                        <div class="empty-state">
+                            <svg class="empty-state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 1v22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+                            <p class="empty-state-desc">Select a loan to view its amortization schedule.</p>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -740,7 +763,10 @@
                 <div class="budget-layout">
                     <div id="budgetListPanel" class="budget-list-panel"></div>
                     <div id="budgetDetailPanel" class="budget-detail-panel">
-                        <p class="empty-state">Select an expense to view its payment schedule.</p>
+                        <div class="empty-state">
+                            <svg class="empty-state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+                            <p class="empty-state-desc">Select an expense to view its payment schedule.</p>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -767,7 +793,11 @@
                 </div>
                 <div id="beTimelineBanner" class="be-timeline-banner" style="display:none;"></div>
                 <div id="beSummaryCards" class="be-summary-cards">
-                    <p class="empty-state">Configure your break-even parameters to get started.</p>
+                    <div class="empty-state">
+                        <svg class="empty-state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+                        <h3 class="empty-state-title">Break-Even Analysis</h3>
+                        <p class="empty-state-desc">Configure your break-even parameters to get started.</p>
+                    </div>
                 </div>
                 <div id="beChannelBreakdown" class="be-channel-breakdown"></div>
                 <div class="be-charts-row">
@@ -792,7 +822,10 @@
                     </div>
                 </div>
                 <div id="beProgressCards" class="be-summary-cards">
-                    <p class="empty-state">Configure break-even parameters and add journal entries to track progress.</p>
+                    <div class="empty-state">
+                        <svg class="empty-state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                        <p class="empty-state-desc">Configure break-even parameters and add journal entries to track progress.</p>
+                    </div>
                 </div>
                 <div class="be-charts-row">
                     <div class="be-chart-wrapper">
@@ -899,7 +932,11 @@
 
                 <div id="psSummaryCards" class="ps-summary-cards"></div>
                 <div id="psMonthlyGrid" class="ps-spreadsheet-wrapper">
-                    <p class="empty-state">Enable projections and configure channels to get started.</p>
+                    <div class="empty-state">
+                        <svg class="empty-state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                        <h3 class="empty-state-title">Projected Sales</h3>
+                        <p class="empty-state-desc">Enable projections and configure channels to get started.</p>
+                    </div>
                 </div>
             </section>
         </div>
@@ -940,15 +977,15 @@
                                 <button class="ve-drop-btn" id="pcCsvBrowse">Choose file</button>
                             </div>
                             <!-- Format Description -->
-                            <div style="padding: 14px 16px; background: var(--c3, #f8f9fa); border-radius: 6px; border: 1px solid #eef0f2;">
-                                <div style="font-size: 0.75rem; font-weight: 600; color: #495057; margin-bottom: 6px;">CSV Format</div>
-                                <div style="font-size: 0.68rem; color: #6c757d; line-height: 1.6;">
+                            <div style="padding: 14px 16px; background: var(--bg, #f8f9fa); border-radius: 6px; border: 1px solid var(--border, #eef0f2);">
+                                <div style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary, #495057); margin-bottom: 6px;">CSV Format</div>
+                                <div style="font-size: 0.68rem; color: var(--text-muted, #6c757d); line-height: 1.6;">
                                     First row must be a header row with these column names (order doesn't matter):<br>
-                                    <code style="background:#e9ecef; padding:1px 4px; border-radius:3px; font-size:0.67rem;">name</code>&nbsp;
-                                    <code style="background:#e9ecef; padding:1px 4px; border-radius:3px; font-size:0.67rem;">sku</code>&nbsp;
-                                    <code style="background:#e9ecef; padding:1px 4px; border-radius:3px; font-size:0.67rem;">price</code>&nbsp;
-                                    <code style="background:#e9ecef; padding:1px 4px; border-radius:3px; font-size:0.67rem;">cogs</code>&nbsp;
-                                    <code style="background:#e9ecef; padding:1px 4px; border-radius:3px; font-size:0.67rem;">notes</code>
+                                    <code style="background:var(--surface-alt, #e9ecef); padding:1px 4px; border-radius:3px; font-size:0.67rem;">name</code>&nbsp;
+                                    <code style="background:var(--surface-alt, #e9ecef); padding:1px 4px; border-radius:3px; font-size:0.67rem;">sku</code>&nbsp;
+                                    <code style="background:var(--surface-alt, #e9ecef); padding:1px 4px; border-radius:3px; font-size:0.67rem;">price</code>&nbsp;
+                                    <code style="background:var(--surface-alt, #e9ecef); padding:1px 4px; border-radius:3px; font-size:0.67rem;">cogs</code>&nbsp;
+                                    <code style="background:var(--surface-alt, #e9ecef); padding:1px 4px; border-radius:3px; font-size:0.67rem;">notes</code>
                                     <br><span style="color:#9aa3ad;">Only <strong style="color:#495057;">name</strong> is required. Dollar signs and % symbols are stripped automatically. Existing products with the same SKU will be skipped.</span>
                                 </div>
                             </div>
@@ -963,7 +1000,12 @@
                 <div id="productSummaryCards" class="pc-summary-cards"></div>
 
                 <div id="productTableWrapper" class="pc-table-wrapper">
-                    <p class="empty-state">No products yet. Click "+ Add Product" to get started.</p>
+                    <div class="empty-state">
+                        <svg class="empty-state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>
+                        <h3 class="empty-state-title">No products yet</h3>
+                        <p class="empty-state-desc">Add your first product to start tracking inventory.</p>
+                        <button class="btn btn-primary empty-state-cta" onclick="document.getElementById('addProductBtn')?.click()">+ Add Product</button>
+                    </div>
                 </div>
 
                 <!-- VE Sales Analytics Section (shown when products are linked) — below product table -->
