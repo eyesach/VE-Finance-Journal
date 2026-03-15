@@ -488,7 +488,11 @@ const App = {
             }
         });
 
-        // Keep manage-tabs gear button at the end
+        // Keep Info group label + changelog + gear button at the end
+        const infoLabel = Array.from(nav.querySelectorAll('.sidebar-nav-group')).find(el => el.textContent.trim() === 'Info');
+        const changelogBtn = nav.querySelector('.main-tab[data-tab="changelog"]');
+        if (infoLabel) nav.appendChild(infoLabel);
+        if (changelogBtn) nav.appendChild(changelogBtn);
         const gearBtn = document.getElementById('manageTabsBtn');
         if (gearBtn) nav.appendChild(gearBtn);
     },
