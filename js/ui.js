@@ -2207,8 +2207,9 @@ const UI = {
                             font: { size: 11 },
                             padding: 10,
                             usePointStyle: true,
-                            pointStyleWidth: 8,
-                            boxWidth: 8
+                            pointStyle: 'circle',
+                            boxWidth: 6,
+                            boxHeight: 6
                         }
                     },
                     tooltip: {

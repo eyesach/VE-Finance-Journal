@@ -280,7 +280,8 @@ const Database = {
                 type TEXT NOT NULL DEFAULT 'tradeshow',
                 start_date DATE NOT NULL,
                 end_date DATE NOT NULL,
-                notes TEXT
+                notes TEXT,
+                journal_added INTEGER DEFAULT 0
             )
         `);
 
@@ -682,9 +683,14 @@ const Database = {
                 type TEXT NOT NULL DEFAULT 'tradeshow',
                 start_date DATE NOT NULL,
                 end_date DATE NOT NULL,
-                notes TEXT
+                notes TEXT,
+                journal_added INTEGER DEFAULT 0
             )
         `);
+
+        // === Add journal_added column to ve_events ===
+        try { this.db.exec('SELECT journal_added FROM ve_events LIMIT 1'); }
+        catch (e) { this.db.run('ALTER TABLE ve_events ADD COLUMN journal_added INTEGER DEFAULT 0'); }
 
         // === Add event_id column to ve_sales ===
         try { this.db.exec('SELECT event_id FROM ve_sales LIMIT 1'); }
@@ -3449,6 +3455,22 @@ const Database = {
             'UPDATE ve_events SET name = ?, type = ?, start_date = ?, end_date = ?, notes = ? WHERE id = ?',
             [event.name, event.type, event.start_date, event.end_date, event.notes || null, id]
         );
+        this.autoSave();
+    },
+
+    getVEEventTransaction(eventId) {
+        const result = this.db.exec(
+            "SELECT id FROM transactions WHERE source_type = 've_event' AND source_id = ?",
+            [eventId]
+        );
+        if (result.length > 0 && result[0].values.length > 0) {
+            return result[0].values[0][0];
+        }
+        return null;
+    },
+
+    markVEEventJournalAdded(id, added = 1) {
+        this.db.run('UPDATE ve_events SET journal_added = ? WHERE id = ?', [added ? 1 : 0, id]);
         this.autoSave();
     },
 

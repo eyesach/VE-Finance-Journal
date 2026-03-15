@@ -3,6 +3,74 @@
  */
 
 const App = {
+    // ==================== UNDO/REDO SYSTEM ====================
+    _undoStack: [],
+    _redoStack: [],
+    _undoMaxSize: 50,
+
+    /**
+     * Push an action onto the undo stack
+     * @param {Object} action - { type, label, undo: Function, redo: Function }
+     */
+    pushUndo(action) {
+        this._undoStack.push(action);
+        if (this._undoStack.length > this._undoMaxSize) this._undoStack.shift();
+        this._redoStack = []; // clear redo on new action
+    },
+
+    undo() {
+        const action = this._undoStack.pop();
+        if (!action) return;
+        try {
+            action.undo();
+            this._redoStack.push(action);
+            this._showUndoToast('Undid: ' + action.label, true);
+            this.refreshAll();
+        } catch (e) {
+            console.error('Undo failed:', e);
+            UI.showNotification('Undo failed', 'error');
+        }
+    },
+
+    redo() {
+        const action = this._redoStack.pop();
+        if (!action) return;
+        try {
+            action.redo();
+            this._undoStack.push(action);
+            this._showUndoToast('Redid: ' + action.label, false);
+            this.refreshAll();
+        } catch (e) {
+            console.error('Redo failed:', e);
+            UI.showNotification('Redo failed', 'error');
+        }
+    },
+
+    _showUndoToast(message, showRedo) {
+        const existing = document.querySelector('.undo-toast');
+        if (existing) existing.remove();
+
+        const toast = document.createElement('div');
+        toast.className = 'undo-toast';
+        toast.innerHTML = '<span class="undo-toast-msg">' + this._escapeHtml(message) + '</span>' +
+            (showRedo ? '<button class="undo-toast-btn" onclick="App.redo()">Redo</button>' : '') +
+            (!showRedo ? '<button class="undo-toast-btn" onclick="App.undo()">Undo</button>' : '');
+
+        document.body.appendChild(toast);
+        toast.offsetHeight; // reflow
+        toast.classList.add('visible');
+
+        setTimeout(() => {
+            toast.classList.remove('visible');
+            setTimeout(() => toast.remove(), 300);
+        }, 4000);
+    },
+
+    clearUndoHistory() {
+        this._undoStack = [];
+        this._redoStack = [];
+    },
+
     deleteTargetId: null,
     deleteCategoryTargetId: null,
     deleteFolderTargetId: null,
@@ -22,6 +90,9 @@ const App = {
     bulkSelectDirection: 'to-paid', // 'to-paid' or 'to-pending'
     bulkSelectedIds: new Set(),
     pendingBulkAction: false,
+    currentMode: 'work',
+    lastWorkTab: 'journal',
+    lastAnalyzeTab: 'dashboard',
     currentSortMode: 'entryDate',
     _timeline: null,
     _beChartBreakeven: null,
@@ -429,19 +500,69 @@ const App = {
         journal: 'Journal', cashflow: 'Cash Flow', pnl: 'P&L',
         balancesheet: 'Balance Sheet', assets: 'Assets & Equity',
         loan: 'Loans', budget: 'Budget', breakeven: 'Break-Even',
-        projectedsales: 'Projected Sales', products: 'Products', vesales: 'VE Sales'
+        projectedsales: 'Projected Sales', products: 'Products', vesales: 'VE Sales',
+        dashboard: 'Dashboard'
     },
 
+    WORK_TABS: ['journal', 'budget', 'products', 'vesales', 'assets', 'loan', 'projectedsales'],
+    ANALYZE_TABS: ['dashboard', 'cashflow', 'pnl', 'balancesheet', 'breakeven'],
+
     applyHiddenTabs() {
+        this.applyModeAwareHiddenTabs();
+    },
+
+    applyModeAwareHiddenTabs() {
         const hidden = Database.getHiddenTabs();
+        const modeTabs = this.currentMode === 'work' ? this.WORK_TABS : this.ANALYZE_TABS;
         const nav = document.querySelector('.main-tabs');
+
         nav.querySelectorAll('.main-tab[data-tab]').forEach(btn => {
-            btn.style.display = hidden.includes(btn.dataset.tab) ? 'none' : '';
+            const tab = btn.dataset.tab;
+            if (tab === 'changelog') {
+                btn.style.display = 'none';
+                return;
+            }
+            if (!modeTabs.includes(tab)) {
+                btn.style.display = 'none';
+            } else if (hidden.includes(tab)) {
+                btn.style.display = 'none';
+            } else {
+                btn.style.display = '';
+            }
         });
+
+        // Hide sidebar group labels that have no visible tabs beneath them
+        this.updateSidebarGroupLabels();
+
+        // If active tab is now hidden, switch to first visible
         const activeBtn = nav.querySelector('.main-tab.active');
-        if (activeBtn && hidden.includes(activeBtn.dataset.tab)) {
+        if (activeBtn && activeBtn.style.display === 'none') {
             const firstVisible = nav.querySelector('.main-tab[data-tab]:not([style*="display: none"])');
             if (firstVisible) this.switchMainTab(firstVisible.dataset.tab);
+        }
+    },
+
+    updateSidebarGroupLabels() {
+        const nav = document.querySelector('.main-tabs');
+        const children = Array.from(nav.children);
+        let currentGroup = null;
+
+        for (const child of children) {
+            if (child.classList.contains('sidebar-nav-group')) {
+                // Finalize previous group
+                if (currentGroup) {
+                    currentGroup.el.style.display = currentGroup.hasVisible ? '' : 'none';
+                }
+                currentGroup = { el: child, hasVisible: false };
+            } else if (child.classList.contains('main-tab') && child.dataset.tab) {
+                if (currentGroup && child.style.display !== 'none') {
+                    currentGroup.hasVisible = true;
+                }
+            }
+        }
+        // Handle last group
+        if (currentGroup) {
+            currentGroup.el.style.display = currentGroup.hasVisible ? '' : 'none';
         }
     },
 
@@ -498,14 +619,15 @@ const App = {
             case 'projectedsales': this.refreshProjectedSales(); break;
             case 'products': this.refreshProducts(); break;
             case 'vesales': this.refreshVESales(); break;
+            case 'dashboard': this.refreshDashboard(); break;
         }
     },
 
     openManageTabsModal() {
         const list = document.getElementById('manageTabsList');
         const hidden = Database.getHiddenTabs();
-        const nav = document.querySelector('.main-tabs');
-        const allTabs = Array.from(nav.querySelectorAll('.main-tab[data-tab]')).map(b => b.dataset.tab);
+        const modeTabs = this.currentMode === 'work' ? this.WORK_TABS : this.ANALYZE_TABS;
+        const allTabs = modeTabs.slice();
 
         list.innerHTML = allTabs.map(tab => {
             const label = this.TAB_LABELS[tab] || tab;
@@ -700,6 +822,13 @@ const App = {
         // Only refresh tabs when at least one complete range endpoint exists
         if (start || end) {
             this.refreshAll();
+            // Also refresh analytics (dashboard + analyze chart panels)
+            if (this.currentMode === 'analyze') {
+                const activeTab = document.querySelector('.main-tab.active');
+                const tab = activeTab ? activeTab.dataset.tab : 'dashboard';
+                if (tab === 'dashboard') this.refreshDashboard();
+                else this._updateAnalyzeCharts(tab);
+            }
         }
     },
 
@@ -841,11 +970,14 @@ const App = {
             this.exitBulkSelectMode();
         }
 
+        // Show/hide Quick Add button
+        this._showQuickAddButton(tab);
+
         document.querySelectorAll('.main-tab').forEach(btn => {
             btn.classList.toggle('active', btn.dataset.tab === tab);
         });
 
-        const tabs = ['journalTab', 'cashflowTab', 'pnlTab', 'balancesheetTab', 'assetsTab', 'loanTab', 'budgetTab', 'breakevenTab', 'projectedsalesTab', 'productsTab', 'vesalesTab', 'changelogTab'];
+        const tabs = ['journalTab', 'cashflowTab', 'pnlTab', 'balancesheetTab', 'assetsTab', 'loanTab', 'budgetTab', 'breakevenTab', 'projectedsalesTab', 'productsTab', 'vesalesTab', 'changelogTab', 'dashboardTab'];
         tabs.forEach(id => {
             const el = document.getElementById(id);
             if (el) el.style.display = 'none';
@@ -881,12 +1013,920 @@ const App = {
         } else if (tab === 'vesales') {
             document.getElementById('vesalesTab').style.display = 'block';
             this.refreshVESales();
+        } else if (tab === 'dashboard') {
+            document.getElementById('dashboardTab').style.display = 'block';
+            this.refreshDashboard();
         } else if (tab === 'changelog') {
             document.getElementById('changelogTab').style.display = 'block';
             this.renderChangelog();
         } else {
             document.getElementById('journalTab').style.display = 'block';
         }
+
+        // Show/hide analyze chart panels based on mode
+        this._updateAnalyzeCharts(tab);
+    },
+
+    // ==================== MODE TOGGLE (Work / Analyze) ====================
+
+    switchMode(mode) {
+        if (mode === this.currentMode) return;
+
+        // Save current tab for the mode we're leaving
+        const activeTab = document.querySelector('.main-tab.active');
+        if (activeTab) {
+            if (this.currentMode === 'work') this.lastWorkTab = activeTab.dataset.tab;
+            else this.lastAnalyzeTab = activeTab.dataset.tab;
+        }
+
+        this.currentMode = mode;
+
+        // Update toggle buttons
+        document.querySelectorAll('.mode-toggle-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.mode === mode);
+        });
+
+        // Apply mode-aware hidden tabs (shows/hides sidebar tabs + group labels)
+        this.applyModeAwareHiddenTabs();
+
+        // Switch to the remembered tab for this mode
+        const targetTab = mode === 'work' ? this.lastWorkTab : this.lastAnalyzeTab;
+        this.switchMainTab(targetTab);
+    },
+
+    _dashCharts: {},
+
+    refreshDashboard() {
+        this._renderDashboardKPIs();
+        this._renderDashboardSections();
+    },
+
+    _renderDashboardKPIs() {
+        const container = document.getElementById('dashboardKpiCards');
+        if (!container) return;
+
+        const summary = Database.calculateSummary();
+        const currentMonth = Utils.getCurrentMonth();
+
+        // Calculate monthly data for sparklines using timeline range (take last 6 months of range)
+        const allMonths = this._getTimelineMonths();
+        const months = allMonths.slice(-6);
+
+        // Get monthly revenue & expense data
+        const monthlyRevenue = [];
+        const monthlyExpenses = [];
+        const monthlyCash = [];
+        let runningCash = 0;
+
+        for (const month of months) {
+            const revResult = Database.db.exec(
+                "SELECT COALESCE(SUM(t.amount),0) FROM transactions t JOIN categories c ON t.category_id = c.id WHERE t.transaction_type='receivable' AND t.status='received' AND t.month_paid=? AND c.is_cogs = 0 AND c.show_on_pl != 1 AND (c.is_b2b = 1 OR c.is_sales = 1) AND COALESCE(t.source_type, '') NOT IN ('loan_receivable', 'loan_payment')", [month]);
+            const expResult = Database.db.exec(
+                "SELECT COALESCE(SUM(amount),0) FROM transactions WHERE transaction_type='payable' AND status='paid' AND month_paid=?", [month]);
+            const rev = revResult[0] ? revResult[0].values[0][0] : 0;
+            const exp = expResult[0] ? expResult[0].values[0][0] : 0;
+            monthlyRevenue.push(rev);
+            monthlyExpenses.push(exp);
+            runningCash += rev - exp;
+            monthlyCash.push(runningCash);
+        }
+
+        // Overdue receivables
+        const overdueResult = Database.db.exec(
+            "SELECT COUNT(*), COALESCE(SUM(amount),0) FROM transactions WHERE transaction_type='receivable' AND status='pending' AND month_due < ?", [currentMonth]);
+        const overdueCount = overdueResult[0] ? overdueResult[0].values[0][0] : 0;
+        const overdueAmount = overdueResult[0] ? overdueResult[0].values[0][1] : 0;
+
+        // Burn rate (avg expenses last 6 months)
+        const totalExp = monthlyExpenses.reduce((s, v) => s + v, 0);
+        const burnRate = monthlyExpenses.length > 0 ? totalExp / monthlyExpenses.length : 0;
+
+        // Revenue trend
+        const thisMonthRev = monthlyRevenue[monthlyRevenue.length - 1] || 0;
+        const lastMonthRev = monthlyRevenue[monthlyRevenue.length - 2] || 0;
+        const revTrend = lastMonthRev > 0 ? ((thisMonthRev - lastMonthRev) / lastMonthRev * 100).toFixed(1) : '0';
+
+        container.innerHTML =
+            '<div class="dash-kpi">' +
+                '<span class="dash-kpi-label">Cash Position</span>' +
+                '<span class="dash-kpi-value ' + (summary.cashBalance >= 0 ? 'positive' : 'negative') + '">' + Utils.formatCurrency(summary.cashBalance) + '</span>' +
+                '<canvas class="dash-sparkline" id="dashSparkCash" width="80" height="30"></canvas>' +
+            '</div>' +
+            '<div class="dash-kpi">' +
+                '<span class="dash-kpi-label">Monthly Burn Rate</span>' +
+                '<span class="dash-kpi-value negative">' + Utils.formatCurrency(burnRate) + '</span>' +
+                '<canvas class="dash-sparkline" id="dashSparkBurn" width="80" height="30"></canvas>' +
+            '</div>' +
+            '<div class="dash-kpi">' +
+                '<span class="dash-kpi-label">Revenue Trend</span>' +
+                '<span class="dash-kpi-value">' + Utils.formatCurrency(thisMonthRev) + ' <small style="font-size:0.7em;color:' + (revTrend >= 0 ? 'var(--color-success,#10b981)' : 'var(--color-danger,#ef4444)') + '">' + (revTrend >= 0 ? '+' : '') + revTrend + '%</small></span>' +
+                '<canvas class="dash-sparkline" id="dashSparkRev" width="80" height="30"></canvas>' +
+            '</div>' +
+            '<div class="dash-kpi">' +
+                '<span class="dash-kpi-label">Overdue Receivables</span>' +
+                '<span class="dash-kpi-value negative">' + Utils.formatCurrency(overdueAmount) + ' <small style="font-size:0.7em;color:var(--text-muted)">(' + overdueCount + ')</small></span>' +
+            '</div>';
+
+        // Render sparklines
+        this._renderSparkline('dashSparkCash', monthlyCash, 'rgba(59,130,246,0.8)');
+        this._renderSparkline('dashSparkBurn', monthlyExpenses, 'rgba(239,68,68,0.8)');
+        this._renderSparkline('dashSparkRev', monthlyRevenue, 'rgba(16,185,129,0.8)');
+    },
+
+    _renderSparkline(canvasId, data, color) {
+        const canvas = document.getElementById(canvasId);
+        if (!canvas || !data.length) return;
+        const ctx = canvas.getContext('2d');
+
+        // Destroy existing chart
+        if (this._dashCharts[canvasId]) {
+            this._dashCharts[canvasId].destroy();
+        }
+
+        this._dashCharts[canvasId] = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: data.map(() => ''),
+                datasets: [{
+                    data: data,
+                    borderColor: color,
+                    borderWidth: 1.5,
+                    fill: true,
+                    backgroundColor: color.replace('0.8', '0.1'),
+                    pointRadius: 0,
+                    tension: 0.4
+                }]
+            },
+            options: {
+                responsive: false,
+                plugins: { legend: { display: false }, tooltip: { enabled: false } },
+                scales: { x: { display: false }, y: { display: false } },
+                animation: false
+            }
+        });
+    },
+
+    _renderDashboardSections() {
+        const container = document.getElementById('dashboardSections');
+        if (!container) return;
+
+        // Only rebuild the HTML structure if it's empty
+        if (!container.querySelector('.dash-section')) {
+            container.innerHTML =
+                '<div class="dash-section" data-section="cashflow">' +
+                    '<div class="dash-section-header"><span>Cash Flow Overview</span><span class="dash-section-toggle">&#9660;</span></div>' +
+                    '<div class="dash-section-body"><canvas id="dashChartCashFlow" height="250"></canvas></div>' +
+                '</div>' +
+                '<div class="dash-section" data-section="pnl">' +
+                    '<div class="dash-section-header"><span>P&L Trends</span><span class="dash-section-toggle">&#9660;</span></div>' +
+                    '<div class="dash-section-body"><canvas id="dashChartPnL" height="250"></canvas></div>' +
+                '</div>' +
+                '<div class="dash-section" data-section="mom">' +
+                    '<div class="dash-section-header"><span>Month-over-Month</span><span class="dash-section-toggle">&#9660;</span></div>' +
+                    '<div class="dash-section-body"><canvas id="dashChartMoM" height="250"></canvas></div>' +
+                '</div>' +
+                '<div class="dash-section" data-section="balancesheet">' +
+                    '<div class="dash-section-header"><span>Balance Sheet Snapshot</span><span class="dash-section-toggle">&#9660;</span></div>' +
+                    '<div class="dash-section-body"><canvas id="dashChartBS" height="250"></canvas></div>' +
+                '</div>' +
+                '<div class="dash-section" data-section="breakeven">' +
+                    '<div class="dash-section-header"><span>Break-Even Progress</span><span class="dash-section-toggle">&#9660;</span></div>' +
+                    '<div class="dash-section-body"><div id="dashBreakevenBar" class="dash-be-bar-wrapper"></div></div>' +
+                '</div>';
+
+            // Wire up collapsible sections
+            container.querySelectorAll('.dash-section-header').forEach(header => {
+                header.addEventListener('click', () => {
+                    const section = header.parentElement;
+                    const key = 'dash-collapsed-' + section.dataset.section;
+                    section.classList.toggle('collapsed');
+                    header.querySelector('.dash-section-toggle').textContent = section.classList.contains('collapsed') ? '\u25B6' : '\u25BC';
+                    localStorage.setItem(key, section.classList.contains('collapsed') ? '1' : '0');
+                });
+            });
+
+            // Restore collapsed state
+            container.querySelectorAll('.dash-section').forEach(section => {
+                const key = 'dash-collapsed-' + section.dataset.section;
+                if (localStorage.getItem(key) === '1') {
+                    section.classList.add('collapsed');
+                    section.querySelector('.dash-section-toggle').textContent = '\u25B6';
+                }
+            });
+        }
+
+        // Render charts
+        this._renderDashCashFlowChart();
+        this._renderDashPnLChart();
+        this._renderDashMoMChart();
+        this._renderDashBSChart();
+        this._renderDashBreakevenBar();
+    },
+
+    _getTimelineMonths() {
+        const timeline = this.getTimeline();
+        const currentMonth = Utils.getCurrentMonth();
+        let start, end;
+
+        if (timeline.start && timeline.end) {
+            start = timeline.start;
+            end = timeline.end;
+        } else if (timeline.start) {
+            start = timeline.start;
+            end = currentMonth;
+        } else if (timeline.end) {
+            // Default to 12 months before the end
+            end = timeline.end;
+            let m = end;
+            for (let i = 0; i < 11; i++) {
+                const [y, mo] = m.split('-').map(Number);
+                m = (mo === 1) ? (y - 1) + '-12' : y + '-' + String(mo - 1).padStart(2, '0');
+            }
+            start = m;
+        } else {
+            // No timeline set — default to last 12 months
+            end = currentMonth;
+            let m = currentMonth;
+            for (let i = 0; i < 11; i++) {
+                const [y, mo] = m.split('-').map(Number);
+                m = (mo === 1) ? (y - 1) + '-12' : y + '-' + String(mo - 1).padStart(2, '0');
+            }
+            start = m;
+        }
+
+        // Generate full month range
+        const months = [];
+        let m = start;
+        while (m <= end) {
+            months.push(m);
+            const [y, mo] = m.split('-').map(Number);
+            m = (mo === 12) ? (y + 1) + '-01' : y + '-' + String(mo + 1).padStart(2, '0');
+        }
+        return months;
+    },
+
+    _renderDashCashFlowChart() {
+        const canvas = document.getElementById('dashChartCashFlow');
+        if (!canvas) return;
+        if (this._dashCharts.cashflow) this._dashCharts.cashflow.destroy();
+
+        const months = this._getTimelineMonths();
+        const netData = [];
+        const colors = [];
+
+        for (const month of months) {
+            const revResult = Database.db.exec(
+                "SELECT COALESCE(SUM(amount),0) FROM transactions WHERE transaction_type='receivable' AND status='received' AND month_paid=?", [month]);
+            const expResult = Database.db.exec(
+                "SELECT COALESCE(SUM(amount),0) FROM transactions WHERE transaction_type='payable' AND status='paid' AND month_paid=?", [month]);
+            const rev = revResult[0] ? revResult[0].values[0][0] : 0;
+            const exp = expResult[0] ? expResult[0].values[0][0] : 0;
+            const net = rev - exp;
+            netData.push(net);
+            colors.push(net >= 0 ? 'rgba(16,185,129,0.7)' : 'rgba(239,68,68,0.7)');
+        }
+
+        this._dashCharts.cashflow = new Chart(canvas, {
+            type: 'bar',
+            data: {
+                labels: months.map(m => { const [y, mo] = m.split('-'); return ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][parseInt(mo)-1] + ' ' + y.slice(2); }),
+                datasets: [{ label: 'Net Cash Flow', data: netData, backgroundColor: colors, borderRadius: 4 }]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: { y: { ticks: { callback: v => Utils.formatCurrency(v) } } }
+            }
+        });
+    },
+
+    _renderDashPnLChart() {
+        const canvas = document.getElementById('dashChartPnL');
+        if (!canvas) return;
+        if (this._dashCharts.pnl) this._dashCharts.pnl.destroy();
+
+        const months = this._getTimelineMonths();
+        const revenue = [];
+        const expenses = [];
+
+        for (const month of months) {
+            const revResult = Database.db.exec(
+                "SELECT COALESCE(SUM(t.amount),0) FROM transactions t JOIN categories c ON t.category_id = c.id WHERE t.transaction_type='receivable' AND t.status='received' AND t.month_paid=? AND c.is_cogs = 0 AND c.show_on_pl != 1 AND (c.is_b2b = 1 OR c.is_sales = 1) AND COALESCE(t.source_type, '') NOT IN ('loan_receivable', 'loan_payment')", [month]);
+            const expResult = Database.db.exec(
+                "SELECT COALESCE(SUM(amount),0) FROM transactions WHERE transaction_type='payable' AND status='paid' AND month_paid=?", [month]);
+            revenue.push(revResult[0] ? revResult[0].values[0][0] : 0);
+            expenses.push(expResult[0] ? expResult[0].values[0][0] : 0);
+        }
+
+        const labels = months.map(m => { const [y, mo] = m.split('-'); return ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][parseInt(mo)-1] + ' ' + y.slice(2); });
+
+        this._dashCharts.pnl = new Chart(canvas, {
+            type: 'line',
+            data: {
+                labels,
+                datasets: [
+                    { label: 'Revenue', data: revenue, borderColor: 'rgba(16,185,129,0.9)', backgroundColor: 'rgba(16,185,129,0.1)', fill: true, tension: 0.3 },
+                    { label: 'Expenses', data: expenses, borderColor: 'rgba(239,68,68,0.9)', backgroundColor: 'rgba(239,68,68,0.1)', fill: true, tension: 0.3 }
+                ]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { position: 'top' } },
+                scales: { y: { ticks: { callback: v => Utils.formatCurrency(v) } } }
+            }
+        });
+    },
+
+    _renderDashMoMChart() {
+        const canvas = document.getElementById('dashChartMoM');
+        if (!canvas) return;
+        if (this._dashCharts.mom) this._dashCharts.mom.destroy();
+
+        const tlMonths = this._getTimelineMonths();
+        const currentMonth = tlMonths.length > 0 ? tlMonths[tlMonths.length - 1] : Utils.getCurrentMonth();
+        const prevMonth = tlMonths.length > 1 ? tlMonths[tlMonths.length - 2] : (() => { const [cy, cm] = currentMonth.split('-').map(Number); return (cm === 1) ? (cy - 1) + '-12' : cy + '-' + String(cm - 1).padStart(2, '0'); })();
+
+        // Get category breakdown for both months
+        const getCategoryTotals = (month) => {
+            const result = Database.db.exec(
+                "SELECT c.name, SUM(t.amount) as total FROM transactions t JOIN categories c ON t.category_id = c.id WHERE t.month_paid = ? OR (t.status = 'pending' AND t.month_due = ?) GROUP BY c.name ORDER BY total DESC", [month, month]);
+            if (!result[0]) return {};
+            const obj = {};
+            for (const row of result[0].values) { obj[row[0]] = row[1]; }
+            return obj;
+        };
+
+        const thisData = getCategoryTotals(currentMonth);
+        const prevData = getCategoryTotals(prevMonth);
+        const allCats = [...new Set([...Object.keys(thisData), ...Object.keys(prevData)])].slice(0, 10);
+
+        const labels = months => { const [y, mo] = months.split('-'); return ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][parseInt(mo)-1] + ' ' + y.slice(2); };
+
+        this._dashCharts.mom = new Chart(canvas, {
+            type: 'bar',
+            data: {
+                labels: allCats,
+                datasets: [
+                    { label: labels(prevMonth), data: allCats.map(c => prevData[c] || 0), backgroundColor: 'rgba(148,163,184,0.6)', borderRadius: 4 },
+                    { label: labels(currentMonth), data: allCats.map(c => thisData[c] || 0), backgroundColor: 'rgba(59,130,246,0.7)', borderRadius: 4 }
+                ]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { position: 'top' } },
+                scales: { y: { ticks: { callback: v => Utils.formatCurrency(v) } } }
+            }
+        });
+    },
+
+    _renderDashBSChart() {
+        const canvas = document.getElementById('dashChartBS');
+        if (!canvas) return;
+        if (this._dashCharts.bs) this._dashCharts.bs.destroy();
+
+        const summary = Database.calculateSummary();
+        // Simple assets vs liabilities visualization
+        const assets = summary.cashBalance > 0 ? summary.cashBalance : 0;
+        const liabilities = summary.accountsPayable;
+        const receivables = summary.accountsReceivable;
+
+        this._dashCharts.bs = new Chart(canvas, {
+            type: 'bar',
+            data: {
+                labels: ['Assets', 'Liabilities'],
+                datasets: [
+                    { label: 'Cash', data: [assets, 0], backgroundColor: 'rgba(16,185,129,0.7)', borderRadius: 4 },
+                    { label: 'Receivables', data: [receivables, 0], backgroundColor: 'rgba(59,130,246,0.7)', borderRadius: 4 },
+                    { label: 'Payables', data: [0, liabilities], backgroundColor: 'rgba(239,68,68,0.7)', borderRadius: 4 }
+                ]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { position: 'top' } },
+                scales: { x: { stacked: true }, y: { stacked: true, ticks: { callback: v => Utils.formatCurrency(v) } } }
+            }
+        });
+    },
+
+    // ==================== ANALYZE MODE CHART PANELS ====================
+
+    _analyzeCharts: {},
+
+    _updateAnalyzeCharts(tab) {
+        const isAnalyze = this.currentMode === 'analyze';
+        const panels = ['analyzeCashflowChart', 'analyzePnlChart', 'analyzeBSChart', 'analyzeBEChart'];
+        panels.forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.style.display = 'none';
+        });
+
+        if (!isAnalyze) return;
+
+        if (tab === 'cashflow') {
+            document.getElementById('analyzeCashflowChart').style.display = '';
+            this._renderAnalyzeCFChart();
+        } else if (tab === 'pnl') {
+            document.getElementById('analyzePnlChart').style.display = '';
+            this._renderAnalyzePnLChart();
+        } else if (tab === 'balancesheet') {
+            document.getElementById('analyzeBSChart').style.display = '';
+            this._renderAnalyzeBSChart();
+        } else if (tab === 'breakeven') {
+            document.getElementById('analyzeBEChart').style.display = '';
+            this._renderAnalyzeBEProgress();
+        }
+    },
+
+    _renderAnalyzeCFChart() {
+        const canvas = document.getElementById('analyzeChartCF');
+        if (!canvas) return;
+        if (this._analyzeCharts.cf) this._analyzeCharts.cf.destroy();
+
+        const months = this._getTimelineMonths();
+        const inData = [];
+        const outData = [];
+        let running = 0;
+        const runningData = [];
+
+        for (const month of months) {
+            const revResult = Database.db.exec(
+                "SELECT COALESCE(SUM(amount),0) FROM transactions WHERE transaction_type='receivable' AND status='received' AND month_paid=?", [month]);
+            const expResult = Database.db.exec(
+                "SELECT COALESCE(SUM(amount),0) FROM transactions WHERE transaction_type='payable' AND status='paid' AND month_paid=?", [month]);
+            const rev = revResult[0] ? revResult[0].values[0][0] : 0;
+            const exp = expResult[0] ? expResult[0].values[0][0] : 0;
+            inData.push(rev);
+            outData.push(-exp);
+            running += rev - exp;
+            runningData.push(running);
+        }
+
+        const labels = months.map(m => { const [y, mo] = m.split('-'); return ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][parseInt(mo)-1] + " '" + y.slice(2); });
+
+        this._analyzeCharts.cf = new Chart(canvas, {
+            type: 'bar',
+            data: {
+                labels,
+                datasets: [
+                    { label: 'Money In', data: inData, backgroundColor: 'rgba(16,185,129,0.7)', borderRadius: 4, stack: 'flow' },
+                    { label: 'Money Out', data: outData, backgroundColor: 'rgba(239,68,68,0.7)', borderRadius: 4, stack: 'flow' },
+                    { label: 'Running Balance', data: runningData, type: 'line', borderColor: 'rgba(59,130,246,0.9)', backgroundColor: 'transparent', tension: 0.3, pointRadius: 3, yAxisID: 'y1' }
+                ]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { position: 'top' } },
+                scales: {
+                    y: { stacked: true, ticks: { callback: v => Utils.formatCurrency(v) } },
+                    y1: { position: 'right', grid: { display: false }, ticks: { callback: v => Utils.formatCurrency(v) } }
+                }
+            }
+        });
+    },
+
+    _renderAnalyzePnLChart() {
+        const canvas = document.getElementById('analyzeChartPnL');
+        if (!canvas) return;
+        if (this._analyzeCharts.pnl) this._analyzeCharts.pnl.destroy();
+
+        const months = this._getTimelineMonths();
+        const revenue = [];
+        const expenses = [];
+        const profit = [];
+
+        for (const month of months) {
+            const revResult = Database.db.exec(
+                "SELECT COALESCE(SUM(t.amount),0) FROM transactions t JOIN categories c ON t.category_id = c.id WHERE t.transaction_type='receivable' AND t.status='received' AND t.month_paid=? AND c.is_cogs = 0 AND c.show_on_pl != 1 AND (c.is_b2b = 1 OR c.is_sales = 1) AND COALESCE(t.source_type, '') NOT IN ('loan_receivable', 'loan_payment')", [month]);
+            const expResult = Database.db.exec(
+                "SELECT COALESCE(SUM(amount),0) FROM transactions WHERE transaction_type='payable' AND status='paid' AND month_paid=?", [month]);
+            const rev = revResult[0] ? revResult[0].values[0][0] : 0;
+            const exp = expResult[0] ? expResult[0].values[0][0] : 0;
+            revenue.push(rev);
+            expenses.push(exp);
+            profit.push(rev - exp);
+        }
+
+        const labels = months.map(m => { const [y, mo] = m.split('-'); return ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][parseInt(mo)-1] + " '" + y.slice(2); });
+
+        this._analyzeCharts.pnl = new Chart(canvas, {
+            type: 'line',
+            data: {
+                labels,
+                datasets: [
+                    { label: 'Revenue', data: revenue, borderColor: 'rgba(16,185,129,0.9)', backgroundColor: 'rgba(16,185,129,0.1)', fill: true, tension: 0.3 },
+                    { label: 'Expenses', data: expenses, borderColor: 'rgba(239,68,68,0.9)', backgroundColor: 'rgba(239,68,68,0.1)', fill: true, tension: 0.3 },
+                    { label: 'Profit/Loss', data: profit, borderColor: 'rgba(59,130,246,0.9)', borderDash: [5, 5], fill: false, tension: 0.3, pointRadius: 3 }
+                ]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { position: 'top' } },
+                scales: { y: { ticks: { callback: v => Utils.formatCurrency(v) } } }
+            }
+        });
+    },
+
+    _renderAnalyzeBSChart() {
+        const canvas = document.getElementById('analyzeChartBS');
+        if (!canvas) return;
+        if (this._analyzeCharts.bs) this._analyzeCharts.bs.destroy();
+
+        // Use the balance sheet month selector if set, otherwise last timeline month
+        const bsMonth = document.getElementById('bsMonthMonth').value;
+        const bsYear = document.getElementById('bsMonthYear').value;
+        let asOfMonth;
+        if (bsMonth && bsYear) {
+            asOfMonth = `${bsYear}-${bsMonth}`;
+        } else {
+            const tlMonths = this._getTimelineMonths();
+            asOfMonth = tlMonths.length > 0 ? tlMonths[tlMonths.length - 1] : Utils.getCurrentMonth();
+        }
+
+        const cash = Math.max(0, Database.getCashAsOf(asOfMonth));
+        const receivables = Database.getAccountsReceivableAsOf(asOfMonth);
+        const payables = Database.getAccountsPayableAsOf(asOfMonth);
+        const equity = (cash + receivables) - payables;
+
+        this._analyzeCharts.bs = new Chart(canvas, {
+            type: 'bar',
+            data: {
+                labels: ['Assets', 'Liabilities & Equity'],
+                datasets: [
+                    { label: 'Cash', data: [cash, 0], backgroundColor: 'rgba(16,185,129,0.7)', borderRadius: 4 },
+                    { label: 'Receivables', data: [receivables, 0], backgroundColor: 'rgba(59,130,246,0.7)', borderRadius: 4 },
+                    { label: 'Payables', data: [0, payables], backgroundColor: 'rgba(239,68,68,0.7)', borderRadius: 4 },
+                    { label: 'Equity', data: [0, Math.max(0, equity)], backgroundColor: 'rgba(168,85,247,0.7)', borderRadius: 4 }
+                ]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                indexAxis: 'y',
+                plugins: { legend: { position: 'top' } },
+                scales: { x: { stacked: true, ticks: { callback: v => Utils.formatCurrency(v) } }, y: { stacked: true } }
+            }
+        });
+
+        // Render gauges
+        const gaugesEl = document.getElementById('analyzeGauges');
+        if (gaugesEl) {
+            const totalAssets = cash + receivables;
+            const currentRatio = payables > 0 ? (totalAssets / payables).toFixed(2) : 'N/A';
+            const debtToEquity = equity > 0 ? (payables / equity).toFixed(2) : 'N/A';
+
+            const makeGauge = (value, max, label) => {
+                const numVal = parseFloat(value);
+                const pct = isNaN(numVal) ? 0 : Math.min(100, Math.max(0, (numVal / max) * 100));
+                const color = pct > 60 ? 'var(--color-success, #10b981)' : pct > 30 ? 'var(--color-warning, #f59e0b)' : 'var(--color-danger, #ef4444)';
+                return '<div class="analyze-gauge">' +
+                    '<div class="analyze-gauge-ring" style="background: conic-gradient(' + color + ' ' + (pct * 3.6) + 'deg, var(--c5, #e5e7eb) ' + (pct * 3.6) + 'deg);">' +
+                    '<div class="analyze-gauge-value" style="background:var(--c4,#fff);width:60px;height:60px;border-radius:50%;display:flex;align-items:center;justify-content:center;">' + value + '</div>' +
+                    '</div>' +
+                    '<div class="analyze-gauge-label">' + label + '</div>' +
+                    '</div>';
+            };
+
+            gaugesEl.innerHTML = makeGauge(currentRatio, 3, 'Current Ratio') + makeGauge(debtToEquity, 3, 'Debt-to-Equity');
+        }
+    },
+
+    _renderAnalyzeBEProgress() {
+        const container = document.getElementById('analyzeBEProgress');
+        if (!container) return;
+
+        const tlMonths = this._getTimelineMonths();
+        const currentMonth = tlMonths.length > 0 ? tlMonths[tlMonths.length - 1] : Utils.getCurrentMonth();
+        const expenses = Database.getActiveBudgetExpensesForMonth(currentMonth);
+        const totalTarget = expenses.reduce((s, e) => s + e.monthly_amount, 0);
+
+        const revResult = Database.db.exec(
+            "SELECT COALESCE(SUM(t.amount),0) FROM transactions t JOIN categories c ON t.category_id = c.id WHERE t.transaction_type='receivable' AND ((t.status='received' AND t.month_paid=?) OR (t.status='pending' AND t.month_due=?)) AND c.is_cogs = 0 AND c.show_on_pl != 1 AND (c.is_b2b = 1 OR c.is_sales = 1) AND COALESCE(t.source_type, '') NOT IN ('loan_receivable', 'loan_payment')", [currentMonth, currentMonth]);
+        const currentRevenue = revResult[0] ? revResult[0].values[0][0] : 0;
+
+        const pct = totalTarget > 0 ? Math.min(100, Math.round(currentRevenue / totalTarget * 100)) : 0;
+        const color = pct >= 100 ? 'var(--color-success, #10b981)' : pct >= 60 ? 'var(--color-warning, #f59e0b)' : 'var(--color-danger, #ef4444)';
+
+        container.innerHTML =
+            '<div style="text-align:center;margin-bottom:16px;">' +
+                '<div style="font-size:2.5rem;font-weight:700;color:' + color + ';">' + pct + '%</div>' +
+                '<div style="font-size:0.85rem;color:var(--text-muted);">Break-Even Progress This Month</div>' +
+            '</div>' +
+            '<div class="dash-be-info">' +
+                '<span>Revenue: ' + Utils.formatCurrency(currentRevenue) + '</span>' +
+                '<span>Target: ' + Utils.formatCurrency(totalTarget) + '</span>' +
+            '</div>' +
+            '<div class="dash-be-track" style="height:32px;">' +
+                '<div class="dash-be-fill" style="width: ' + pct + '%; background: ' + color + ';"></div>' +
+            '</div>';
+    },
+
+    _renderDashBreakevenBar() {
+        const container = document.getElementById('dashBreakevenBar');
+        if (!container) return;
+
+        // Use last month in timeline range, or current month
+        const tlMonths = this._getTimelineMonths();
+        const currentMonth = tlMonths.length > 0 ? tlMonths[tlMonths.length - 1] : Utils.getCurrentMonth();
+        const expenses = Database.getActiveBudgetExpensesForMonth(currentMonth);
+        const totalMonthlyExpenses = expenses.reduce((s, e) => s + e.monthly_amount, 0);
+
+        // Get current month revenue (sales only)
+        const revResult = Database.db.exec(
+            "SELECT COALESCE(SUM(t.amount),0) FROM transactions t JOIN categories c ON t.category_id = c.id WHERE t.transaction_type='receivable' AND ((t.status='received' AND t.month_paid=?) OR (t.status='pending' AND t.month_due=?)) AND c.is_cogs = 0 AND c.show_on_pl != 1 AND (c.is_b2b = 1 OR c.is_sales = 1) AND COALESCE(t.source_type, '') NOT IN ('loan_receivable', 'loan_payment')", [currentMonth, currentMonth]);
+        const currentRevenue = revResult[0] ? revResult[0].values[0][0] : 0;
+
+        const pct = totalMonthlyExpenses > 0 ? Math.min(100, Math.round(currentRevenue / totalMonthlyExpenses * 100)) : 0;
+        const color = pct >= 100 ? 'var(--color-success, #10b981)' : pct >= 60 ? 'var(--color-warning, #f59e0b)' : 'var(--color-danger, #ef4444)';
+
+        container.innerHTML =
+            '<div class="dash-be-info">' +
+                '<span>Revenue: ' + Utils.formatCurrency(currentRevenue) + '</span>' +
+                '<span>Target: ' + Utils.formatCurrency(totalMonthlyExpenses) + '</span>' +
+            '</div>' +
+            '<div class="dash-be-track">' +
+                '<div class="dash-be-fill" style="width: ' + pct + '%; background: ' + color + ';"></div>' +
+            '</div>' +
+            '<div class="dash-be-pct">' + pct + '% to break-even this month</div>';
+    },
+
+    // ==================== QUICK ENTRY (Multi-Line) ====================
+
+    _qeRowCount: 0,
+
+    openQuickEntry(type) {
+        if (type === 'budget') {
+            this._qeRowCount = 0;
+            document.getElementById('quickBudgetRows').innerHTML = '';
+            this._addQuickBudgetRow();
+            this._addQuickBudgetRow();
+            this._addQuickBudgetRow();
+            this._updateQuickBudgetSaveCount();
+            UI.showModal('quickBudgetModal');
+        } else {
+            this._qeRowCount = 0;
+            document.getElementById('quickEntryRows').innerHTML = '';
+            this._addQuickEntryRow();
+            this._addQuickEntryRow();
+            this._addQuickEntryRow();
+            this._updateQuickEntrySaveCount();
+            UI.showModal('quickEntryModal');
+        }
+    },
+
+    _addQuickEntryRow() {
+        const tbody = document.getElementById('quickEntryRows');
+        const idx = this._qeRowCount++;
+        const today = Utils.getTodayDate();
+        const categories = Database.getCategories();
+        const catOptions = categories.map(c => '<option value="' + c.id + '">' + this._escapeHtml(c.name) + '</option>').join('');
+        const currentMonth = Utils.getCurrentMonth();
+
+        const tr = document.createElement('tr');
+        tr.dataset.qeIdx = idx;
+        tr.innerHTML =
+            '<td><input type="date" class="qe-date" value="' + today + '"></td>' +
+            '<td><input type="text" class="qe-desc" placeholder="Description"></td>' +
+            '<td><select class="qe-cat"><option value="">Select...</option>' + catOptions + '</select></td>' +
+            '<td><input type="number" class="qe-amount" step="0.01" min="0" placeholder="0.00"></td>' +
+            '<td><select class="qe-type"><option value="receivable">Receivable</option><option value="payable">Payable</option></select></td>' +
+            '<td><select class="qe-status"><option value="pending">Pending</option><option value="received">Received</option><option value="paid">Paid</option></select></td>' +
+            '<td><input type="month" class="qe-monthdue" value="' + currentMonth + '"></td>' +
+            '<td><input type="text" class="qe-notes" placeholder="Notes"></td>' +
+            '<td><button class="qe-delete-btn" title="Remove row">&times;</button></td>';
+
+        // Wire delete
+        tr.querySelector('.qe-delete-btn').addEventListener('click', () => {
+            tr.remove();
+            const expandRow = tbody.querySelector('tr.qe-expand-row[data-qe-parent="' + idx + '"]');
+            if (expandRow) expandRow.remove();
+            this._updateQuickEntrySaveCount();
+        });
+
+        // Wire category change for smart expand
+        tr.querySelector('.qe-cat').addEventListener('change', (e) => {
+            const catId = parseInt(e.target.value);
+            const cat = categories.find(c => c.id === catId);
+            const existingExpand = tbody.querySelector('tr.qe-expand-row[data-qe-parent="' + idx + '"]');
+
+            if (cat && cat.is_sales) {
+                if (!existingExpand) {
+                    const expandTr = document.createElement('tr');
+                    expandTr.className = 'qe-expand-row';
+                    expandTr.dataset.qeParent = idx;
+                    expandTr.innerHTML = '<td colspan="9"><div class="qe-expand-fields">' +
+                        '<div class="form-group"><label>Pretax Amount</label><input type="number" class="qe-pretax" step="0.01" min="0" placeholder="0.00"></div>' +
+                        '<div class="form-group"><label>Inventory Cost</label><input type="number" class="qe-invcost" step="0.01" min="0" placeholder="0.00"></div>' +
+                        '<div class="form-group"><label>Sale Start</label><input type="date" class="qe-salestart"></div>' +
+                        '<div class="form-group"><label>Sale End</label><input type="date" class="qe-saleend"></div>' +
+                        '<div class="form-group"><label>Payment For</label><input type="month" class="qe-paymentfor"></div>' +
+                        '</div></td>';
+                    tr.after(expandTr);
+                }
+            } else if (existingExpand) {
+                existingExpand.remove();
+            }
+        });
+
+        // Tab from last cell of last row adds new row
+        tr.querySelector('.qe-notes').addEventListener('keydown', (e) => {
+            if (e.key === 'Tab' && !e.shiftKey) {
+                const allRows = tbody.querySelectorAll('tr:not(.qe-expand-row)');
+                if (tr === allRows[allRows.length - 1]) {
+                    e.preventDefault();
+                    this._addQuickEntryRow();
+                    this._updateQuickEntrySaveCount();
+                    const newRow = tbody.querySelector('tr:not(.qe-expand-row):last-child');
+                    if (newRow) newRow.querySelector('.qe-date').focus();
+                }
+            }
+        });
+
+        tbody.appendChild(tr);
+    },
+
+    _addQuickBudgetRow() {
+        const tbody = document.getElementById('quickBudgetRows');
+        const idx = this._qeRowCount++;
+        const groups = Database.getBudgetGroups();
+        const groupOptions = groups.map(g => '<option value="' + g.id + '">' + this._escapeHtml(g.name) + '</option>').join('');
+        const currentMonth = Utils.getCurrentMonth();
+
+        const tr = document.createElement('tr');
+        tr.dataset.qeIdx = idx;
+        tr.innerHTML =
+            '<td><input type="text" class="qe-name" placeholder="Expense name"></td>' +
+            '<td><input type="number" class="qe-amount" step="0.01" min="0" placeholder="0.00"></td>' +
+            '<td><select class="qe-group"><option value="">No group</option>' + groupOptions + '</select></td>' +
+            '<td><input type="month" class="qe-start" value="' + currentMonth + '"></td>' +
+            '<td><input type="month" class="qe-end" placeholder="Ongoing"></td>' +
+            '<td><input type="text" class="qe-notes" placeholder="Notes"></td>' +
+            '<td><button class="qe-delete-btn" title="Remove row">&times;</button></td>';
+
+        tr.querySelector('.qe-delete-btn').addEventListener('click', () => {
+            tr.remove();
+            this._updateQuickBudgetSaveCount();
+        });
+
+        tr.querySelector('.qe-notes').addEventListener('keydown', (e) => {
+            if (e.key === 'Tab' && !e.shiftKey) {
+                const allRows = tbody.querySelectorAll('tr');
+                if (tr === allRows[allRows.length - 1]) {
+                    e.preventDefault();
+                    this._addQuickBudgetRow();
+                    this._updateQuickBudgetSaveCount();
+                    const newRow = tbody.querySelector('tr:last-child');
+                    if (newRow) newRow.querySelector('.qe-name').focus();
+                }
+            }
+        });
+
+        tbody.appendChild(tr);
+    },
+
+    _updateQuickEntrySaveCount() {
+        const rows = document.getElementById('quickEntryRows').querySelectorAll('tr:not(.qe-expand-row)');
+        document.getElementById('quickEntrySaveBtn').textContent = 'Save All (' + rows.length + ')';
+    },
+
+    _updateQuickBudgetSaveCount() {
+        const rows = document.getElementById('quickBudgetRows').querySelectorAll('tr');
+        document.getElementById('quickBudgetSaveBtn').textContent = 'Save All (' + rows.length + ')';
+    },
+
+    saveQuickEntries() {
+        const tbody = document.getElementById('quickEntryRows');
+        const rows = tbody.querySelectorAll('tr:not(.qe-expand-row)');
+        let errors = 0;
+        let saved = 0;
+
+        // Clear previous errors
+        tbody.querySelectorAll('.qe-error').forEach(el => el.classList.remove('qe-error'));
+
+        for (const row of rows) {
+            const date = row.querySelector('.qe-date').value;
+            const catId = row.querySelector('.qe-cat').value;
+            const amount = parseFloat(row.querySelector('.qe-amount').value);
+
+            let hasError = false;
+            if (!date) { row.querySelector('.qe-date').classList.add('qe-error'); hasError = true; }
+            if (!catId) { row.querySelector('.qe-cat').classList.add('qe-error'); hasError = true; }
+            if (!amount || isNaN(amount)) { row.querySelector('.qe-amount').classList.add('qe-error'); hasError = true; }
+
+            if (hasError) { errors++; continue; }
+
+            const idx = row.dataset.qeIdx;
+            const expandRow = tbody.querySelector('tr.qe-expand-row[data-qe-parent="' + idx + '"]');
+
+            const data = {
+                entry_date: date,
+                category_id: parseInt(catId),
+                item_description: row.querySelector('.qe-desc').value || null,
+                amount: amount,
+                transaction_type: row.querySelector('.qe-type').value,
+                status: row.querySelector('.qe-status').value,
+                month_due: row.querySelector('.qe-monthdue').value || null,
+                notes: row.querySelector('.qe-notes').value || null,
+                pretax_amount: expandRow ? (parseFloat(expandRow.querySelector('.qe-pretax').value) || null) : null,
+                inventory_cost: expandRow ? (parseFloat(expandRow.querySelector('.qe-invcost').value) || null) : null,
+                sale_date_start: expandRow ? (expandRow.querySelector('.qe-salestart').value || null) : null,
+                sale_date_end: expandRow ? (expandRow.querySelector('.qe-saleend').value || null) : null,
+                payment_for_month: expandRow ? (expandRow.querySelector('.qe-paymentfor').value || null) : null
+            };
+
+            const id = Database.addTransaction(data);
+            this._manageSalesTaxEntry(id, data);
+            this._manageInventoryCostEntry(id, data);
+            saved++;
+        }
+
+        const errSpan = document.getElementById('quickEntryErrors');
+        if (errors > 0) {
+            errSpan.textContent = errors + ' of ' + rows.length + ' rows have errors';
+        } else {
+            errSpan.textContent = '';
+        }
+
+        if (saved > 0) {
+            this.pushUndo({
+                type: 'quick-entry',
+                label: 'Quick add ' + saved + ' transactions',
+                undo: () => { /* Complex multi-add undo — not practical for bulk quick entry */ },
+                redo: () => {}
+            });
+
+            if (errors === 0) {
+                UI.hideModal('quickEntryModal');
+                UI.showNotification(saved + ' transactions added', 'success');
+            } else {
+                UI.showNotification(saved + ' saved, ' + errors + ' have errors', 'info');
+                // Remove saved rows
+                for (const row of Array.from(rows)) {
+                    if (!row.querySelector('.qe-error')) {
+                        const idx = row.dataset.qeIdx;
+                        const expandRow = tbody.querySelector('tr.qe-expand-row[data-qe-parent="' + idx + '"]');
+                        if (expandRow) expandRow.remove();
+                        row.remove();
+                    }
+                }
+                this._updateQuickEntrySaveCount();
+            }
+            this.refreshAll();
+        }
+    },
+
+    saveQuickBudgetEntries() {
+        const tbody = document.getElementById('quickBudgetRows');
+        const rows = tbody.querySelectorAll('tr');
+        let errors = 0;
+        let saved = 0;
+
+        tbody.querySelectorAll('.qe-error').forEach(el => el.classList.remove('qe-error'));
+
+        for (const row of rows) {
+            const name = row.querySelector('.qe-name').value.trim();
+            const amount = parseFloat(row.querySelector('.qe-amount').value);
+            const startMonth = row.querySelector('.qe-start').value;
+
+            let hasError = false;
+            if (!name) { row.querySelector('.qe-name').classList.add('qe-error'); hasError = true; }
+            if (!amount || isNaN(amount)) { row.querySelector('.qe-amount').classList.add('qe-error'); hasError = true; }
+            if (!startMonth) { row.querySelector('.qe-start').classList.add('qe-error'); hasError = true; }
+
+            if (hasError) { errors++; continue; }
+
+            const groupId = row.querySelector('.qe-group').value || null;
+            const endMonth = row.querySelector('.qe-end').value || null;
+            const notes = row.querySelector('.qe-notes').value || null;
+
+            Database.addBudgetExpense(name, amount, startMonth, endMonth, null, notes, groupId ? parseInt(groupId) : null);
+            saved++;
+        }
+
+        const errSpan = document.getElementById('quickBudgetErrors');
+        if (errors > 0) {
+            errSpan.textContent = errors + ' of ' + rows.length + ' rows have errors';
+        } else {
+            errSpan.textContent = '';
+        }
+
+        if (saved > 0) {
+            if (errors === 0) {
+                UI.hideModal('quickBudgetModal');
+                UI.showNotification(saved + ' budget items added', 'success');
+            } else {
+                UI.showNotification(saved + ' saved, ' + errors + ' have errors', 'info');
+                for (const row of Array.from(rows)) {
+                    if (!row.querySelector('.qe-error')) row.remove();
+                }
+                this._updateQuickBudgetSaveCount();
+            }
+            this.refreshBudget();
+        }
+    },
+
+    _showQuickAddButton(tab) {
+        const btn = document.getElementById('quickAddBtn');
+        if (!btn) return;
+        btn.style.display = (tab === 'journal' || tab === 'budget') ? '' : 'none';
     },
 
     // ==================== THEME ====================
@@ -1020,6 +2060,19 @@ const App = {
      * Set up event listeners
      */
     setupEventListeners() {
+        // ==================== UNDO/REDO KEYBOARD SHORTCUTS ====================
+        document.addEventListener('keydown', (e) => {
+            // Don't intercept when typing in inputs/textareas
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+            if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+                e.preventDefault();
+                this.undo();
+            } else if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
+                e.preventDefault();
+                this.redo();
+            }
+        });
+
         // ==================== SIDEBAR TOGGLE ====================
         document.getElementById('sidebarToggleBtn').addEventListener('click', () => {
             const container = document.querySelector('.app-container');
@@ -1647,6 +2700,30 @@ const App = {
             UI.hideModal('saveAsModal');
         });
 
+        // ==================== MODE TOGGLE ====================
+
+        document.querySelectorAll('.mode-toggle-btn').forEach(btn => {
+            btn.addEventListener('click', () => this.switchMode(btn.dataset.mode));
+        });
+
+        // ==================== QUICK ENTRY ====================
+
+        document.getElementById('quickAddBtn').addEventListener('click', () => {
+            const activeTab = document.querySelector('.main-tab.active');
+            const tab = activeTab ? activeTab.dataset.tab : 'journal';
+            this.openQuickEntry(tab === 'budget' ? 'budget' : 'journal');
+        });
+
+        document.getElementById('quickEntryCloseBtn').addEventListener('click', () => UI.hideModal('quickEntryModal'));
+        document.getElementById('quickEntryCancelBtn').addEventListener('click', () => UI.hideModal('quickEntryModal'));
+        document.getElementById('quickEntrySaveBtn').addEventListener('click', () => this.saveQuickEntries());
+        document.getElementById('quickEntryAddRowBtn').addEventListener('click', () => { this._addQuickEntryRow(); this._updateQuickEntrySaveCount(); });
+
+        document.getElementById('quickBudgetCloseBtn').addEventListener('click', () => UI.hideModal('quickBudgetModal'));
+        document.getElementById('quickBudgetCancelBtn').addEventListener('click', () => UI.hideModal('quickBudgetModal'));
+        document.getElementById('quickBudgetSaveBtn').addEventListener('click', () => this.saveQuickBudgetEntries());
+        document.getElementById('quickBudgetAddRowBtn').addEventListener('click', () => { this._addQuickBudgetRow(); this._updateQuickBudgetSaveCount(); });
+
         // ==================== MAIN TABS ====================
 
         document.querySelectorAll('.main-tab[data-tab]').forEach(btn => {
@@ -1852,10 +2929,12 @@ const App = {
         document.getElementById('bsMonthMonth').addEventListener('change', () => {
             this._saveBsMonth();
             this.refreshBalanceSheet();
+            if (this.currentMode === 'analyze') this._renderAnalyzeBSChart();
         });
         document.getElementById('bsMonthYear').addEventListener('change', () => {
             this._saveBsMonth();
             this.refreshBalanceSheet();
+            if (this.currentMode === 'analyze') this._renderAnalyzeBSChart();
         });
 
         // Fixed asset form
@@ -2540,10 +3619,25 @@ const App = {
             let parentId;
             if (editingId) {
                 parentId = parseInt(editingId);
+                const beforeTx = Database.getTransactionById(parentId);
                 Database.updateTransaction(parentId, data);
+                const afterData = Object.assign({}, data);
+                this.pushUndo({
+                    type: 'transaction-edit',
+                    label: 'Edit "' + (data.item_description || 'transaction') + '"',
+                    undo: () => { if (beforeTx) Database.updateTransaction(parentId, beforeTx); },
+                    redo: () => { Database.updateTransaction(parentId, afterData); }
+                });
                 UI.showNotification('Transaction updated successfully', 'success');
             } else {
                 parentId = Database.addTransaction(data);
+                const addedData = Object.assign({}, data);
+                this.pushUndo({
+                    type: 'transaction-create',
+                    label: 'Add "' + (data.item_description || 'transaction') + '"',
+                    undo: () => { Database.deleteTransaction(parentId); },
+                    redo: () => { Database.addTransaction(addedData); }
+                });
                 UI.showNotification('Transaction added successfully', 'success');
             }
 
@@ -3255,7 +4349,26 @@ const App = {
         }
 
         try {
+            // Snapshot before states for undo
+            const beforeStates = updates.map(u => {
+                const t = Database.getTransactionById(u.id);
+                return { id: u.id, status: t.status, date_processed: t.date_processed, month_paid: t.month_paid };
+            });
+
             Database.bulkSetDatePaid(updates, dateProcessed, monthPaid);
+
+            this.pushUndo({
+                type: 'bulk-status-change',
+                label: 'Bulk mark ' + updates.length + ' as paid',
+                undo: () => {
+                    for (const b of beforeStates) {
+                        Database.updateTransactionStatus(b.id, b.status, b.month_paid);
+                        if (b.date_processed) Database.setTransactionDateProcessed(b.id, b.date_processed);
+                    }
+                },
+                redo: () => { Database.bulkSetDatePaid(updates, dateProcessed, monthPaid); }
+            });
+
             this.refreshSummary();
             this.refreshTransactions();
             if (document.getElementById('cashflowTab').style.display !== 'none') this.refreshCashFlow();
@@ -3283,7 +4396,26 @@ const App = {
         const ids = Array.from(this.bulkSelectedIds);
 
         try {
+            // Snapshot before states for undo
+            const beforeStates = ids.map(id => {
+                const t = Database.getTransactionById(id);
+                return { id, status: t.status, date_processed: t.date_processed, month_paid: t.month_paid };
+            });
+
             Database.bulkResetToPending(ids);
+
+            this.pushUndo({
+                type: 'bulk-reset-pending',
+                label: 'Bulk reset ' + count + ' to pending',
+                undo: () => {
+                    for (const b of beforeStates) {
+                        Database.updateTransactionStatus(b.id, b.status, b.month_paid);
+                        if (b.date_processed) Database.setTransactionDateProcessed(b.id, b.date_processed);
+                    }
+                },
+                redo: () => { Database.bulkResetToPending(ids); }
+            });
+
             this.refreshSummary();
             this.refreshTransactions();
             if (document.getElementById('cashflowTab').style.display !== 'none') this.refreshCashFlow();
@@ -3376,17 +4508,50 @@ const App = {
     confirmDelete() {
         if (this.deleteTargetId) {
             try {
-                // Cascade-delete linked sales tax entry if present
+                // Snapshot for undo before deleting
+                const deletedTx = Database.getTransactionById(this.deleteTargetId);
                 const childId = Database.getLinkedSalesTaxTransaction(this.deleteTargetId);
+                const deletedChild = childId ? Database.getTransactionById(childId) : null;
+                const invCostChildId = Database.getLinkedInventoryCostTransaction(this.deleteTargetId);
+                const deletedInvCost = invCostChildId ? Database.getTransactionById(invCostChildId) : null;
+
+                // Cascade-delete linked sales tax entry if present
                 if (childId) {
                     Database.deleteTransaction(childId);
                 }
                 // Cascade-delete linked inventory cost entry if present
-                const invCostChildId = Database.getLinkedInventoryCostTransaction(this.deleteTargetId);
                 if (invCostChildId) {
                     Database.deleteTransaction(invCostChildId);
                 }
                 Database.deleteTransaction(this.deleteTargetId);
+
+                // Push undo action
+                if (deletedTx) {
+                    const label = 'Delete "' + (deletedTx.item_description || 'transaction') + '"';
+                    this.pushUndo({
+                        type: 'transaction-delete', label,
+                        undo: () => {
+                            Database.addTransaction(deletedTx);
+                            if (deletedChild) Database.addTransaction(deletedChild);
+                            if (deletedInvCost) Database.addTransaction(deletedInvCost);
+                        },
+                        redo: () => {
+                            // Re-delete by description match since IDs may change
+                            const all = Database.getTransactions();
+                            const match = all.find(t => t.entry_date === deletedTx.entry_date && t.amount === deletedTx.amount && t.item_description === deletedTx.item_description);
+                            if (match) Database.deleteTransaction(match.id);
+                            if (deletedChild) {
+                                const cm = all.find(t => t.entry_date === deletedChild.entry_date && t.amount === deletedChild.amount);
+                                if (cm) Database.deleteTransaction(cm.id);
+                            }
+                            if (deletedInvCost) {
+                                const im = all.find(t => t.entry_date === deletedInvCost.entry_date && t.amount === deletedInvCost.amount);
+                                if (im) Database.deleteTransaction(im.id);
+                            }
+                        }
+                    });
+                }
+
                 UI.showNotification('Transaction deleted', 'success');
                 this.refreshAll();
             } catch (error) {
@@ -6304,6 +7469,7 @@ const App = {
      */
     async switchToCompany(companyId) {
         document.body.style.opacity = '0.5';
+        this.clearUndoHistory();
         try {
             await CompanyManager.switchTo(companyId);
             this._reloadUI();
@@ -8066,7 +9232,6 @@ const App = {
         const pretaxAfterDisc = Math.round((subtotal - discount) * 100) / 100;
 
         // Build description
-        const sourceLabel = source === 'online' ? 'Online' : source === 'tradeshow' ? 'Tradeshow' : 'Tradeshow + Online';
         let dateLabel = '';
         if (from && to && from === to) {
             dateLabel = this.veFmtDate(from);
@@ -8077,7 +9242,14 @@ const App = {
         } else if (to) {
             dateLabel = 'through ' + this.veFmtDate(to);
         }
-        const description = `${sourceLabel} sales ${dateLabel}`.trim();
+        let nameLabel;
+        if (this._veJournalEventId) {
+            const evt = Database.getAllVEEvents().find(e => e.id === this._veJournalEventId);
+            nameLabel = evt ? evt.name : 'Event';
+        } else {
+            nameLabel = (source === 'online' ? 'Online' : source === 'tradeshow' ? 'Tradeshow' : 'Tradeshow + Online') + ' sales';
+        }
+        const description = `${nameLabel} ${dateLabel}`.trim();
 
         // Use the latest date as entry date; received date = last transaction date
         const sortedDates = filtered.map(s => s.date).filter(Boolean).sort();
@@ -8086,7 +9258,7 @@ const App = {
         const monthDue = entryDate.substring(0, 7);
 
         try {
-            const parentId = Database.addTransaction({
+            const txData = {
                 entry_date: entryDate,
                 category_id: categoryId,
                 item_description: description,
@@ -8099,7 +9271,12 @@ const App = {
                 month_paid: monthDue,
                 sale_date_start: from || null,
                 sale_date_end: to || null,
-            });
+            };
+            if (this._veJournalEventId) {
+                txData.source_type = 've_event';
+                txData.source_id = this._veJournalEventId;
+            }
+            const parentId = Database.addTransaction(txData);
 
             // Auto-manage linked sales tax entry
             const data = {
@@ -8113,12 +9290,49 @@ const App = {
             };
             this._manageSalesTaxEntry(parentId, data);
 
+            // Mark event as added to journal if created from an event
+            if (this._veJournalEventId) {
+                Database.markVEEventJournalAdded(this._veJournalEventId);
+            }
+
             UI.hideModal('veJournalModal');
             this.refreshAll();
             UI.showNotification(`Journal entry created: ${description}`, 'success');
         } catch (error) {
             console.error('Error creating VE journal entry:', error);
             UI.showNotification('Failed to create journal entry', 'error');
+        }
+    },
+
+    veRemoveJournalForEvent(eventId) {
+        if (this._guardViewOnly()) return;
+
+        const txId = Database.getVEEventTransaction(eventId);
+        if (!txId) {
+            // No linked transaction found — just reset the flag
+            Database.markVEEventJournalAdded(eventId, 0);
+            this.veRenderEventsPanel();
+            UI.showNotification('Event unmarked (no linked journal entry found)', 'info');
+            return;
+        }
+
+        if (!confirm('Remove the journal entry for this event? This will delete the transaction and any linked sales tax entry.')) return;
+
+        try {
+            // Cascade-delete linked children
+            const childId = Database.getLinkedSalesTaxTransaction(txId);
+            if (childId) Database.deleteTransaction(childId);
+            const invCostId = Database.getLinkedInventoryCostTransaction(txId);
+            if (invCostId) Database.deleteTransaction(invCostId);
+
+            Database.deleteTransaction(txId);
+            Database.markVEEventJournalAdded(eventId, 0);
+
+            this.refreshAll();
+            UI.showNotification('Journal entry removed', 'success');
+        } catch (error) {
+            console.error('Error removing VE journal entry:', error);
+            UI.showNotification('Failed to remove journal entry', 'error');
         }
     },
 
@@ -8256,9 +9470,11 @@ const App = {
                 ? this.veFmtDate(evt.start_date)
                 : `${this.veFmtDate(evt.start_date)} — ${this.veFmtDate(evt.end_date)}`;
 
-            html += `<div class="ve-event-card" data-event-id="${evt.id}">
+            const isAdded = evt.journal_added === 1;
+            html += `<div class="ve-event-card${isAdded ? ' ve-event-added' : ''}" data-event-id="${evt.id}">
                 <div class="ve-event-card-header">
                     <input class="ve-event-name-input" type="text" value="${Utils.escapeHtml(evt.name)}" data-event-id="${evt.id}" data-field="name">
+                    ${isAdded ? '<span class="ve-event-added-badge">In Journal</span>' : ''}
                     <button class="ve-event-delete" data-event-id="${evt.id}" title="Delete event">&times;</button>
                 </div>
                 <div class="ve-event-card-meta">
@@ -8274,7 +9490,13 @@ const App = {
                     <span>${this.veFmt(salesTotal)}</span>
                 </div>
                 <div class="ve-event-card-actions">
-                    <button class="btn btn-sm ve-event-journal-btn" data-event-id="${evt.id}" ${salesCount === 0 ? 'disabled' : ''}>+ Add to Journal</button>
+                    ${isAdded
+                        ? `<div class="ve-event-journal-status">
+                            <span class="ve-event-added-badge">In Journal</span>
+                            <button class="btn btn-sm ve-event-remove-btn" data-event-id="${evt.id}">Remove</button>
+                           </div>`
+                        : `<button class="btn btn-sm ve-event-journal-btn" data-event-id="${evt.id}" ${salesCount === 0 ? 'disabled' : ''}>+ Add to Journal</button>`
+                    }
                 </div>
             </div>`;
         }
@@ -8315,6 +9537,12 @@ const App = {
             btn.addEventListener('click', (e) => {
                 const id = Number(e.target.dataset.eventId);
                 this.veOpenJournalModalForEvent(id);
+            });
+        });
+        list.querySelectorAll('.ve-event-remove-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const id = Number(e.target.dataset.eventId);
+                this.veRemoveJournalForEvent(id);
             });
         });
     },
@@ -8609,6 +9837,22 @@ const App = {
     // ==================== CHANGE LOG ====================
 
     changelogData: [
+        {
+            version: '1.9',
+            date: '2026-03-14',
+            title: 'Dashboard, Quick Entry & Undo System',
+            changes: [
+                { type: 'feature', text: 'Added Work / Analyze mode toggle in sidebar — separates data entry tabs from reporting tabs' },
+                { type: 'feature', text: 'New Dashboard tab with KPI cards, sparklines, and break-even progress bar' },
+                { type: 'feature', text: 'Quick Entry modal — batch-add multiple journal entries in a spreadsheet-style grid' },
+                { type: 'feature', text: 'Undo/Redo system with toast notifications and Ctrl+Z / Ctrl+Y support' },
+                { type: 'feature', text: 'Analyze mode chart panels for Cash Flow, P&L, Balance Sheet, and Break-Even tabs' },
+                { type: 'feature', text: 'Interactive tutorial lessons with guided input and impact visualization' },
+                { type: 'feature', text: 'VE Events: journal_added tracking for event-to-journal linking' },
+                { type: 'improved', text: 'Sidebar auto-hides group labels when all tabs in a group are hidden' },
+                { type: 'fix', text: 'Fixed Chart.js legend point style rendering (circle style with consistent sizing)' }
+            ]
+        },
         {
             version: '1.8',
             date: '2026-03-13',

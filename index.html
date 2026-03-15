@@ -43,6 +43,14 @@
                 </div>
             </div>
 
+            <!-- Mode Toggle (Work / Analyze) -->
+            <div class="mode-toggle-wrapper">
+                <div class="mode-toggle">
+                    <button class="mode-toggle-btn active" data-mode="work">Work</button>
+                    <button class="mode-toggle-btn" data-mode="analyze">Analyze</button>
+                </div>
+            </div>
+
             <!-- Tab Navigation (vertical sidebar) -->
             <div class="main-tabs-wrapper">
                 <nav class="main-tabs" id="mainTabs">
@@ -50,6 +58,11 @@
                     <button class="main-tab active" data-tab="journal">
                         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
                         Journal
+                    </button>
+                    <span class="sidebar-nav-group">Dashboard</span>
+                    <button class="main-tab" data-tab="dashboard">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+                        Dashboard
                     </button>
                     <span class="sidebar-nav-group">Reports</span>
                     <button class="main-tab" data-tab="cashflow">
@@ -266,6 +279,7 @@
                 <h1 class="page-title" id="pageTitle">Journal</h1>
             </div>
             <div class="header-actions">
+                <button id="quickAddBtn" class="btn btn-primary" style="display:none;">&#9889; Quick Add</button>
                 <button id="newEntryBtn" class="btn btn-primary">+ New Entry</button>
                 <button id="addFolderEntriesBtn" class="btn btn-primary">+ Add Folder</button>
                 <button id="manageCategoriesBtn" class="btn btn-secondary">Categories</button>
@@ -292,6 +306,8 @@
                 <span class="summary-value" id="accountsPayable">$0.00</span>
             </div>
         </section>
+
+        <!-- Mode Toggle moved to sidebar -->
 
         <!-- Main Tab Navigation is now in the sidebar -->
 
@@ -426,6 +442,76 @@
             </div>
         </div>
 
+        <!-- Quick Entry Modal (Journal) -->
+        <div id="quickEntryModal" class="modal">
+            <div class="modal-content modal-quick-entry">
+                <div class="quick-entry-header">
+                    <h3>Quick Entry — Add Multiple</h3>
+                    <button type="button" class="quick-entry-close" id="quickEntryCloseBtn">&times;</button>
+                </div>
+                <div class="quick-entry-grid" id="quickEntryGrid">
+                    <table class="quick-entry-table">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Description</th>
+                                <th>Category</th>
+                                <th>Amount</th>
+                                <th>Type</th>
+                                <th>Status</th>
+                                <th>Month Due</th>
+                                <th>Notes</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody id="quickEntryRows"></tbody>
+                    </table>
+                </div>
+                <div class="quick-entry-footer">
+                    <button type="button" class="btn btn-secondary btn-small" id="quickEntryAddRowBtn">+ Add Row</button>
+                    <div class="quick-entry-actions">
+                        <span class="quick-entry-errors" id="quickEntryErrors"></span>
+                        <button type="button" class="btn btn-secondary" id="quickEntryCancelBtn">Cancel</button>
+                        <button type="button" class="btn btn-primary" id="quickEntrySaveBtn">Save All (0)</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Quick Entry Modal (Budget) -->
+        <div id="quickBudgetModal" class="modal">
+            <div class="modal-content modal-quick-entry">
+                <div class="quick-entry-header">
+                    <h3>Quick Entry — Add Budget Items</h3>
+                    <button type="button" class="quick-entry-close" id="quickBudgetCloseBtn">&times;</button>
+                </div>
+                <div class="quick-entry-grid" id="quickBudgetGrid">
+                    <table class="quick-entry-table">
+                        <thead>
+                            <tr>
+                                <th>Expense Name</th>
+                                <th>Amount</th>
+                                <th>Group</th>
+                                <th>Start Month</th>
+                                <th>End Month</th>
+                                <th>Notes</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody id="quickBudgetRows"></tbody>
+                    </table>
+                </div>
+                <div class="quick-entry-footer">
+                    <button type="button" class="btn btn-secondary btn-small" id="quickBudgetAddRowBtn">+ Add Row</button>
+                    <div class="quick-entry-actions">
+                        <span class="quick-entry-errors" id="quickBudgetErrors"></span>
+                        <button type="button" class="btn btn-secondary" id="quickBudgetCancelBtn">Cancel</button>
+                        <button type="button" class="btn btn-primary" id="quickBudgetSaveBtn">Save All (0)</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Filters -->
         <section class="filters-section">
             <div class="filter-group sort-group">
@@ -491,6 +577,9 @@
 
         <!-- Cash Flow Summary Tab -->
         <div id="cashflowTab" style="display: none;">
+            <div class="analyze-chart-panel" id="analyzeCashflowChart" style="display:none;">
+                <canvas id="analyzeChartCF" height="280"></canvas>
+            </div>
             <section class="cashflow-section">
                 <div class="cashflow-header">
                     <h3>Cash Flow Summary</h3>
@@ -516,6 +605,9 @@
 
         <!-- Profit & Loss Tab -->
         <div id="pnlTab" style="display: none;">
+            <div class="analyze-chart-panel" id="analyzePnlChart" style="display:none;">
+                <canvas id="analyzeChartPnL" height="280"></canvas>
+            </div>
             <section class="pnl-section">
                 <div class="pnl-header">
                     <h3>Profit &amp; Loss Statement</h3>
@@ -547,6 +639,12 @@
 
         <!-- Balance Sheet Tab -->
         <div id="balancesheetTab" style="display: none;">
+            <div class="analyze-chart-panel" id="analyzeBSChart" style="display:none;">
+                <div class="analyze-chart-row">
+                    <canvas id="analyzeChartBS" height="280"></canvas>
+                </div>
+                <div class="analyze-gauges" id="analyzeGauges"></div>
+            </div>
             <section class="bs-section">
                 <div class="bs-header">
                     <h3>Balance Sheet</h3>
@@ -657,6 +755,9 @@
 
         <!-- Break-Even Analysis Tab -->
         <div id="breakevenTab" style="display: none;">
+            <div class="analyze-chart-panel" id="analyzeBEChart" style="display:none;">
+                <div class="analyze-be-progress" id="analyzeBEProgress"></div>
+            </div>
             <section class="be-section">
                 <div class="be-header">
                     <h3>Break-Even Analysis</h3>
@@ -1160,6 +1261,14 @@
 
                 </div><!-- /#veDashboard -->
             </section>
+        </div>
+
+        <!-- Dashboard Tab (Analyze) -->
+        <div id="dashboardTab" style="display: none;">
+            <div class="dashboard-content">
+                <div class="dashboard-kpi-cards" id="dashboardKpiCards"></div>
+                <div class="dashboard-sections" id="dashboardSections"></div>
+            </div>
         </div>
 
         <!-- Change Log Tab -->
