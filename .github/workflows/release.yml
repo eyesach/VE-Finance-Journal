@@ -4,6 +4,9 @@ on:
   release:
     types: [created]
 
+permissions:
+  contents: write
+
 jobs:
   build:
     strategy:
@@ -25,10 +28,10 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnyi/rust-toolchain@stable
         with:
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
@@ -46,8 +49,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
+          tauriScript: npx tauri
+          args: ${{ matrix.args }}
           tagName: ${{ github.ref_name }}
           releaseName: 'Accounting Journal ${{ github.ref_name }}'
           releaseBody: 'Download the installer for your platform below.'
           releaseDraft: false
           prerelease: false
+          updaterJsonPreferNsis: true
