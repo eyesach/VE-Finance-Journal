@@ -501,7 +501,7 @@ const App = {
         balancesheet: 'Balance Sheet', assets: 'Assets & Equity',
         loan: 'Loans', budget: 'Budget', breakeven: 'Break-Even',
         projectedsales: 'Projected Sales', products: 'Products', vesales: 'VE Sales',
-        dashboard: 'Dashboard'
+        dashboard: 'Dashboard', changelog: 'Change Log'
     },
 
     WORK_TABS: ['journal', 'budget', 'products', 'vesales', 'assets', 'loan', 'projectedsales'],
@@ -518,11 +518,7 @@ const App = {
 
         nav.querySelectorAll('.main-tab[data-tab]').forEach(btn => {
             const tab = btn.dataset.tab;
-            if (tab === 'changelog') {
-                btn.style.display = 'none';
-                return;
-            }
-            if (!modeTabs.includes(tab)) {
+            if (!modeTabs.includes(tab) && tab !== 'changelog') {
                 btn.style.display = 'none';
             } else if (hidden.includes(tab)) {
                 btn.style.display = 'none';
