@@ -168,10 +168,10 @@ const App = {
             // Restore tab order, hidden tabs, and set up tab drag-drop
             this.restoreTabOrder();
             this.setupTabDragDrop();
-            // Clean stale 'changelog' from hidden tabs (it's always visible)
+            // Clean stale always-visible tabs from hidden tabs
             const ht = Database.getHiddenTabs();
-            if (ht.includes('changelog')) {
-                Database.setHiddenTabs(ht.filter(t => t !== 'changelog'));
+            if (ht.includes('changelog') || ht.includes('quickguide')) {
+                Database.setHiddenTabs(ht.filter(t => t !== 'changelog' && t !== 'quickguide'));
             }
             this.applyHiddenTabs();
             this.setupTabScrollFade();
@@ -497,9 +497,11 @@ const App = {
 
     _pinInfoGroup(nav) {
         const infoLabel = Array.from(nav.querySelectorAll('.sidebar-nav-group')).find(el => el.textContent.trim() === 'Info');
+        const quickguideBtn = nav.querySelector('.main-tab[data-tab="quickguide"]');
         const changelogBtn = nav.querySelector('.main-tab[data-tab="changelog"]');
         const gearBtn = document.getElementById('manageTabsBtn');
         if (infoLabel) nav.appendChild(infoLabel);
+        if (quickguideBtn) nav.appendChild(quickguideBtn);
         if (changelogBtn) nav.appendChild(changelogBtn);
         if (gearBtn) nav.appendChild(gearBtn);
     },
@@ -512,7 +514,7 @@ const App = {
         balancesheet: 'Balance Sheet', assets: 'Assets & Equity',
         loan: 'Loans', budget: 'Budget', breakeven: 'Break-Even',
         projectedsales: 'Projected Sales', products: 'Products', vesales: 'VE Sales',
-        dashboard: 'Dashboard', changelog: 'Change Log'
+        dashboard: 'Dashboard', quickguide: 'Quick Guide', changelog: 'Change Log'
     },
 
     WORK_TABS: ['journal', 'budget', 'products', 'vesales', 'assets', 'loan', 'projectedsales'],
@@ -529,8 +531,8 @@ const App = {
 
         nav.querySelectorAll('.main-tab[data-tab]').forEach(btn => {
             const tab = btn.dataset.tab;
-            if (tab === 'changelog') {
-                // Changelog is always visible — not mode-dependent or hideable
+            if (tab === 'changelog' || tab === 'quickguide') {
+                // Always visible — not mode-dependent or hideable
                 btn.style.display = '';
                 return;
             }
@@ -599,7 +601,7 @@ const App = {
 
         document.getElementById('tabCtxHide').addEventListener('click', () => {
             menu.style.display = 'none';
-            if (!targetTab || targetTab === 'changelog') return;
+            if (!targetTab || targetTab === 'changelog' || targetTab === 'quickguide') return;
             const hidden = Database.getHiddenTabs();
             if (!hidden.includes(targetTab)) {
                 hidden.push(targetTab);
@@ -992,7 +994,7 @@ const App = {
             btn.classList.toggle('active', btn.dataset.tab === tab);
         });
 
-        const tabs = ['journalTab', 'cashflowTab', 'pnlTab', 'balancesheetTab', 'assetsTab', 'loanTab', 'budgetTab', 'breakevenTab', 'projectedsalesTab', 'productsTab', 'vesalesTab', 'changelogTab', 'dashboardTab'];
+        const tabs = ['journalTab', 'cashflowTab', 'pnlTab', 'balancesheetTab', 'assetsTab', 'loanTab', 'budgetTab', 'breakevenTab', 'projectedsalesTab', 'productsTab', 'vesalesTab', 'quickguideTab', 'changelogTab', 'dashboardTab'];
         tabs.forEach(id => {
             const el = document.getElementById(id);
             if (el) el.style.display = 'none';
@@ -1031,6 +1033,9 @@ const App = {
         } else if (tab === 'dashboard') {
             document.getElementById('dashboardTab').style.display = 'block';
             this.refreshDashboard();
+        } else if (tab === 'quickguide') {
+            document.getElementById('quickguideTab').style.display = 'block';
+            this.renderQuickGuide();
         } else if (tab === 'changelog') {
             document.getElementById('changelogTab').style.display = 'block';
             this.renderChangelog();
@@ -10092,6 +10097,83 @@ const App = {
             ]
         }
     ],
+
+    quickGuideSteps: [
+        {
+            step: 1, title: 'Equity', tab: 'assets', tabLabel: 'Assets & Equity',
+            description: 'Set up your seed money and additional paid-in capital (APIC).',
+            auto: 'Auto-creates investment receivable entries in the Journal.'
+        },
+        {
+            step: 2, title: 'Loans', tab: 'loan', tabLabel: 'Loans',
+            description: 'Add any business loans with their terms and payment schedules.',
+            auto: 'Auto-creates a loan receivable entry and a budget expense for monthly payments, which then auto-creates monthly payable entries in the Journal.'
+        },
+        {
+            step: 3, title: 'Fixed Assets', tab: 'assets', tabLabel: 'Assets & Equity',
+            description: 'Add equipment, property, or other fixed assets.',
+            auto: 'Optionally auto-creates an asset purchase entry in the Journal.'
+        },
+        {
+            step: 4, title: 'Budget', tab: 'budget', tabLabel: 'Budget',
+            description: 'Add recurring monthly expenses like rent, utilities, and subscriptions. Don\'t add these to the Journal manually\u2014they\'re auto-filled!',
+            auto: 'Auto-creates monthly payable entries in the Journal for each budget expense.'
+        },
+        {
+            step: 5, title: 'Products', tab: 'products', tabLabel: 'Products',
+            description: 'Set up your product catalog with prices and inventory costs before recording sales.',
+            auto: null
+        },
+        {
+            step: 6, title: 'Sales', tab: 'vesales', tabLabel: 'VE Sales',
+            description: 'Record sales transactions using the VE Sales tab. Sales tax and cost of goods sold are handled for you.',
+            auto: 'Auto-creates sales tax payable and inventory cost (COGS) entries in the Journal.'
+        },
+        {
+            step: 7, title: 'Journal', tab: 'journal', tabLabel: 'Journal',
+            description: 'Use the Journal only for one-time or manual entries not covered above\u2014things like one-off expenses, miscellaneous income, or adjustments.',
+            auto: null
+        }
+    ],
+
+    quickGuideTips: [
+        'Budget items are auto-synced monthly\u2014don\'t duplicate them in the Journal.',
+        'Loan payments auto-appear via budget sync\u2014no manual journal entries needed.',
+        'Use the Sales workflow for revenue\u2014it handles tax and COGS automatically.',
+        'The Journal tab is for things that don\'t fit elsewhere.',
+        'You can always check the Journal tab to see all auto-created entries.'
+    ],
+
+    renderQuickGuide() {
+        const stepsContainer = document.getElementById('quickguideSteps');
+        const tipsContainer = document.getElementById('quickguideTips');
+        if (!stepsContainer) return;
+
+        stepsContainer.innerHTML = this.quickGuideSteps.map(s => {
+            const autoHtml = s.auto
+                ? '<div class="quickguide-auto"><span class="quickguide-auto-badge">Auto</span><span class="quickguide-auto-text">' + s.auto + '</span></div>'
+                : '';
+            return '<div class="quickguide-step">' +
+                '<div class="quickguide-step-header">' +
+                    '<div class="quickguide-step-number">' + s.step + '</div>' +
+                    '<div class="quickguide-step-meta">' +
+                        '<h3 class="quickguide-step-title">' + s.title + '</h3>' +
+                        '<button class="quickguide-tab-link" onclick="App.switchMainTab(\'' + s.tab + '\')">' + s.tabLabel + ' &rarr;</button>' +
+                    '</div>' +
+                '</div>' +
+                '<p class="quickguide-step-desc">' + s.description + '</p>' +
+                autoHtml +
+            '</div>';
+        }).join('');
+
+        if (tipsContainer) {
+            tipsContainer.innerHTML = '<div class="quickguide-tips-card">' +
+                '<h3 class="quickguide-tips-title">Key Tips</h3>' +
+                '<ul class="quickguide-tips-list">' +
+                this.quickGuideTips.map(t => '<li class="quickguide-tip-item">' + t + '</li>').join('') +
+                '</ul></div>';
+        }
+    },
 
     renderChangelog() {
         const container = document.getElementById('changelogTimeline');

@@ -3625,6 +3625,84 @@ textarea.tutorial-input-active {
     color: #a5b4fc;
 }
 
+/* ========== QUICK GUIDE ========== */
+
+.quickguide-section { max-width: 780px; margin: 0 auto; padding: 32px 24px; }
+.quickguide-header { margin-bottom: 32px; }
+.quickguide-title { font-size: 1.5rem; font-weight: 700; color: var(--text); margin: 0 0 6px 0; }
+.quickguide-subtitle { font-size: 0.85rem; color: var(--text-secondary, #6b7280); margin: 0; }
+.quickguide-steps { display: flex; flex-direction: column; gap: 16px; }
+
+.quickguide-step {
+    background: var(--surface, #fff);
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: 10px;
+    padding: 20px 24px;
+    transition: box-shadow var(--transition-fast, 0.15s ease);
+}
+.quickguide-step:hover { box-shadow: 0 2px 12px rgba(0,0,0,0.06); }
+
+.quickguide-step-header { display: flex; align-items: center; gap: 14px; margin-bottom: 8px; }
+
+.quickguide-step-number {
+    background: var(--accent, #3b82f6);
+    color: #fff;
+    font-size: 0.85rem;
+    font-weight: 700;
+    width: 32px; height: 32px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+}
+
+.quickguide-step-meta { flex: 1; min-width: 0; }
+.quickguide-step-title { font-size: 1.05rem; font-weight: 600; color: var(--text); margin: 0; line-height: 1.3; }
+
+.quickguide-tab-link {
+    background: none; border: none; cursor: pointer;
+    color: var(--accent, #3b82f6);
+    font-size: 0.78rem; font-weight: 500;
+    padding: 0; text-decoration: none;
+}
+.quickguide-tab-link:hover { text-decoration: underline; }
+
+.quickguide-step-desc { font-size: 0.88rem; color: var(--text); margin: 0; line-height: 1.5; }
+
+.quickguide-auto {
+    display: flex; align-items: flex-start; gap: 10px;
+    margin-top: 10px; font-size: 0.83rem; line-height: 1.5;
+}
+.quickguide-auto-badge {
+    font-size: 0.67rem; font-weight: 700;
+    padding: 2px 7px; border-radius: 4px;
+    text-transform: uppercase; letter-spacing: 0.03em;
+    white-space: nowrap; flex-shrink: 0; margin-top: 2px;
+    background: #dbeafe; color: #1d4ed8;
+}
+.quickguide-auto-text { flex: 1; color: var(--text-secondary, #6b7280); }
+
+.quickguide-tips-card {
+    background: var(--surface, #fff);
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: 10px;
+    padding: 20px 24px;
+    margin-top: 24px;
+}
+.quickguide-tips-title { font-size: 1rem; font-weight: 600; color: var(--text); margin: 0 0 12px 0; }
+.quickguide-tips-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.quickguide-tip-item {
+    font-size: 0.88rem; color: var(--text); line-height: 1.5;
+    padding-left: 20px;
+    position: relative;
+}
+.quickguide-tip-item::before {
+    content: '\2022';
+    position: absolute; left: 4px;
+    color: var(--accent, #3b82f6); font-weight: 700;
+}
+
+[data-theme="dark"] .quickguide-auto-badge { background: #1e3a5f; color: #93c5fd; }
+
 /* ========== DESIGN POLISH: MICRO-DETAILS ========== */
 
 /* Focus Ring System */

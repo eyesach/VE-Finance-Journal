@@ -109,6 +109,10 @@
                         VE Sales
                     </button>
                     <span class="sidebar-nav-group">Info</span>
+                    <button class="main-tab" data-tab="quickguide">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+                        Quick Guide
+                    </button>
                     <button class="main-tab" data-tab="changelog">
                         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="10"/></svg>
                         Change Log
@@ -1311,6 +1315,18 @@
                 <div class="dashboard-kpi-cards" id="dashboardKpiCards"></div>
                 <div class="dashboard-sections" id="dashboardSections"></div>
             </div>
+        </div>
+
+        <!-- Quick Guide Tab -->
+        <div id="quickguideTab" style="display: none;">
+            <section class="quickguide-section">
+                <div class="quickguide-header">
+                    <h2 class="quickguide-title">Quick Guide</h2>
+                    <p class="quickguide-subtitle">Recommended order for setting up your books</p>
+                </div>
+                <div class="quickguide-steps" id="quickguideSteps"></div>
+                <div class="quickguide-tips" id="quickguideTips"></div>
+            </section>
         </div>
 
         <!-- Change Log Tab -->
