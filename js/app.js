@@ -6230,35 +6230,12 @@ const App = {
      */
     async handleSaveDatabase() {
         const blob = Database.exportToFile();
-
-        if (window.showSaveFilePicker) {
-            try {
-                const handle = await window.showSaveFilePicker({
-                    suggestedName: this.getSuggestedFilename(),
-                    types: [{
-                        description: 'Database Files',
-                        accept: { 'application/x-sqlite3': ['.db'] }
-                    }]
-                });
-
-                const writable = await handle.createWritable();
-                await writable.write(blob);
-                await writable.close();
-                UI.showNotification('Journal saved', 'success');
-            } catch (e) {
-                if (e.name === 'AbortError') return;
-                // Fall through to download
-                this.downloadBlob(blob, this.getSuggestedFilename());
-                UI.showNotification('Database saved successfully', 'success');
-            }
-        } else {
-            // Fallback: show save as modal for naming
-            const owner = document.getElementById('journalOwner').value.trim();
-            document.getElementById('saveAsName').value = owner
-                ? `${Utils.sanitizeFilename(owner)}_accounting_journal`
-                : `accounting_journal_${new Date().toISOString().split('T')[0]}`;
-            UI.showModal('saveAsModal');
-        }
+        // Show save-as modal so user can name the file, then download via <a> tag
+        const owner = document.getElementById('journalOwner').value.trim();
+        document.getElementById('saveAsName').value = owner
+            ? `${Utils.sanitizeFilename(owner)}_accounting_journal`
+            : `accounting_journal_${new Date().toISOString().split('T')[0]}`;
+        UI.showModal('saveAsModal');
     },
 
     /**
@@ -6289,25 +6266,6 @@ const App = {
             const blob = await zip.generateAsync({ type: 'blob' });
             const dateSuffix = new Date().toISOString().split('T')[0];
             const suggestedName = `all_companies_${dateSuffix}.zip`;
-
-            if (window.showSaveFilePicker) {
-                try {
-                    const handle = await window.showSaveFilePicker({
-                        suggestedName,
-                        types: [{
-                            description: 'ZIP Archive',
-                            accept: { 'application/zip': ['.zip'] }
-                        }]
-                    });
-                    const writable = await handle.createWritable();
-                    await writable.write(blob);
-                    await writable.close();
-                    UI.showNotification(`Saved ${companies.length} company database(s)`, 'success');
-                    return;
-                } catch (e) {
-                    if (e.name === 'AbortError') return;
-                }
-            }
 
             this.downloadBlob(blob, suggestedName);
             UI.showNotification(`Saved ${companies.length} company database(s)`, 'success');
