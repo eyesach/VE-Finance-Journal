@@ -2623,7 +2623,7 @@ body {
 .quick-entry-errors { font-size: var(--font-sm); color: var(--color-danger, #ef4444); }
 
 /* Dashboard */
-.dashboard-content { padding: 0; }
+.dashboard-content { padding: 0 22px; }
 .dashboard-kpi-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
 .dash-kpi { background: var(--c4, var(--surface)); border: 1px solid var(--c5, var(--border)); border-radius: var(--radius-md, 8px); padding: 16px; display: flex; flex-direction: column; gap: 6px; }
 .dash-kpi-label { font-size: 0.75rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
@@ -2645,7 +2645,7 @@ body {
 .dash-be-pct { text-align: center; font-size: var(--font-sm); font-weight: 600; margin-top: 8px; color: var(--c6, var(--text)); }
 
 /* Analyze Chart Panels */
-.analyze-chart-panel { background: var(--c4, var(--surface)); border: 1px solid var(--c5, var(--border)); border-radius: var(--radius-md, 8px); padding: 20px; margin-bottom: 16px; }
+.analyze-chart-panel { background: var(--c4, var(--surface)); border: 1px solid var(--c5, var(--border)); border-radius: var(--radius-md, 8px); padding: 20px; margin: 0 22px 16px; }
 .analyze-chart-row { position: relative; height: 280px; }
 .analyze-gauges { display: flex; gap: 24px; justify-content: center; margin-top: 16px; flex-wrap: wrap; }
 .analyze-gauge { text-align: center; }
@@ -3035,6 +3035,8 @@ body.view-only-mode .pnl-editable-cell, body.view-only-mode .cf-editable-cell { 
     .transactions-section { margin: 0 14px 14px; }
     .monthly-summary-section { margin: 0 14px 14px; }
     .cashflow-section, .pnl-section, .ps-section, .bs-section, .be-section, .assets-section, .loan-section, .budget-section, .pc-section, .bs-ratios-section, .b2b-section { margin: 0 14px 14px; padding: 10px; }
+    .dashboard-content { padding: 0 14px; }
+    .analyze-chart-panel { margin: 0 14px 14px; }
     .modal-content { width: 95%; max-height: 90vh; padding: 14px; }
     .modal-content.modal-entry, .modal-content.modal-wide { max-width: 95%; }
     .btn-icon:not(.always-visible) { opacity: 0.5; }

@@ -1692,7 +1692,7 @@ const App = {
             asOfMonth = tlMonths.length > 0 ? tlMonths[tlMonths.length - 1] : Utils.getCurrentMonth();
         }
 
-        const cash = Math.max(0, Database.getCashAsOf(asOfMonth));
+        const cash = Database.getCashAsOf(asOfMonth);
         const receivables = Database.getAccountsReceivableAsOf(asOfMonth);
         const payables = Database.getAccountsPayableAsOf(asOfMonth);
         const salesTaxPayable = Database.getSalesTaxPayableAsOf(asOfMonth);
@@ -1772,10 +1772,17 @@ const App = {
             const currentRatio = currentLiabilities > 0 ? (currentAssets / currentLiabilities).toFixed(2) : 'N/A';
             const debtToEquity = equity > 0 ? (totalLiabilities / equity).toFixed(2) : 'N/A';
 
-            const makeGauge = (value, max, label) => {
+            const makeGauge = (value, max, label, lowerIsBetter) => {
                 const numVal = parseFloat(value);
                 const pct = isNaN(numVal) ? 0 : Math.min(100, Math.max(0, (numVal / max) * 100));
-                const color = pct > 60 ? 'var(--color-success, #10b981)' : pct > 30 ? 'var(--color-warning, #f59e0b)' : 'var(--color-danger, #ef4444)';
+                let color;
+                if (lowerIsBetter) {
+                    // For D/E: low = green, high = red
+                    color = pct < 40 ? 'var(--color-success, #10b981)' : pct < 70 ? 'var(--color-warning, #f59e0b)' : 'var(--color-danger, #ef4444)';
+                } else {
+                    // For Current Ratio: high = green, low = red
+                    color = pct > 60 ? 'var(--color-success, #10b981)' : pct > 30 ? 'var(--color-warning, #f59e0b)' : 'var(--color-danger, #ef4444)';
+                }
                 return '<div class="analyze-gauge">' +
                     '<div class="analyze-gauge-ring" style="background: conic-gradient(' + color + ' ' + (pct * 3.6) + 'deg, var(--border, #e5e7eb) ' + (pct * 3.6) + 'deg);">' +
                     '<div class="analyze-gauge-value" style="background:var(--surface,#fff);width:60px;height:60px;border-radius:50%;display:flex;align-items:center;justify-content:center;">' + value + '</div>' +
@@ -1784,7 +1791,7 @@ const App = {
                     '</div>';
             };
 
-            gaugesEl.innerHTML = makeGauge(currentRatio, 3, 'Current Ratio') + makeGauge(debtToEquity, 3, 'Debt-to-Equity');
+            gaugesEl.innerHTML = makeGauge(currentRatio, 3, 'Current Ratio', false) + makeGauge(debtToEquity, 3, 'Debt-to-Equity', true);
         }
     },
 
