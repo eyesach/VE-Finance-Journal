@@ -298,6 +298,7 @@ const UI = {
      */
     populateFilterMonths(months) {
         const select = document.getElementById('filterMonth');
+        const savedValue = select.value;
         select.innerHTML = '<option value="">All Months</option>';
 
         months.forEach(month => {
@@ -306,6 +307,11 @@ const UI = {
             option.textContent = Utils.formatMonthDisplay(month);
             select.appendChild(option);
         });
+
+        // Restore previously selected month if it still exists
+        if (savedValue) {
+            select.value = savedValue;
+        }
     },
 
     /**
@@ -471,7 +477,7 @@ const UI = {
                 </td>
                 <td>${processedDisplay}</td>
                 <td class="actions-cell">
-                    ${(t.source_type === 'sales_tax' || t.source_type === 'inventory_cost') ? '' : `
+                    ${(t.source_type === 'sales_tax' || t.source_type === 'inventory_cost' || t.source_type === 'budget') ? '' : `
                     <button class="btn-icon duplicate-btn" data-id="${t.id}" title="Duplicate">
                         <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                             <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
@@ -1502,16 +1508,14 @@ const UI = {
         html += `<tr class="bs-subtotal"><td>Total Current Liabilities</td><td>${fmtAmt(totalCurrentLiabilities)}</td></tr>`;
 
         // Long-Term Liabilities
-        if (data.loanDetails && data.loanDetails.length > 0) {
+        if (data.totalLoanBalance > 0 && data.loanDetails && data.loanDetails.length > 0) {
             html += '<tr class="bs-subsection"><td colspan="2">Long-Term Liabilities</td></tr>';
             data.loanDetails.forEach(loan => {
                 if (loan.balance > 0) {
                     html += `<tr class="bs-indent"><td>${Utils.escapeHtml(loan.name)}</td><td>${fmtAmt(loan.balance)}</td></tr>`;
                 }
             });
-            if (data.totalLoanBalance > 0) {
-                html += `<tr class="bs-indent" style="font-weight:500;"><td>Total Loans Payable</td><td>${fmtAmt(data.totalLoanBalance)}</td></tr>`;
-            }
+            html += `<tr class="bs-indent" style="font-weight:500;"><td>Total Loans Payable</td><td>${fmtAmt(data.totalLoanBalance)}</td></tr>`;
         }
 
         html += `<tr class="bs-subtotal"><td>Total Liabilities</td><td>${fmtAmt(data.totalLiabilities)}</td></tr>`;
@@ -2028,17 +2032,23 @@ const UI = {
                 </div>
             </div>`;
 
+            // Load per-month overrides for this expense
+            const overrides = Database.getBudgetExpenseOverrides(selectedExpense.id);
+
             html += '<div class="budget-schedule-wrapper"><table class="budget-schedule-table"><thead><tr>';
             html += '<th>Month</th><th>Amount</th><th>Cumulative</th>';
             html += '</tr></thead><tbody>';
 
             let cumulative = 0;
             months.forEach(month => {
-                cumulative += selectedExpense.monthly_amount;
+                const overrideAmt = overrides[month];
+                const amount = overrideAmt !== undefined ? overrideAmt : selectedExpense.monthly_amount;
+                cumulative += amount;
                 const isCurrent = month === currentMonth;
+                const isOverridden = overrideAmt !== undefined;
                 html += `<tr${isCurrent ? ' class="budget-current-month"' : ''}>
                     <td>${Utils.formatMonthShort(month)}</td>
-                    <td>${fmtAmt(selectedExpense.monthly_amount)}</td>
+                    <td class="budget-amount-cell${isOverridden ? ' budget-amount-overridden' : ''}" data-expense-id="${selectedExpense.id}" data-month="${month}" data-default="${selectedExpense.monthly_amount}" title="Click to edit">${fmtAmt(amount)}${isOverridden ? ' <button class="budget-override-reset" data-expense-id="' + selectedExpense.id + '" data-month="' + month + '" title="Reset to default">&times;</button>' : ''}</td>
                     <td>${fmtAmt(cumulative)}</td>
                 </tr>`;
             });
@@ -3133,6 +3143,193 @@ const UI = {
 
         html += '</tbody></table>';
         wrapper.innerHTML = html;
+    },
+
+    // ==================== B2B CONTRACT TAB ====================
+
+    /**
+     * Render the B2B Contract tab with list/detail layout
+     * @param {Array} contracts - Array of contract objects
+     * @param {number|null} selectedId - Currently selected contract ID
+     * @param {Object} contractTransactions - Map of contractId -> array of receivable transaction objects
+     * @param {Object} contractCogsTransactions - Map of contractId -> array of COGS transaction objects
+     * @param {Object} app - App reference for computing values
+     */
+    renderB2BContractTab(contracts, selectedId, contractTransactions, contractCogsTransactions, app) {
+        const fmtAmt = (amt) => Utils.formatCurrency(amt);
+
+        // Left panel: contract list
+        const listPanel = document.getElementById('b2bListPanel');
+        if (contracts.length === 0) {
+            listPanel.innerHTML = '<p class="empty-state">No contracts yet. Click "+ Add Contract" to begin.</p>';
+        } else {
+            listPanel.innerHTML = contracts.map(contract => {
+                const selected = contract.id === selectedId ? ' selected' : '';
+                const statusBadge = contract.is_finalized
+                    ? '<span class="b2b-status-badge b2b-finalized">Finalized</span>'
+                    : '<span class="b2b-status-badge b2b-draft">Draft</span>';
+                return `<div class="b2b-list-item${selected}" data-id="${contract.id}">
+                    <div class="b2b-list-name">${Utils.escapeHtml(contract.company_name)}</div>
+                    <div class="b2b-list-meta">${contract.contract_start} to ${contract.contract_end} ${statusBadge}</div>
+                </div>`;
+            }).join('');
+        }
+
+        // Right panel: selected contract detail
+        const detailPanel = document.getElementById('b2bDetailPanel');
+        const selectedContract = contracts.find(c => c.id === selectedId);
+        if (!selectedContract) {
+            detailPanel.innerHTML = `<div class="empty-state">
+                <svg class="empty-state-icon" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                    <polyline points="14 2 14 8 20 8"/>
+                    <line x1="16" y1="13" x2="8" y2="13"/>
+                    <line x1="16" y1="17" x2="8" y2="17"/>
+                </svg>
+                <p class="empty-state-title">No Contract Selected</p>
+                <p class="empty-state-desc">Select a contract to view its details and payment timeline, or add a new one.</p>
+            </div>`;
+            return;
+        }
+
+        const computed = app._computeB2BContract(selectedContract);
+        const transactions = contractTransactions[selectedContract.id] || [];
+        const cogsTransactions = contractCogsTransactions[selectedContract.id] || [];
+        const monthlyCogs = selectedContract.cogs_per_unit * computed.unitsSold;
+        const limitClass = computed.isWithinLimit ? 'b2b-limit-ok' : 'b2b-limit-exceeded';
+        const limitLabel = computed.isWithinLimit ? 'Within 75% Limit' : 'Exceeds 75% Limit';
+
+        let html = '';
+
+        // Header with actions
+        html += `<div class="b2b-detail-header">
+            <div>
+                <h3>${Utils.escapeHtml(selectedContract.company_name)}</h3>
+                ${selectedContract.bundle_description ? `<p class="b2b-bundle-desc">${Utils.escapeHtml(selectedContract.bundle_description)}</p>` : ''}
+                <span class="b2b-detail-dates">${selectedContract.contract_start} to ${selectedContract.contract_end} (${selectedContract.fiscal_months} months)</span>
+            </div>
+            <div class="b2b-detail-actions">
+                <button class="btn btn-secondary btn-small b2b-edit-btn" data-id="${selectedContract.id}">Edit</button>
+                <button class="btn btn-danger btn-small b2b-delete-btn" data-id="${selectedContract.id}">Delete</button>
+            </div>
+        </div>`;
+
+        // Summary cards
+        html += `<div class="b2b-summary-cards">
+            <div class="b2b-summary-card">
+                <div class="b2b-summary-label">Total Contract Value</div>
+                <div class="b2b-summary-value">${fmtAmt(computed.totalContractValue)}</div>
+            </div>
+            <div class="b2b-summary-card">
+                <div class="b2b-summary-label">Monthly Amount</div>
+                <div class="b2b-summary-value">${fmtAmt(computed.monthlyContractedRounded)}</div>
+            </div>
+            <div class="b2b-summary-card">
+                <div class="b2b-summary-label">Units / Month</div>
+                <div class="b2b-summary-value">${computed.unitsSold.toLocaleString()} <small style="font-weight:400;color:var(--text-muted)">/ ${computed.maxUnitsPerMonth.toLocaleString()} max</small></div>
+            </div>
+            <div class="b2b-summary-card">
+                <div class="b2b-summary-label">Monthly COGS</div>
+                <div class="b2b-summary-value">${fmtAmt(monthlyCogs)}</div>
+            </div>
+            <div class="b2b-summary-card">
+                <div class="b2b-summary-label">Monthly Gross Profit</div>
+                <div class="b2b-summary-value">${fmtAmt(computed.monthlyGrossProfit)}</div>
+            </div>
+            <div class="b2b-summary-card">
+                <div class="b2b-summary-label">Total Gross Profit</div>
+                <div class="b2b-summary-value">${fmtAmt(computed.totalGrossProfit)}</div>
+            </div>
+            <div class="b2b-summary-card">
+                <div class="b2b-summary-label">Profit Limit Status</div>
+                <div class="b2b-summary-value ${limitClass}">${limitLabel}</div>
+            </div>
+        </div>`;
+
+        // Calculation breakdown
+        html += `<div class="b2b-calc-breakdown">
+            <h4>Calculation Breakdown</h4>
+            <table class="b2b-breakdown-table">
+                <tbody>
+                    <tr><td>Monthly Payroll</td><td>${fmtAmt(selectedContract.monthly_payroll)}</td></tr>
+                    <tr><td>Total Gross Payroll (${selectedContract.fiscal_months} months)</td><td>${fmtAmt(computed.totalGrossPayroll)}</td></tr>
+                    <tr class="b2b-row-highlight"><td>Max 75% of Payroll</td><td>${fmtAmt(computed.maxAllowedSales)}</td></tr>
+                    <tr><td>COGS Per Unit</td><td>${fmtAmt(selectedContract.cogs_per_unit)}</td></tr>
+                    <tr><td>Gross Margin (auto-calculated)</td><td>${(computed.grossMargin * 100).toFixed(2)}%</td></tr>
+                    <tr><td>Max Revenue (75% ÷ margin)</td><td>${fmtAmt(computed.maxRevenue)}</td></tr>
+                    <tr><td>Monthly Contracted Sales</td><td>${fmtAmt(computed.monthlyContractedSales)}</td></tr>
+                    <tr><td>Revenue Per Unit</td><td>${fmtAmt(selectedContract.bundle_price)}</td></tr>
+                    <tr><td>Max Units Allowed (per month)</td><td>${computed.maxUnitsPerMonth.toLocaleString()}</td></tr>
+                    <tr class="b2b-row-highlight"><td>Units Sold (per month)</td><td>${computed.unitsSold.toLocaleString()}</td></tr>
+                    <tr class="b2b-row-highlight"><td>Monthly Sales (rounded to whole unit)</td><td>${fmtAmt(computed.monthlyContractedRounded)}</td></tr>
+                    <tr><td>Monthly Gross Profit</td><td>${fmtAmt(computed.monthlyGrossProfit)}</td></tr>
+                    <tr class="b2b-row-highlight"><td>Total Contract Value</td><td>${fmtAmt(computed.totalContractValue)}</td></tr>
+                    <tr><td>Total Gross Profit</td><td class="${limitClass}">${fmtAmt(computed.totalGrossProfit)}</td></tr>
+                </tbody>
+            </table>
+        </div>`;
+
+        // Finalize / Unfinalize button
+        if (selectedContract.is_finalized) {
+            html += `<div class="b2b-finalize-section">
+                <span class="b2b-status-badge b2b-finalized">Finalized</span>
+                <button class="btn btn-secondary btn-small b2b-unfinalize-btn" data-id="${selectedContract.id}">Unfinalize</button>
+            </div>`;
+        } else {
+            html += `<div class="b2b-finalize-section">
+                <button class="btn btn-primary b2b-finalize-btn" data-id="${selectedContract.id}">Finalize Contract</button>
+                <small>Creates monthly receivable entries in the journal</small>
+            </div>`;
+        }
+
+        // Monthly timeline
+        if (selectedContract.is_finalized && computed.months.length > 0) {
+            const currentMonth = Utils.getCurrentMonth();
+            html += `<div class="b2b-timeline">
+                <h4>Monthly Payment Timeline</h4>
+                <table class="b2b-timeline-table">
+                    <thead>
+                        <tr><th>Month</th><th>Revenue</th><th>Status</th><th>COGS</th><th>Status</th></tr>
+                    </thead>
+                    <tbody>`;
+
+            computed.months.forEach(month => {
+                const isFuture = month > currentMonth;
+                const monthLabel = Utils.formatMonthDisplay(month) || month;
+
+                // Revenue
+                const txn = transactions.find(t => t.payment_for_month === month);
+                const revAmount = txn ? txn.amount : computed.monthlyContractedRounded;
+                const revStatus = isFuture ? 'future' : (txn ? txn.status : 'pending');
+                const revStatusClass = revStatus === 'received' ? 'b2b-status-received' : (revStatus === 'future' ? 'b2b-status-future' : 'b2b-status-pending');
+                const revStatusLabel = revStatus === 'received' ? 'Received' : (revStatus === 'future' ? 'Future' : 'Pending');
+
+                // COGS
+                const cogsTxn = cogsTransactions.find(t => t.payment_for_month === month);
+                const cogsAmount = cogsTxn ? cogsTxn.amount : monthlyCogs;
+                const cogsStatus = isFuture ? 'future' : (cogsTxn ? cogsTxn.status : 'pending');
+                const cogsStatusClass = cogsStatus === 'paid' ? 'b2b-status-received' : (cogsStatus === 'future' ? 'b2b-status-future' : 'b2b-status-pending');
+                const cogsStatusLabel = cogsStatus === 'paid' ? 'Paid' : (cogsStatus === 'future' ? 'Future' : 'Pending');
+
+                const rowClass = isFuture ? ' class="b2b-row-future"' : '';
+                html += `<tr${rowClass}>
+                    <td>${monthLabel}</td>
+                    <td>${fmtAmt(revAmount)}</td>
+                    <td><span class="b2b-payment-status ${revStatusClass}">${revStatusLabel}</span></td>
+                    <td>${fmtAmt(cogsAmount)}</td>
+                    <td><span class="b2b-payment-status ${cogsStatusClass}">${cogsStatusLabel}</span></td>
+                </tr>`;
+            });
+
+            html += `</tbody></table></div>`;
+        }
+
+        // Notes
+        if (selectedContract.notes) {
+            html += `<div class="b2b-notes"><strong>Notes:</strong> ${Utils.escapeHtml(selectedContract.notes)}</div>`;
+        }
+
+        detailPanel.innerHTML = html;
     },
 
 };

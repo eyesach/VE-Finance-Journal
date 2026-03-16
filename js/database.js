@@ -120,6 +120,7 @@ const Database = {
                 sale_date_start DATE,
                 sale_date_end DATE,
                 inventory_cost DECIMAL(10,2),
+                budget_override INTEGER DEFAULT 0,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (category_id) REFERENCES categories(id)
@@ -202,6 +203,16 @@ const Database = {
         `);
 
         this.db.run(`
+            CREATE TABLE IF NOT EXISTS budget_expense_overrides (
+                expense_id INTEGER NOT NULL,
+                month TEXT NOT NULL,
+                override_amount DECIMAL(10,2) NOT NULL,
+                PRIMARY KEY(expense_id, month),
+                FOREIGN KEY (expense_id) REFERENCES budget_expenses(id)
+            )
+        `);
+
+        this.db.run(`
             CREATE TABLE IF NOT EXISTS budget_groups (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
@@ -236,6 +247,26 @@ const Database = {
                 cogs DECIMAL(10,2) DEFAULT 0,
                 notes TEXT,
                 is_discontinued INTEGER DEFAULT 0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
+        this.db.run(`
+            CREATE TABLE IF NOT EXISTS b2b_contracts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                company_name TEXT NOT NULL,
+                bundle_description TEXT,
+                contract_start TEXT NOT NULL,
+                contract_end TEXT NOT NULL,
+                fiscal_months INTEGER NOT NULL,
+                monthly_payroll DECIMAL(10,2) NOT NULL,
+                bundle_price DECIMAL(10,2) NOT NULL,
+                cogs_per_unit DECIMAL(10,2) NOT NULL,
+                units_sold INTEGER,
+                is_finalized INTEGER DEFAULT 0,
+                category_id INTEGER,
+                notes TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
@@ -592,6 +623,17 @@ const Database = {
             )
         `);
 
+        // === Create budget_expense_overrides table ===
+        this.db.run(`
+            CREATE TABLE IF NOT EXISTS budget_expense_overrides (
+                expense_id INTEGER NOT NULL,
+                month TEXT NOT NULL,
+                override_amount DECIMAL(10,2) NOT NULL,
+                PRIMARY KEY(expense_id, month),
+                FOREIGN KEY (expense_id) REFERENCES budget_expenses(id)
+            )
+        `);
+
         // === Create budget_expenses table ===
         this.db.run(`
             CREATE TABLE IF NOT EXISTS budget_expenses (
@@ -692,9 +734,68 @@ const Database = {
         try { this.db.exec('SELECT journal_added FROM ve_events LIMIT 1'); }
         catch (e) { this.db.run('ALTER TABLE ve_events ADD COLUMN journal_added INTEGER DEFAULT 0'); }
 
+        // === Add cogs column to ve_events ===
+        try { this.db.exec('SELECT cogs FROM ve_events LIMIT 1'); }
+        catch (e) { this.db.run('ALTER TABLE ve_events ADD COLUMN cogs DECIMAL(10,2) DEFAULT 0'); }
+
         // === Add event_id column to ve_sales ===
         try { this.db.exec('SELECT event_id FROM ve_sales LIMIT 1'); }
         catch (e) { this.db.run('ALTER TABLE ve_sales ADD COLUMN event_id INTEGER'); }
+
+        // === Create b2b_contracts table ===
+        this.db.run(`
+            CREATE TABLE IF NOT EXISTS b2b_contracts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                company_name TEXT NOT NULL,
+                bundle_description TEXT,
+                contract_start TEXT NOT NULL,
+                contract_end TEXT NOT NULL,
+                fiscal_months INTEGER NOT NULL,
+                monthly_payroll DECIMAL(10,2) NOT NULL,
+                bundle_price DECIMAL(10,2) NOT NULL,
+                cogs_per_unit DECIMAL(10,2) NOT NULL,
+                units_sold INTEGER,
+                is_finalized INTEGER DEFAULT 0,
+                category_id INTEGER,
+                notes TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
+        // === Migrate b2b_contracts: rename gross_margin -> cogs_per_unit ===
+        try {
+            this.db.exec('SELECT gross_margin FROM b2b_contracts LIMIT 1');
+            // Old column exists — recreate table with new schema
+            this.db.run('DROP TABLE b2b_contracts');
+            this.db.run(`
+                CREATE TABLE b2b_contracts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    company_name TEXT NOT NULL,
+                    bundle_description TEXT,
+                    contract_start TEXT NOT NULL,
+                    contract_end TEXT NOT NULL,
+                    fiscal_months INTEGER NOT NULL,
+                    monthly_payroll DECIMAL(10,2) NOT NULL,
+                    bundle_price DECIMAL(10,2) NOT NULL,
+                    cogs_per_unit DECIMAL(10,2) NOT NULL DEFAULT 0,
+                    units_sold INTEGER,
+                    is_finalized INTEGER DEFAULT 0,
+                    category_id INTEGER,
+                    notes TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            `);
+        } catch (e) {
+            // New schema already in place — just ensure units_sold column exists
+            try { this.db.exec('SELECT units_sold FROM b2b_contracts LIMIT 1'); }
+            catch (e2) { this.db.run('ALTER TABLE b2b_contracts ADD COLUMN units_sold INTEGER'); }
+        }
+
+        // === Add budget_override flag to transactions ===
+        try { this.db.exec('SELECT budget_override FROM transactions LIMIT 1'); }
+        catch (e) { this.db.run('ALTER TABLE transactions ADD COLUMN budget_override INTEGER DEFAULT 0'); }
     },
 
     // ==================== FOLDER OPERATIONS ====================
@@ -1688,6 +1789,38 @@ const Database = {
     },
 
     /**
+     * Compute total revenue per month, matching P&L renderer exactly.
+     * Uses accrual basis (month_due), pretax_amount, and respects overrides.
+     * @param {string[]} months - Array of month strings (YYYY-MM)
+     * @returns {{ [month: string]: number }} Per-month total revenue
+     */
+    getMonthlyTotalRevenue(months) {
+        const plData = this.getPLSpreadsheet();
+        const overrides = this.getAllPLOverrides();
+        const result = {};
+        months.forEach(m => { result[m] = 0; });
+
+        // Group revenue by category
+        const revByCat = {};
+        (plData.revenue || []).forEach(row => {
+            if (!revByCat[row.category_id]) revByCat[row.category_id] = {};
+            revByCat[row.category_id][row.month] = (revByCat[row.category_id][row.month] || 0) + row.total;
+        });
+
+        // Sum with overrides
+        Object.entries(revByCat).forEach(([catId, catMonths]) => {
+            months.forEach(m => {
+                const key = `${catId}-${m}`;
+                const computed = catMonths[m] || 0;
+                const val = (key in overrides) ? overrides[key] : computed;
+                result[m] += val;
+            });
+        });
+
+        return result;
+    },
+
+    /**
      * Get P&L tax mode setting
      * @returns {string} 'corporate' or 'passthrough'
      */
@@ -2083,6 +2216,92 @@ const Database = {
         return result;
     },
 
+    // ==================== B2B CONTRACTS ====================
+
+    /**
+     * Get all B2B contracts
+     * @returns {Array} Array of contract objects
+     */
+    getB2BContracts() {
+        const results = this.db.exec('SELECT * FROM b2b_contracts ORDER BY contract_start DESC');
+        if (results.length === 0) return [];
+        return this.rowsToObjects(results[0]);
+    },
+
+    /**
+     * Get a B2B contract by ID
+     * @param {number} id
+     * @returns {Object|null}
+     */
+    getB2BContractById(id) {
+        const results = this.db.exec('SELECT * FROM b2b_contracts WHERE id = ?', [id]);
+        if (results.length === 0) return null;
+        return this.rowsToObjects(results[0])[0];
+    },
+
+    /**
+     * Add a new B2B contract
+     * @param {Object} params
+     * @returns {number} New contract ID
+     */
+    addB2BContract(params) {
+        this.db.run(
+            `INSERT INTO b2b_contracts (company_name, bundle_description, contract_start, contract_end, fiscal_months, monthly_payroll, bundle_price, cogs_per_unit, units_sold, category_id, notes)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [params.company_name.trim(), params.bundle_description || null, params.contract_start, params.contract_end, params.fiscal_months, params.monthly_payroll, params.bundle_price, params.cogs_per_unit, params.units_sold || null, params.category_id || null, params.notes || null]
+        );
+        const result = this.db.exec('SELECT last_insert_rowid() as id');
+        this.autoSave();
+        return result[0].values[0][0];
+    },
+
+    /**
+     * Update a B2B contract
+     * @param {number} id
+     * @param {Object} params
+     */
+    updateB2BContract(id, params) {
+        this.db.run(
+            `UPDATE b2b_contracts SET company_name = ?, bundle_description = ?, contract_start = ?, contract_end = ?, fiscal_months = ?, monthly_payroll = ?, bundle_price = ?, cogs_per_unit = ?, units_sold = ?, category_id = ?, notes = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+            [params.company_name.trim(), params.bundle_description || null, params.contract_start, params.contract_end, params.fiscal_months, params.monthly_payroll, params.bundle_price, params.cogs_per_unit, params.units_sold || null, params.category_id || null, params.notes || null, id]
+        );
+        this.autoSave();
+    },
+
+    /**
+     * Delete a B2B contract and all linked transactions
+     * @param {number} id
+     */
+    deleteB2BContract(id) {
+        this.db.run('DELETE FROM b2b_contracts WHERE id = ?', [id]);
+        this.deleteB2BContractTransactions(id);
+        this.autoSave();
+    },
+
+    /**
+     * Delete all journal transactions linked to a B2B contract
+     * @param {number} id
+     */
+    deleteB2BContractTransactions(id) {
+        this.db.run(
+            "DELETE FROM transactions WHERE source_type IN ('b2b_contract', 'b2b_contract_cogs') AND source_id = ?",
+            [id]
+        );
+    },
+
+    /**
+     * Set finalized status of a B2B contract
+     * @param {number} id
+     * @param {boolean} finalized
+     */
+    setB2BContractFinalized(id, finalized) {
+        this.db.run(
+            'UPDATE b2b_contracts SET is_finalized = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+            [finalized ? 1 : 0, id]
+        );
+        this.autoSave();
+    },
+
     // ==================== BUDGET EXPENSES ====================
 
     /**
@@ -2162,6 +2381,52 @@ const Database = {
      */
     deleteBudgetExpense(id) {
         this.db.run('DELETE FROM budget_expenses WHERE id = ?', [id]);
+        this.db.run('DELETE FROM budget_expense_overrides WHERE expense_id = ?', [id]);
+        this.autoSave();
+    },
+
+    /**
+     * Get all per-month overrides for a budget expense
+     * @param {number} expenseId
+     * @returns {Object} Map of month -> override_amount
+     */
+    getBudgetExpenseOverrides(expenseId) {
+        const results = this.db.exec('SELECT month, override_amount FROM budget_expense_overrides WHERE expense_id = ?', [expenseId]);
+        const map = {};
+        if (results.length > 0) {
+            results[0].values.forEach(([month, amt]) => { map[month] = amt; });
+        }
+        return map;
+    },
+
+    /**
+     * Get all budget expense overrides across all expenses
+     * @returns {Object} Map of "expenseId:month" -> override_amount
+     */
+    getAllBudgetExpenseOverrides() {
+        const results = this.db.exec('SELECT expense_id, month, override_amount FROM budget_expense_overrides');
+        const map = {};
+        if (results.length > 0) {
+            results[0].values.forEach(([expId, month, amt]) => { map[`${expId}:${month}`] = amt; });
+        }
+        return map;
+    },
+
+    /**
+     * Set or remove a per-month budget expense override
+     * @param {number} expenseId
+     * @param {string} month - YYYY-MM
+     * @param {number|null} amount - null to remove override
+     */
+    setBudgetExpenseOverride(expenseId, month, amount) {
+        if (amount === null || amount === undefined) {
+            this.db.run('DELETE FROM budget_expense_overrides WHERE expense_id = ? AND month = ?', [expenseId, month]);
+        } else {
+            this.db.run(
+                'INSERT OR REPLACE INTO budget_expense_overrides (expense_id, month, override_amount) VALUES (?, ?, ?)',
+                [expenseId, month, amount]
+            );
+        }
         this.autoSave();
     },
 
@@ -2683,6 +2948,7 @@ const Database = {
                 break;
             case 'budget':
                 this.db.run('DELETE FROM budget_expenses');
+                this.db.run('DELETE FROM budget_expense_overrides');
                 this.db.run('DELETE FROM budget_groups');
                 break;
             case 'breakeven':
@@ -3441,8 +3707,8 @@ const Database = {
 
     createVEEvent(event) {
         this.db.run(
-            'INSERT INTO ve_events (name, type, start_date, end_date, notes) VALUES (?, ?, ?, ?, ?)',
-            [event.name, event.type || 'tradeshow', event.start_date, event.end_date, event.notes || null]
+            'INSERT INTO ve_events (name, type, start_date, end_date, notes, cogs) VALUES (?, ?, ?, ?, ?, ?)',
+            [event.name, event.type || 'tradeshow', event.start_date, event.end_date, event.notes || null, event.cogs || 0]
         );
         const result = this.db.exec('SELECT last_insert_rowid() as id');
         const id = result[0].values[0][0];
@@ -3452,8 +3718,8 @@ const Database = {
 
     updateVEEvent(id, event) {
         this.db.run(
-            'UPDATE ve_events SET name = ?, type = ?, start_date = ?, end_date = ?, notes = ? WHERE id = ?',
-            [event.name, event.type, event.start_date, event.end_date, event.notes || null, id]
+            'UPDATE ve_events SET name = ?, type = ?, start_date = ?, end_date = ?, notes = ?, cogs = ? WHERE id = ?',
+            [event.name, event.type, event.start_date, event.end_date, event.notes || null, event.cogs || 0, id]
         );
         this.autoSave();
     },
@@ -3484,6 +3750,27 @@ const Database = {
         const results = this.db.exec('SELECT * FROM ve_events ORDER BY start_date DESC');
         if (results.length === 0) return [];
         return this.rowsToObjects(results[0]);
+    },
+
+    getVEEventAssignments() {
+        const results = this.db.exec('SELECT transaction_no, event_id FROM ve_sales WHERE event_id IS NOT NULL');
+        const map = new Map();
+        if (results.length > 0) {
+            for (const row of results[0].values) {
+                map.set(row[0], row[1]);
+            }
+        }
+        return map;
+    },
+
+    restoreVEEventAssignments(eventMap) {
+        if (eventMap.size === 0) return;
+        const stmt = this.db.prepare('UPDATE ve_sales SET event_id = ? WHERE transaction_no = ?');
+        for (const [txNo, eventId] of eventMap) {
+            stmt.run([eventId, txNo]);
+        }
+        stmt.free();
+        this.autoSave();
     },
 
     assignSalesToEvent(eventId, transactionNos) {

@@ -76,6 +76,8 @@ const App = {
     deleteFolderTargetId: null,
     deleteAssetTargetId: null,
     deleteLoanTargetId: null,
+    deleteB2BContractTargetId: null,
+    selectedB2BContractId: null,
     deleteBudgetExpenseTargetId: null,
     deleteProductTargetId: null,
     selectedAssetId: null,
@@ -210,6 +212,7 @@ const App = {
      */
     refreshAll() {
         this.syncAllBudgetJournalEntries();
+        this.syncAllB2BContractEntries();
         this.refreshCategories();
         this.refreshTransactions();
         this.refreshSummary();
@@ -223,6 +226,7 @@ const App = {
         this.refreshProjectedSales();
         this.refreshProducts();
         this.refreshVESales();
+        this.refreshB2BContracts();
     },
 
     /**
@@ -514,10 +518,11 @@ const App = {
         balancesheet: 'Balance Sheet', assets: 'Assets & Equity',
         loan: 'Loans', budget: 'Budget', breakeven: 'Break-Even',
         projectedsales: 'Projected Sales', products: 'Products', vesales: 'VE Sales',
+        b2bcontract: 'B2B Contract',
         dashboard: 'Dashboard', quickguide: 'Quick Guide', changelog: 'Change Log'
     },
 
-    WORK_TABS: ['journal', 'budget', 'products', 'vesales', 'assets', 'loan', 'projectedsales'],
+    WORK_TABS: ['journal', 'budget', 'products', 'vesales', 'b2bcontract', 'assets', 'loan', 'projectedsales'],
     ANALYZE_TABS: ['dashboard', 'cashflow', 'pnl', 'balancesheet', 'breakeven'],
 
     applyHiddenTabs() {
@@ -636,6 +641,7 @@ const App = {
             case 'projectedsales': this.refreshProjectedSales(); break;
             case 'products': this.refreshProducts(); break;
             case 'vesales': this.refreshVESales(); break;
+            case 'b2bcontract': this.refreshB2BContracts(); break;
             case 'dashboard': this.refreshDashboard(); break;
         }
     },
@@ -994,7 +1000,7 @@ const App = {
             btn.classList.toggle('active', btn.dataset.tab === tab);
         });
 
-        const tabs = ['journalTab', 'cashflowTab', 'pnlTab', 'balancesheetTab', 'assetsTab', 'loanTab', 'budgetTab', 'breakevenTab', 'projectedsalesTab', 'productsTab', 'vesalesTab', 'quickguideTab', 'changelogTab', 'dashboardTab'];
+        const tabs = ['journalTab', 'cashflowTab', 'pnlTab', 'balancesheetTab', 'assetsTab', 'loanTab', 'budgetTab', 'breakevenTab', 'projectedsalesTab', 'productsTab', 'vesalesTab', 'b2bcontractTab', 'quickguideTab', 'changelogTab', 'dashboardTab'];
         tabs.forEach(id => {
             const el = document.getElementById(id);
             if (el) el.style.display = 'none';
@@ -1030,6 +1036,9 @@ const App = {
         } else if (tab === 'vesales') {
             document.getElementById('vesalesTab').style.display = 'block';
             this.refreshVESales();
+        } else if (tab === 'b2bcontract') {
+            document.getElementById('b2bcontractTab').style.display = 'block';
+            this.refreshB2BContracts();
         } else if (tab === 'dashboard') {
             document.getElementById('dashboardTab').style.display = 'block';
             this.refreshDashboard();
@@ -1326,17 +1335,82 @@ const App = {
         if (this._dashCharts.pnl) this._dashCharts.pnl.destroy();
 
         const months = this._getTimelineMonths();
-        const revenue = [];
-        const expenses = [];
+        const plData = Database.getPLSpreadsheet();
+        const overrides = Database.getAllPLOverrides();
+        const currentMonth = Utils.getCurrentMonth();
+        const isFuture = (m) => m > currentMonth;
 
-        for (const month of months) {
-            const revResult = Database.db.exec(
-                "SELECT COALESCE(SUM(t.amount),0) FROM transactions t JOIN categories c ON t.category_id = c.id WHERE t.transaction_type='receivable' AND t.status='received' AND t.month_paid=? AND c.is_cogs = 0 AND c.show_on_pl != 1 AND (c.is_b2b = 1 OR c.is_sales = 1) AND COALESCE(t.source_type, '') NOT IN ('loan_receivable', 'loan_payment')", [month]);
-            const expResult = Database.db.exec(
-                "SELECT COALESCE(SUM(amount),0) FROM transactions WHERE transaction_type='payable' AND status='paid' AND month_paid=?", [month]);
-            revenue.push(revResult[0] ? revResult[0].values[0][0] : 0);
-            expenses.push(expResult[0] ? expResult[0].values[0][0] : 0);
-        }
+        const getVal = (catId, month, computed) => {
+            const key = `${catId}-${month}`;
+            return (key in overrides) ? overrides[key] : computed;
+        };
+
+        // Group rows by category
+        const groupByCategory = (rows) => {
+            const map = {};
+            (rows || []).forEach(row => {
+                if (!map[row.category_id]) map[row.category_id] = {};
+                map[row.category_id][row.month] = (map[row.category_id][row.month] || 0) + row.total;
+            });
+            return map;
+        };
+
+        const computeProjectedAvg = (catMonths) => {
+            const pastValues = months.filter(m => !isFuture(m)).map(m => catMonths[m] || 0).filter(v => v > 0);
+            return pastValues.length > 0 ? pastValues.reduce((a, b) => a + b, 0) / pastValues.length : 0;
+        };
+
+        // Revenue (matches P&L table Total Revenue)
+        const revByCat = groupByCategory(plData.revenue);
+        const revenueByMonth = {};
+        months.forEach(m => { revenueByMonth[m] = 0; });
+        Object.entries(revByCat).forEach(([catId, catMonths]) => {
+            const projAvg = computeProjectedAvg(catMonths);
+            months.forEach(m => {
+                const computed = catMonths[m] || 0;
+                const fallback = isFuture(m) && computed === 0 ? projAvg : computed;
+                revenueByMonth[m] += getVal(catId, m, fallback);
+            });
+        });
+
+        // Expenses (COGS + Operating Expenses)
+        const expensesByMonth = {};
+        months.forEach(m => { expensesByMonth[m] = 0; });
+        // COGS
+        const cogsByCat = groupByCategory(plData.cogs);
+        Object.entries(cogsByCat).forEach(([catId, catMonths]) => {
+            const projAvg = computeProjectedAvg(catMonths);
+            months.forEach(m => {
+                const computed = catMonths[m] || 0;
+                const fallback = isFuture(m) && computed === 0 ? projAvg : computed;
+                expensesByMonth[m] += getVal(catId, m, fallback);
+            });
+        });
+        // OpEx
+        const opexByCat = groupByCategory(plData.opex);
+        Object.entries(opexByCat).forEach(([catId, catMonths]) => {
+            const projAvg = computeProjectedAvg(catMonths);
+            months.forEach(m => {
+                const computed = catMonths[m] || 0;
+                const fallback = isFuture(m) && computed === 0 ? projAvg : computed;
+                expensesByMonth[m] += getVal(catId, m, fallback);
+            });
+        });
+        // Depreciation categories (from overrides only)
+        (plData.depreciation || []).forEach(cat => {
+            months.forEach(m => {
+                expensesByMonth[m] += getVal(cat.category_id, m, 0);
+            });
+        });
+        // Asset depreciation
+        const assetDepr = plData.assetDeprByMonth || {};
+        months.forEach(m => { expensesByMonth[m] += (assetDepr[m] || 0); });
+        // Loan interest
+        const loanInt = plData.loanInterestByMonth || {};
+        months.forEach(m => { expensesByMonth[m] += (loanInt[m] || 0); });
+
+        const revenue = months.map(m => revenueByMonth[m] || 0);
+        const expenses = months.map(m => expensesByMonth[m] || 0);
 
         const labels = months.map(m => { const [y, mo] = m.split('-'); return ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][parseInt(mo)-1] + ' ' + y.slice(2); });
 
@@ -1510,21 +1584,77 @@ const App = {
         if (this._analyzeCharts.pnl) this._analyzeCharts.pnl.destroy();
 
         const months = this._getTimelineMonths();
-        const revenue = [];
-        const expenses = [];
-        const profit = [];
+        const plData = Database.getPLSpreadsheet();
+        const overrides = Database.getAllPLOverrides();
+        const currentMonth = Utils.getCurrentMonth();
+        const isFuture = (m) => m > currentMonth;
 
-        for (const month of months) {
-            const revResult = Database.db.exec(
-                "SELECT COALESCE(SUM(t.amount),0) FROM transactions t JOIN categories c ON t.category_id = c.id WHERE t.transaction_type='receivable' AND t.status='received' AND t.month_paid=? AND c.is_cogs = 0 AND c.show_on_pl != 1 AND (c.is_b2b = 1 OR c.is_sales = 1) AND COALESCE(t.source_type, '') NOT IN ('loan_receivable', 'loan_payment')", [month]);
-            const expResult = Database.db.exec(
-                "SELECT COALESCE(SUM(amount),0) FROM transactions WHERE transaction_type='payable' AND status='paid' AND month_paid=?", [month]);
-            const rev = revResult[0] ? revResult[0].values[0][0] : 0;
-            const exp = expResult[0] ? expResult[0].values[0][0] : 0;
-            revenue.push(rev);
-            expenses.push(exp);
-            profit.push(rev - exp);
-        }
+        const getVal = (catId, month, computed) => {
+            const key = `${catId}-${month}`;
+            return (key in overrides) ? overrides[key] : computed;
+        };
+
+        const groupByCategory = (rows) => {
+            const map = {};
+            (rows || []).forEach(row => {
+                if (!map[row.category_id]) map[row.category_id] = {};
+                map[row.category_id][row.month] = (map[row.category_id][row.month] || 0) + row.total;
+            });
+            return map;
+        };
+
+        const computeProjectedAvg = (catMonths) => {
+            const pastValues = months.filter(m => !isFuture(m)).map(m => catMonths[m] || 0).filter(v => v > 0);
+            return pastValues.length > 0 ? pastValues.reduce((a, b) => a + b, 0) / pastValues.length : 0;
+        };
+
+        // Revenue (matches P&L table Total Revenue)
+        const revByCat = groupByCategory(plData.revenue);
+        const revenueByMonth = {};
+        months.forEach(m => { revenueByMonth[m] = 0; });
+        Object.entries(revByCat).forEach(([catId, catMonths]) => {
+            const projAvg = computeProjectedAvg(catMonths);
+            months.forEach(m => {
+                const computed = catMonths[m] || 0;
+                const fallback = isFuture(m) && computed === 0 ? projAvg : computed;
+                revenueByMonth[m] += getVal(catId, m, fallback);
+            });
+        });
+
+        // Expenses (COGS + Operating Expenses)
+        const expensesByMonth = {};
+        months.forEach(m => { expensesByMonth[m] = 0; });
+        // COGS
+        const cogsByCat = groupByCategory(plData.cogs);
+        Object.entries(cogsByCat).forEach(([catId, catMonths]) => {
+            const projAvg = computeProjectedAvg(catMonths);
+            months.forEach(m => {
+                const computed = catMonths[m] || 0;
+                const fallback = isFuture(m) && computed === 0 ? projAvg : computed;
+                expensesByMonth[m] += getVal(catId, m, fallback);
+            });
+        });
+        // OpEx
+        const opexByCat = groupByCategory(plData.opex);
+        Object.entries(opexByCat).forEach(([catId, catMonths]) => {
+            const projAvg = computeProjectedAvg(catMonths);
+            months.forEach(m => {
+                const computed = catMonths[m] || 0;
+                const fallback = isFuture(m) && computed === 0 ? projAvg : computed;
+                expensesByMonth[m] += getVal(catId, m, fallback);
+            });
+        });
+        (plData.depreciation || []).forEach(cat => {
+            months.forEach(m => { expensesByMonth[m] += getVal(cat.category_id, m, 0); });
+        });
+        const assetDepr = plData.assetDeprByMonth || {};
+        months.forEach(m => { expensesByMonth[m] += (assetDepr[m] || 0); });
+        const loanInt = plData.loanInterestByMonth || {};
+        months.forEach(m => { expensesByMonth[m] += (loanInt[m] || 0); });
+
+        const revenue = months.map(m => revenueByMonth[m] || 0);
+        const expenses = months.map(m => expensesByMonth[m] || 0);
+        const profit = months.map((m, i) => revenue[i] - expenses[i]);
 
         const labels = months.map(m => { const [y, mo] = m.split('-'); return ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][parseInt(mo)-1] + " '" + y.slice(2); });
 
@@ -1565,7 +1695,54 @@ const App = {
         const cash = Math.max(0, Database.getCashAsOf(asOfMonth));
         const receivables = Database.getAccountsReceivableAsOf(asOfMonth);
         const payables = Database.getAccountsPayableAsOf(asOfMonth);
-        const equity = (cash + receivables) - payables;
+        const salesTaxPayable = Database.getSalesTaxPayableAsOf(asOfMonth);
+
+        // Compute proper loan balances (respecting start dates)
+        const round2 = (v) => Math.round(v * 100) / 100;
+        const loans = Database.getLoans();
+        let totalLoanBalance = 0;
+        loans.forEach(loan => {
+            const loanStartMonth = loan.start_date ? loan.start_date.substring(0, 7) : '';
+            if (loanStartMonth && loanStartMonth > asOfMonth) return;
+            const skipped = Database.getSkippedPayments(loan.id);
+            const overrides = Database.getLoanPaymentOverrides(loan.id);
+            const schedule = Utils.computeAmortizationSchedule({
+                principal: loan.principal, annual_rate: loan.annual_rate,
+                term_months: loan.term_months, payments_per_year: loan.payments_per_year,
+                start_date: loan.start_date, first_payment_date: loan.first_payment_date
+            }, skipped, overrides);
+            let balance = loan.principal;
+            for (let i = schedule.length - 1; i >= 0; i--) {
+                if (schedule[i].month <= asOfMonth) { balance = schedule[i].ending_balance; break; }
+            }
+            if (schedule.length > 0 && schedule[0].month > asOfMonth) balance = loan.principal;
+            totalLoanBalance = round2(totalLoanBalance + balance);
+        });
+
+        // Fixed assets
+        const fixedAssets = Database.getFixedAssets();
+        let netFixedAssets = 0;
+        fixedAssets.forEach(asset => {
+            const deprSchedule = Utils.computeDepreciationSchedule(asset);
+            let accumDepr = 0;
+            Object.entries(deprSchedule).forEach(([m, amt]) => { if (m <= asOfMonth) accumDepr += amt; });
+            netFixedAssets = round2(netFixedAssets + asset.purchase_cost - accumDepr);
+        });
+
+        const totalAssets = round2(cash + receivables + netFixedAssets);
+        const totalLiabilities = round2(payables + salesTaxPayable + totalLoanBalance);
+
+        // Proper equity from equity config + retained earnings
+        const taxMode = Database.getPLTaxMode();
+        const equityConfig = Database.getEquityConfig();
+        const seedEffective = (equityConfig.seed_received_date || equityConfig.seed_expected_date || '');
+        const apicEffective = (equityConfig.apic_received_date || equityConfig.apic_expected_date || '');
+        const seedMonth = seedEffective ? seedEffective.substring(0, 7) : '';
+        const apicMonth = apicEffective ? apicEffective.substring(0, 7) : '';
+        const commonStock = (seedMonth && seedMonth > asOfMonth) ? 0 : round2(equityConfig.common_stock_par * equityConfig.common_stock_shares);
+        const apicVal = (apicMonth && apicMonth > asOfMonth) ? 0 : round2(equityConfig.apic || 0);
+        const retainedEarnings = round2(Database.getRetainedEarningsAsOf(asOfMonth, taxMode));
+        const equity = round2(commonStock + apicVal + retainedEarnings);
 
         this._analyzeCharts.bs = new Chart(canvas, {
             type: 'bar',
@@ -1574,7 +1751,8 @@ const App = {
                 datasets: [
                     { label: 'Cash', data: [cash, 0], backgroundColor: 'rgba(16,185,129,0.7)', borderRadius: 4 },
                     { label: 'Receivables', data: [receivables, 0], backgroundColor: 'rgba(59,130,246,0.7)', borderRadius: 4 },
-                    { label: 'Payables', data: [0, payables], backgroundColor: 'rgba(239,68,68,0.7)', borderRadius: 4 },
+                    { label: 'Fixed Assets', data: [netFixedAssets, 0], backgroundColor: 'rgba(251,191,36,0.7)', borderRadius: 4 },
+                    { label: 'Liabilities', data: [0, totalLiabilities], backgroundColor: 'rgba(239,68,68,0.7)', borderRadius: 4 },
                     { label: 'Equity', data: [0, Math.max(0, equity)], backgroundColor: 'rgba(168,85,247,0.7)', borderRadius: 4 }
                 ]
             },
@@ -1589,9 +1767,10 @@ const App = {
         // Render gauges
         const gaugesEl = document.getElementById('analyzeGauges');
         if (gaugesEl) {
-            const totalAssets = cash + receivables;
-            const currentRatio = payables > 0 ? (totalAssets / payables).toFixed(2) : 'N/A';
-            const debtToEquity = equity > 0 ? (payables / equity).toFixed(2) : 'N/A';
+            const currentAssets = round2(cash + receivables);
+            const currentLiabilities = round2(payables + salesTaxPayable);
+            const currentRatio = currentLiabilities > 0 ? (currentAssets / currentLiabilities).toFixed(2) : 'N/A';
+            const debtToEquity = equity > 0 ? (totalLiabilities / equity).toFixed(2) : 'N/A';
 
             const makeGauge = (value, max, label) => {
                 const numVal = parseFloat(value);
@@ -3053,6 +3232,7 @@ const App = {
                 this.selectedLoanId = null;
                 this.selectedAssetId = null;
                 this.selectedBudgetExpenseId = null;
+                this.selectedB2BContractId = null;
                 this._timeline = null;
                 this.refreshAll();
                 this.loadAndApplyTimeline();
@@ -3225,6 +3405,62 @@ const App = {
             if (e.target.closest('.budget-detail-close')) {
                 this.selectedBudgetExpenseId = null;
                 this.refreshBudget();
+                return;
+            }
+
+            // Reset override button
+            const resetBtn = e.target.closest('.budget-override-reset');
+            if (resetBtn) {
+                e.stopPropagation();
+                const expenseId = parseInt(resetBtn.dataset.expenseId);
+                const month = resetBtn.dataset.month;
+                Database.setBudgetExpenseOverride(expenseId, month, null);
+                this.syncAllBudgetJournalEntries();
+                this.refreshAll();
+                return;
+            }
+
+            // Click on amount cell to edit
+            const amountCell = e.target.closest('.budget-amount-cell');
+            if (amountCell && !amountCell.querySelector('input')) {
+                const expenseId = parseInt(amountCell.dataset.expenseId);
+                const month = amountCell.dataset.month;
+                const defaultAmt = parseFloat(amountCell.dataset.default);
+                const currentAmt = parseFloat(amountCell.textContent.replace(/[^0-9.\-]/g, ''));
+
+                const input = document.createElement('input');
+                input.type = 'number';
+                input.className = 'budget-amount-inline-input';
+                input.value = currentAmt;
+                input.step = '0.01';
+                input.setAttribute('data-default', defaultAmt);
+
+                amountCell.textContent = '';
+                amountCell.appendChild(input);
+                input.focus();
+                input.select();
+
+                const commitEdit = () => {
+                    const newAmt = parseFloat(input.value);
+                    if (isNaN(newAmt) || newAmt < 0) {
+                        this.refreshBudget();
+                        return;
+                    }
+                    // If same as default, remove override; otherwise set it
+                    if (Math.abs(newAmt - defaultAmt) < 0.005) {
+                        Database.setBudgetExpenseOverride(expenseId, month, null);
+                    } else {
+                        Database.setBudgetExpenseOverride(expenseId, month, newAmt);
+                    }
+                    this.syncAllBudgetJournalEntries();
+                    this.refreshAll();
+                };
+
+                input.addEventListener('blur', commitEdit);
+                input.addEventListener('keydown', (ev) => {
+                    if (ev.key === 'Enter') { ev.preventDefault(); input.blur(); }
+                    if (ev.key === 'Escape') { this.refreshBudget(); }
+                });
             }
         });
 
@@ -3632,6 +3868,9 @@ const App = {
             const url = document.getElementById('shareUrlDisplay').value;
             if (url) this.copyToClipboard(url);
         });
+
+        // B2B Contract events
+        this.initB2BContractEvents();
     },
 
     // ==================== FORM HANDLERS ====================
@@ -4890,6 +5129,12 @@ const App = {
         const loans = Database.getLoans();
         let totalLoanBalance = 0;
         const loanDetails = loans.map(loan => {
+            // Don't include loan as liability until its start date
+            const loanStartMonth = loan.start_date ? loan.start_date.substring(0, 7) : '';
+            if (loanStartMonth && loanStartMonth > asOfMonth) {
+                return { name: loan.name, balance: 0 };
+            }
+
             const skipped = Database.getSkippedPayments(loan.id);
             const overrides = Database.getLoanPaymentOverrides(loan.id);
             const schedule = Utils.computeAmortizationSchedule({
@@ -5472,6 +5717,9 @@ const App = {
             loanScheduleByMonth[exp.id] = byMonth;
         });
 
+        // Load all budget expense overrides in one query
+        const allOverrides = Database.getAllBudgetExpenseOverrides();
+
         expenses.forEach(exp => {
             // Skip expenses without a category — can't create journal entries without one
             if (!exp.category_id) return;
@@ -5503,6 +5751,12 @@ const App = {
                     }
                 }
 
+                // Apply per-month budget override if set
+                const overrideKey = `${exp.id}:${month}`;
+                if (allOverrides[overrideKey] !== undefined) {
+                    amount = allOverrides[overrideKey];
+                }
+
                 if (isSkipped) {
                     // Remove existing entry for skipped payment months
                     if (existing && existing.status === 'pending') {
@@ -5524,8 +5778,8 @@ const App = {
                         source_type: 'budget',
                         source_id: exp.id
                     });
-                } else if (existing.status === 'pending' && existing.amount !== amount) {
-                    // Update amount if budget/schedule changed and entry hasn't been paid yet
+                } else if (existing.amount !== amount) {
+                    // Update amount to match budget (including overrides) regardless of status
                     Database.db.run(
                         'UPDATE transactions SET amount = ?, item_description = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
                         [amount, exp.name, existing.id]
@@ -9114,6 +9368,9 @@ const App = {
             throw new Error('Invalid VE Sales export file. Expected exportVersion and sales array.');
         }
 
+        // Preserve event assignments before clearing
+        const eventMap = Database.getVEEventAssignments();
+
         Database.clearVESales();
 
         // Normalize dates to YYYY-MM-DD
@@ -9122,6 +9379,9 @@ const App = {
             date: s.date ? s.date.split('T')[0] : s.date,
         }));
         Database.upsertVESales(sales);
+
+        // Restore event assignments
+        Database.restoreVEEventAssignments(eventMap);
 
         // Import line items
         if (data.lineItems && typeof data.lineItems === 'object') {
@@ -9380,9 +9640,12 @@ const App = {
                 sale_date_start: from || null,
                 sale_date_end: to || null,
             };
+            let eventCogs = 0;
             if (this._veJournalEventId) {
                 txData.source_type = 've_event';
                 txData.source_id = this._veJournalEventId;
+                const evt = Database.getAllVEEvents().find(e => e.id === this._veJournalEventId);
+                if (evt) eventCogs = evt.cogs || 0;
             }
             const parentId = Database.addTransaction(txData);
 
@@ -9396,8 +9659,10 @@ const App = {
                 sale_date_start: from || null,
                 sale_date_end: to || null,
                 month_due: monthDue,
+                inventory_cost: eventCogs,
             };
             this._manageSalesTaxEntry(parentId, data);
+            this._manageInventoryCostEntry(parentId, data);
 
             // Mark event as added to journal if created from an event
             if (this._veJournalEventId) {
@@ -9443,6 +9708,136 @@ const App = {
             console.error('Error removing VE journal entry:', error);
             UI.showNotification('Failed to remove journal entry', 'error');
         }
+    },
+
+    veAddAllEventsToJournal() {
+        if (this._guardViewOnly()) return;
+
+        const events = Database.getAllVEEvents();
+        const unadded = events.filter(evt => {
+            if (evt.journal_added === 1) return false;
+            const salesCount = this._veSales.filter(s => s.event_id === evt.id).length;
+            return salesCount > 0;
+        });
+
+        if (unadded.length === 0) {
+            UI.showNotification('No events to add — all events are already in the journal or have no sales.', 'info');
+            return;
+        }
+
+        // Get default sales category
+        let cats = Database.getSalesCategories();
+        if (cats.length === 0) {
+            cats = Database.getCategories().filter(c => !c.is_sales_tax && !c.is_cogs && !c.is_depreciation && !c.is_inventory_cost);
+        }
+        if (cats.length === 0) {
+            UI.showNotification('No sales categories found. Please create one first.', 'error');
+            return;
+        }
+        const categoryId = cats[0].id;
+
+        if (!confirm(`Add ${unadded.length} event(s) to journal using category "${cats[0].name}"?`)) return;
+
+        let added = 0;
+        for (const evt of unadded) {
+            const eventSales = this._veSales.filter(s => s.event_id === evt.id);
+            if (eventSales.length === 0) continue;
+
+            let subtotal = 0, total = 0, discount = 0;
+            for (const s of eventSales) {
+                subtotal = Math.round((subtotal + (s.subtotal || 0)) * 100) / 100;
+                total = Math.round((total + (s.total || 0)) * 100) / 100;
+                discount = Math.round((discount + (s.discount || 0)) * 100) / 100;
+            }
+            const pretaxAfterDisc = Math.round((subtotal - discount) * 100) / 100;
+
+            const dateRange = evt.start_date === evt.end_date
+                ? this.veFmtDate(evt.start_date)
+                : `${this.veFmtDate(evt.start_date)} - ${this.veFmtDate(evt.end_date)}`;
+            const description = `${evt.name} ${dateRange}`.trim();
+
+            const sortedDates = eventSales.map(s => s.date).filter(Boolean).sort();
+            const lastTxDate = sortedDates[sortedDates.length - 1] || evt.end_date || evt.start_date;
+            const entryDate = evt.end_date || evt.start_date;
+            const monthDue = entryDate.substring(0, 7);
+
+            try {
+                const txData = {
+                    entry_date: entryDate,
+                    category_id: categoryId,
+                    item_description: description,
+                    amount: total,
+                    pretax_amount: pretaxAfterDisc,
+                    transaction_type: 'receivable',
+                    status: 'received',
+                    date_processed: lastTxDate || entryDate,
+                    month_due: monthDue,
+                    month_paid: monthDue,
+                    sale_date_start: evt.start_date || null,
+                    sale_date_end: evt.end_date || null,
+                    source_type: 've_event',
+                    source_id: evt.id,
+                };
+                const parentId = Database.addTransaction(txData);
+
+                const data = {
+                    entry_date: entryDate,
+                    category_id: categoryId,
+                    item_description: description,
+                    amount: total,
+                    pretax_amount: pretaxAfterDisc,
+                    sale_date_start: evt.start_date || null,
+                    sale_date_end: evt.end_date || null,
+                    month_due: monthDue,
+                    inventory_cost: evt.cogs || 0,
+                };
+                this._manageSalesTaxEntry(parentId, data);
+                this._manageInventoryCostEntry(parentId, data);
+
+                Database.markVEEventJournalAdded(evt.id);
+                added++;
+            } catch (error) {
+                console.error(`Error adding event "${evt.name}" to journal:`, error);
+            }
+        }
+
+        this.refreshAll();
+        UI.showNotification(`Added ${added} event(s) to journal`, 'success');
+    },
+
+    veRemoveAllEventsFromJournal() {
+        if (this._guardViewOnly()) return;
+
+        const events = Database.getAllVEEvents();
+        const added = events.filter(evt => evt.journal_added === 1);
+
+        if (added.length === 0) {
+            UI.showNotification('No events are currently in the journal.', 'info');
+            return;
+        }
+
+        if (!confirm(`Remove ${added.length} event(s) from journal? This will delete their journal entries and any linked sales tax entries.`)) return;
+
+        let removed = 0;
+        for (const evt of added) {
+            const txId = Database.getVEEventTransaction(evt.id);
+            if (txId) {
+                try {
+                    const childId = Database.getLinkedSalesTaxTransaction(txId);
+                    if (childId) Database.deleteTransaction(childId);
+                    const invCostId = Database.getLinkedInventoryCostTransaction(txId);
+                    if (invCostId) Database.deleteTransaction(invCostId);
+                    Database.deleteTransaction(txId);
+                } catch (error) {
+                    console.error(`Error removing journal for event "${evt.name}":`, error);
+                }
+            }
+            Database.markVEEventJournalAdded(evt.id, 0);
+            removed++;
+        }
+
+        this.refreshAll();
+        UI.showNotification(`Removed ${removed} event(s) from journal`, 'success');
     },
 
     // Staged files for the import panel
@@ -9580,10 +9975,16 @@ const App = {
                 : `${this.veFmtDate(evt.start_date)} — ${this.veFmtDate(evt.end_date)}`;
 
             const isAdded = evt.journal_added === 1;
+            const cogs = evt.cogs || 0;
+            const grossMargin = salesTotal - cogs;
+            const marginPct = salesTotal > 0 ? Math.round((grossMargin / salesTotal) * 100) : 0;
+            const cogsPct = salesTotal > 0 ? Math.min(100, Math.round((cogs / salesTotal) * 100)) : 0;
+            const marginColor = marginPct >= 50 ? 'var(--green, #28a745)' : marginPct >= 20 ? 'var(--orange, #fd7e14)' : 'var(--red, #dc3545)';
             html += `<div class="ve-event-card${isAdded ? ' ve-event-added' : ''}" data-event-id="${evt.id}">
                 <div class="ve-event-card-header">
                     <input class="ve-event-name-input" type="text" value="${Utils.escapeHtml(evt.name)}" data-event-id="${evt.id}" data-field="name">
                     ${isAdded ? '<span class="ve-event-added-badge">In Journal</span>' : ''}
+                    <button class="ve-event-edit-toggle" data-event-id="${evt.id}" title="Edit event">&#9998;</button>
                     <button class="ve-event-delete" data-event-id="${evt.id}" title="Delete event">&times;</button>
                 </div>
                 <div class="ve-event-card-meta">
@@ -9597,6 +9998,39 @@ const App = {
                 <div class="ve-event-card-stats">
                     <span>${salesCount} sale${salesCount !== 1 ? 's' : ''}</span>
                     <span>${this.veFmt(salesTotal)}</span>
+                </div>
+                <div class="ve-margin-visual">
+                    <div class="ve-margin-bar">
+                        <div class="ve-margin-bar-cogs" style="width:${cogsPct}%;" title="COGS: ${this.veFmt(cogs)}"></div>
+                        <div class="ve-margin-bar-margin" style="width:${100 - cogsPct}%; background:${cogs > 0 ? marginColor : 'var(--c5, var(--border))'};" title="Gross Margin: ${this.veFmt(grossMargin)}"></div>
+                    </div>
+                    <div class="ve-margin-labels">
+                        <span class="ve-margin-label-cogs">${cogs > 0 ? `COGS ${this.veFmt(cogs)}` : 'No COGS set'}</span>
+                        <span class="ve-margin-label-pct" style="color:${cogs > 0 ? marginColor : 'var(--text-muted)'};">${cogs > 0 ? `${marginPct}% margin` : ''}</span>
+                        <span class="ve-margin-label-gm">${cogs > 0 ? `GM ${this.veFmt(grossMargin)}` : ''}</span>
+                    </div>
+                </div>
+                <div class="ve-event-edit-panel" data-event-id="${evt.id}" style="display:none;">
+                    <div class="ve-edit-row">
+                        <label>Start Date</label>
+                        <input type="date" class="ve-edit-start" value="${evt.start_date}" data-event-id="${evt.id}">
+                    </div>
+                    <div class="ve-edit-row">
+                        <label>End Date</label>
+                        <input type="date" class="ve-edit-end" value="${evt.end_date}" data-event-id="${evt.id}">
+                    </div>
+                    <div class="ve-edit-row">
+                        <label>COGS / Inventory Cost</label>
+                        <input type="number" step="0.01" min="0" class="ve-edit-cogs" value="${evt.cogs || ''}" placeholder="0.00" data-event-id="${evt.id}">
+                    </div>
+                    <div class="ve-edit-row">
+                        <label>Notes</label>
+                        <textarea class="ve-edit-notes" rows="2" placeholder="Optional notes..." data-event-id="${evt.id}">${Utils.escapeHtml(evt.notes || '')}</textarea>
+                    </div>
+                    <div class="ve-edit-actions">
+                        <button class="btn btn-primary btn-sm ve-edit-save" data-event-id="${evt.id}">Save</button>
+                        <button class="btn btn-sm ve-edit-cancel" data-event-id="${evt.id}">Cancel</button>
+                    </div>
                 </div>
                 <div class="ve-event-card-actions">
                     ${isAdded
@@ -9617,10 +10051,15 @@ const App = {
                 const id = Number(e.target.dataset.eventId);
                 const evt = Database.getAllVEEvents().find(ev => ev.id === id);
                 if (evt) {
-                    Database.updateVEEvent(id, { ...evt, name: e.target.value });
+                    const updated = { ...evt, name: e.target.value };
+                    Database.updateVEEvent(id, updated);
                     this._veEventsMap.set(id, e.target.value);
                     this.vePopulateEventDropdown();
                     this.veRenderTransactions();
+                    if (evt.journal_added === 1) {
+                        this.veUpdateJournalForEvent(id, updated);
+                        this.refreshAll();
+                    }
                 }
             });
         });
@@ -9629,8 +10068,32 @@ const App = {
                 const id = Number(e.target.dataset.eventId);
                 const evt = Database.getAllVEEvents().find(ev => ev.id === id);
                 if (evt) {
-                    Database.updateVEEvent(id, { ...evt, type: e.target.value });
+                    const updated = { ...evt, type: e.target.value };
+                    Database.updateVEEvent(id, updated);
                 }
+            });
+        });
+        // Edit toggle
+        list.querySelectorAll('.ve-event-edit-toggle').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const id = Number(e.target.dataset.eventId);
+                const panel = list.querySelector(`.ve-event-edit-panel[data-event-id="${id}"]`);
+                if (panel) panel.style.display = panel.style.display === 'none' ? '' : 'none';
+            });
+        });
+        // Edit save
+        list.querySelectorAll('.ve-edit-save').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const id = Number(e.target.dataset.eventId);
+                this.veSaveEventEdit(id);
+            });
+        });
+        // Edit cancel
+        list.querySelectorAll('.ve-edit-cancel').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const id = Number(e.target.dataset.eventId);
+                const panel = list.querySelector(`.ve-event-edit-panel[data-event-id="${id}"]`);
+                if (panel) panel.style.display = 'none';
             });
         });
         list.querySelectorAll('.ve-event-delete').forEach(btn => {
@@ -9654,6 +10117,97 @@ const App = {
                 this.veRemoveJournalForEvent(id);
             });
         });
+    },
+
+    veSaveEventEdit(eventId) {
+        const list = document.getElementById('veEventsList');
+        const panel = list.querySelector(`.ve-event-edit-panel[data-event-id="${eventId}"]`);
+        if (!panel) return;
+
+        const evt = Database.getAllVEEvents().find(e => e.id === eventId);
+        if (!evt) return;
+
+        const startDate = panel.querySelector('.ve-edit-start').value;
+        const endDate = panel.querySelector('.ve-edit-end').value || startDate;
+        const cogs = parseFloat(panel.querySelector('.ve-edit-cogs').value) || 0;
+        const notes = panel.querySelector('.ve-edit-notes').value.trim();
+
+        if (!startDate) {
+            UI.showNotification('Start date is required.', 'error');
+            return;
+        }
+
+        // Also pick up the current name and type from inline inputs
+        const card = list.querySelector(`.ve-event-card[data-event-id="${eventId}"]`);
+        const name = card.querySelector('.ve-event-name-input').value.trim() || evt.name;
+        const type = card.querySelector('.ve-event-type-select').value || evt.type;
+
+        const updated = { name, type, start_date: startDate, end_date: endDate, notes: notes || null, cogs };
+        Database.updateVEEvent(eventId, updated);
+
+        // Update events map
+        this._veEventsMap.set(eventId, name);
+        this.vePopulateEventDropdown();
+
+        // If event is in journal, auto-update the linked transaction
+        if (evt.journal_added === 1) {
+            this.veUpdateJournalForEvent(eventId, updated);
+        }
+
+        this.veRenderEventsPanel();
+        this.veRenderTransactions();
+        UI.showNotification('Event updated.', 'success');
+    },
+
+    veUpdateJournalForEvent(eventId, evt) {
+        const txId = Database.getVEEventTransaction(eventId);
+        if (!txId) return;
+
+        const tx = Database.getTransactionById(txId);
+        if (!tx) return;
+
+        const eventSales = this._veSales.filter(s => s.event_id === eventId);
+        let subtotal = 0, total = 0, discount = 0;
+        for (const s of eventSales) {
+            subtotal = Math.round((subtotal + (s.subtotal || 0)) * 100) / 100;
+            total = Math.round((total + (s.total || 0)) * 100) / 100;
+            discount = Math.round((discount + (s.discount || 0)) * 100) / 100;
+        }
+        const pretaxAfterDisc = Math.round((subtotal - discount) * 100) / 100;
+
+        const dateRange = evt.start_date === evt.end_date
+            ? this.veFmtDate(evt.start_date)
+            : `${this.veFmtDate(evt.start_date)} - ${this.veFmtDate(evt.end_date)}`;
+        const description = `${evt.name} ${dateRange}`.trim();
+
+        const sortedDates = eventSales.map(s => s.date).filter(Boolean).sort();
+        const lastTxDate = sortedDates[sortedDates.length - 1] || evt.end_date || evt.start_date;
+        const entryDate = evt.end_date || evt.start_date;
+        const monthDue = entryDate.substring(0, 7);
+
+        const updateData = {
+            entry_date: entryDate,
+            category_id: tx.category_id,
+            item_description: description,
+            amount: total,
+            pretax_amount: pretaxAfterDisc,
+            transaction_type: 'receivable',
+            status: 'received',
+            date_processed: lastTxDate || entryDate,
+            month_due: monthDue,
+            month_paid: monthDue,
+            sale_date_start: evt.start_date || null,
+            sale_date_end: evt.end_date || null,
+            source_type: 've_event',
+            source_id: eventId,
+            inventory_cost: evt.cogs || 0,
+        };
+
+        Database.updateTransaction(txId, updateData);
+
+        // Update linked sales tax and inventory cost entries
+        this._manageSalesTaxEntry(txId, updateData);
+        this._manageInventoryCostEntry(txId, updateData);
     },
 
     veAutoDetectEvents() {
@@ -9772,6 +10326,14 @@ const App = {
                 <input type="date" id="veNewEventStart" style="flex:1;">
                 <input type="date" id="veNewEventEnd" style="flex:1;">
             </div>
+            <div class="ve-edit-row">
+                <label>COGS / Inv. Cost</label>
+                <input type="number" step="0.01" min="0" id="veNewEventCogs" placeholder="0.00" style="flex:1;">
+            </div>
+            <div class="ve-edit-row">
+                <label>Notes</label>
+                <textarea id="veNewEventNotes" rows="2" placeholder="Optional notes..." style="flex:1;"></textarea>
+            </div>
             <div class="ve-autodetect-actions">
                 <button class="btn btn-primary btn-sm" id="veNewEventSave">Save</button>
                 <button class="btn btn-sm" id="veNewEventCancel">Cancel</button>
@@ -9784,11 +10346,13 @@ const App = {
             const type = document.getElementById('veNewEventType').value;
             const startDate = document.getElementById('veNewEventStart').value;
             const endDate = document.getElementById('veNewEventEnd').value || startDate;
+            const cogs = parseFloat(document.getElementById('veNewEventCogs').value) || 0;
+            const notes = (document.getElementById('veNewEventNotes').value || '').trim();
             if (!name || !startDate) {
                 UI.showNotification('Name and start date are required.', 'error');
                 return;
             }
-            const eventId = Database.createVEEvent({ name, type, start_date: startDate, end_date: endDate });
+            const eventId = Database.createVEEvent({ name, type, start_date: startDate, end_date: endDate, cogs, notes: notes || null });
             // Auto-assign sales within date range
             const matching = this._veSales.filter(s => !s.event_id && s.date >= startDate && s.date <= endDate);
             if (matching.length > 0) {
@@ -9821,6 +10385,8 @@ const App = {
         // Events panel
         document.getElementById('veAutoDetectBtn').addEventListener('click', () => this.veAutoDetectEvents());
         document.getElementById('veAddEventBtn').addEventListener('click', () => this.veShowNewEventForm());
+        document.getElementById('veAddAllToJournalBtn').addEventListener('click', () => this.veAddAllEventsToJournal());
+        document.getElementById('veRemoveAllFromJournalBtn').addEventListener('click', () => this.veRemoveAllEventsFromJournal());
 
         // Import panel toggle
         document.getElementById('veImportToggle').addEventListener('click', () => {
@@ -9943,9 +10509,567 @@ const App = {
         });
     },
 
+    // ==================== B2B CONTRACT TAB ====================
+
+    /**
+     * Compute all B2B contract values from input parameters
+     * @param {Object} c - Contract params (monthly_payroll, fiscal_months, bundle_price, cogs_per_unit, contract_start, contract_end)
+     * @returns {Object} Computed values
+     */
+    _computeB2BContract(c) {
+        const grossMargin = c.bundle_price > 0 ? (c.bundle_price - c.cogs_per_unit) / c.bundle_price : 0;
+        const totalGrossPayroll = c.monthly_payroll * c.fiscal_months;
+        const maxAllowedSales = totalGrossPayroll * 0.75;
+        const maxRevenue = grossMargin > 0 ? maxAllowedSales / grossMargin : 0;
+        const maxAllowedForContract = maxRevenue;
+        const monthlyContractedSales = c.fiscal_months > 0 ? maxAllowedForContract / c.fiscal_months : 0;
+        const maxUnitsPerMonth = c.bundle_price > 0 ? Math.floor(monthlyContractedSales / c.bundle_price) : 0;
+
+        // Use user-specified units_sold if provided, otherwise use max
+        const unitsSold = (c.units_sold && c.units_sold > 0) ? c.units_sold : maxUnitsPerMonth;
+        const monthlyContractedRounded = unitsSold * c.bundle_price;
+        const monthlyGrossProfit = monthlyContractedRounded * grossMargin;
+        const totalContractValue = monthlyContractedRounded * c.fiscal_months;
+        const totalGrossProfit = monthlyGrossProfit * c.fiscal_months;
+        const isWithinLimit = totalGrossProfit <= maxAllowedSales;
+        const months = (c.contract_start && c.contract_end) ? Utils.generateMonthRange(c.contract_start, c.contract_end) : [];
+
+        return {
+            grossMargin,
+            totalGrossPayroll,
+            maxAllowedSales,
+            maxRevenue,
+            maxAllowedForContract,
+            monthlyContractedSales,
+            maxUnitsPerMonth,
+            unitsSold,
+            monthlyContractedRounded,
+            monthlyGrossProfit,
+            totalContractValue,
+            totalGrossProfit,
+            isWithinLimit,
+            months
+        };
+    },
+
+    /**
+     * Sync all finalized B2B contract journal entries
+     */
+    syncAllB2BContractEntries() {
+        try {
+            const contracts = Database.getB2BContracts();
+            contracts.forEach(contract => {
+                if (contract.is_finalized) {
+                    this.syncB2BContractJournalEntries(contract);
+                }
+            });
+        } catch (e) {
+            console.warn('B2B contract sync skipped:', e.message);
+        }
+    },
+
+    /**
+     * Sync journal entries for a single finalized B2B contract
+     * @param {Object} contract - Contract object (or pass id and it will be fetched)
+     */
+    syncB2BContractJournalEntries(contract) {
+        if (typeof contract === 'number') {
+            contract = Database.getB2BContractById(contract);
+        }
+        if (!contract || !contract.is_finalized) return;
+
+        const computed = this._computeB2BContract(contract);
+        const catId = contract.category_id || this._getOrCreateB2BCategory();
+        const cogsCatId = Database.getOrCreateInventoryCostCategory();
+        const currentMonth = Utils.getCurrentMonth();
+        const monthlyCogs = contract.cogs_per_unit * computed.unitsSold;
+
+        computed.months.forEach(month => {
+            // Only create entries up to current month (like budget sync)
+            if (month > currentMonth) return;
+
+            // --- Receivable entry (revenue) ---
+            const existing = Database.db.exec(
+                "SELECT id, amount, status FROM transactions WHERE source_type = 'b2b_contract' AND source_id = ? AND payment_for_month = ? AND transaction_type = 'receivable'",
+                [contract.id, month]
+            );
+
+            if (existing.length > 0 && existing[0].values.length > 0) {
+                const [existingId, existingAmount, existingStatus] = existing[0].values[0];
+                if (existingStatus === 'pending' && Math.abs(existingAmount - computed.monthlyContractedRounded) > 0.01) {
+                    Database.updateTransaction(existingId, {
+                        entry_date: month + '-01',
+                        category_id: catId,
+                        item_description: `${contract.company_name} – B2B Contract (${computed.unitsSold} units)`,
+                        amount: computed.monthlyContractedRounded,
+                        transaction_type: 'receivable',
+                        status: 'pending',
+                        month_due: month,
+                        payment_for_month: month,
+                        source_type: 'b2b_contract',
+                        source_id: contract.id
+                    });
+                }
+            } else {
+                Database.addTransaction({
+                    entry_date: month + '-01',
+                    category_id: catId,
+                    item_description: `${contract.company_name} – B2B Contract (${computed.unitsSold} units)`,
+                    amount: computed.monthlyContractedRounded,
+                    transaction_type: 'receivable',
+                    status: 'pending',
+                    month_due: month,
+                    payment_for_month: month,
+                    source_type: 'b2b_contract',
+                    source_id: contract.id
+                });
+            }
+
+            // --- Payable entry (COGS / inventory cost) ---
+            if (monthlyCogs > 0) {
+                const existingCogs = Database.db.exec(
+                    "SELECT id, amount, status FROM transactions WHERE source_type = 'b2b_contract_cogs' AND source_id = ? AND payment_for_month = ?",
+                    [contract.id, month]
+                );
+
+                if (existingCogs.length > 0 && existingCogs[0].values.length > 0) {
+                    const [cogsId, cogsAmount, cogsStatus] = existingCogs[0].values[0];
+                    if (cogsStatus === 'pending' && Math.abs(cogsAmount - monthlyCogs) > 0.01) {
+                        Database.updateTransaction(cogsId, {
+                            entry_date: month + '-01',
+                            category_id: cogsCatId,
+                            item_description: `${contract.company_name} – B2B COGS (${computed.unitsSold} × ${Utils.formatCurrency(contract.cogs_per_unit)})`,
+                            amount: monthlyCogs,
+                            transaction_type: 'payable',
+                            status: 'pending',
+                            month_due: month,
+                            payment_for_month: month,
+                            source_type: 'b2b_contract_cogs',
+                            source_id: contract.id
+                        });
+                    }
+                } else {
+                    Database.addTransaction({
+                        entry_date: month + '-01',
+                        category_id: cogsCatId,
+                        item_description: `${contract.company_name} – B2B COGS (${computed.unitsSold} × ${Utils.formatCurrency(contract.cogs_per_unit)})`,
+                        amount: monthlyCogs,
+                        transaction_type: 'payable',
+                        status: 'pending',
+                        month_due: month,
+                        payment_for_month: month,
+                        source_type: 'b2b_contract_cogs',
+                        source_id: contract.id
+                    });
+                }
+            }
+        });
+    },
+
+    /**
+     * Get or create a B2B revenue category
+     * @returns {number} Category ID
+     */
+    _getOrCreateB2BCategory() {
+        const categories = Database.getCategories();
+        const existing = categories.find(c => c.is_b2b && c.default_type === 'receivable');
+        if (existing) return existing.id;
+        // addCategory params: name, isMonthly, defaultAmount, defaultType, folderId, showOnPl, isCogs, isDepreciation, isSalesTax, isB2b, defaultStatus, isSales, isInventoryCost
+        return Database.addCategory('B2B Contract Revenue', false, null, 'receivable', null, false, false, false, false, true, 'pending', false, false);
+    },
+
+    /**
+     * Unfinalize a B2B contract - delete only pending entries
+     * @param {number} contractId
+     */
+    unfinalizeB2BContract(contractId) {
+        // Only delete pending entries - preserve received/paid ones
+        Database.db.run(
+            "DELETE FROM transactions WHERE source_type IN ('b2b_contract', 'b2b_contract_cogs') AND source_id = ? AND status = 'pending'",
+            [contractId]
+        );
+        Database.setB2BContractFinalized(contractId, false);
+        Database.autoSave();
+    },
+
+    /**
+     * Refresh B2B contracts tab
+     */
+    refreshB2BContracts() {
+        try {
+            const contracts = Database.getB2BContracts();
+            // Get linked transactions for timeline display
+            const contractTransactions = {};
+            const contractCogsTransactions = {};
+            contracts.forEach(c => {
+                const results = Database.db.exec(
+                    "SELECT payment_for_month, amount, status, month_paid FROM transactions WHERE source_type = 'b2b_contract' AND source_id = ? ORDER BY payment_for_month",
+                    [c.id]
+                );
+                contractTransactions[c.id] = (results.length > 0) ? Database.rowsToObjects(results[0]) : [];
+
+                const cogsResults = Database.db.exec(
+                    "SELECT payment_for_month, amount, status, month_paid FROM transactions WHERE source_type = 'b2b_contract_cogs' AND source_id = ? ORDER BY payment_for_month",
+                    [c.id]
+                );
+                contractCogsTransactions[c.id] = (cogsResults.length > 0) ? Database.rowsToObjects(cogsResults[0]) : [];
+            });
+            UI.renderB2BContractTab(contracts, this.selectedB2BContractId, contractTransactions, contractCogsTransactions, this);
+        } catch (e) {
+            console.warn('B2B contract refresh skipped:', e.message);
+        }
+    },
+
+    /**
+     * Open B2B contract modal for add/edit
+     * @param {number|null} editId - Contract ID to edit, or null for new
+     */
+    openB2BContractModal(editId) {
+        const form = document.getElementById('b2bContractForm');
+        const title = document.getElementById('b2bContractModalTitle');
+        const saveBtn = document.getElementById('saveB2BContractBtn');
+
+        form.reset();
+        document.getElementById('editingB2BContractId').value = '';
+
+        // Populate category dropdown
+        const catSelect = document.getElementById('b2bCategoryId');
+        const categories = Database.getCategories();
+        const b2bCats = categories.filter(c => c.is_b2b);
+        catSelect.innerHTML = '<option value="">Auto-create category</option>' +
+            b2bCats.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+
+        if (editId) {
+            const contract = Database.getB2BContractById(editId);
+            if (!contract) return;
+            title.textContent = 'Edit B2B Contract';
+            saveBtn.textContent = 'Update';
+            document.getElementById('editingB2BContractId').value = editId;
+            document.getElementById('b2bCompanyName').value = contract.company_name;
+            document.getElementById('b2bBundleDescription').value = contract.bundle_description || '';
+            document.getElementById('b2bContractStart').value = contract.contract_start;
+            document.getElementById('b2bContractEnd').value = contract.contract_end;
+            document.getElementById('b2bFiscalMonths').value = contract.fiscal_months;
+            document.getElementById('b2bMonthlyPayroll').value = contract.monthly_payroll;
+            document.getElementById('b2bBundlePrice').value = contract.bundle_price;
+            document.getElementById('b2bCogsPerUnit').value = contract.cogs_per_unit;
+            document.getElementById('b2bUnitsSold').value = contract.units_sold || '';
+            catSelect.value = contract.category_id || '';
+            document.getElementById('b2bNotes').value = contract.notes || '';
+        } else {
+            title.textContent = 'Add B2B Contract';
+            saveBtn.textContent = 'Save';
+            // Auto-fill from timeline settings
+            const timeline = Database.getTimeline();
+            if (timeline.start) document.getElementById('b2bContractStart').value = timeline.start;
+            if (timeline.end) document.getElementById('b2bContractEnd').value = timeline.end;
+            if (timeline.start && timeline.end) {
+                const months = Utils.generateMonthRange(timeline.start, timeline.end);
+                document.getElementById('b2bFiscalMonths').value = months.length;
+            }
+        }
+
+        this._updateB2BCalcPreview();
+        UI.showModal('b2bContractModal');
+    },
+
+    /**
+     * Update the live calculation preview in the modal
+     */
+    _updateB2BCalcPreview() {
+        const preview = document.getElementById('b2bCalcPreview');
+        const monthlyPayroll = parseFloat(document.getElementById('b2bMonthlyPayroll').value) || 0;
+        const fiscalMonths = parseInt(document.getElementById('b2bFiscalMonths').value) || 0;
+        const bundlePrice = parseFloat(document.getElementById('b2bBundlePrice').value) || 0;
+        const cogsPerUnit = parseFloat(document.getElementById('b2bCogsPerUnit').value) || 0;
+        const unitsSoldInput = document.getElementById('b2bUnitsSold').value;
+        const unitsSold = unitsSoldInput ? parseInt(unitsSoldInput) : null;
+        const contractStart = document.getElementById('b2bContractStart').value;
+        const contractEnd = document.getElementById('b2bContractEnd').value;
+
+        if (!monthlyPayroll || !fiscalMonths || !bundlePrice || cogsPerUnit >= bundlePrice) {
+            preview.innerHTML = '<p class="b2b-preview-empty">Fill in the fields above to see calculations. COGS must be less than bundle price.</p>';
+            document.getElementById('b2bMaxUnitsHint').textContent = '';
+            return;
+        }
+
+        const computed = this._computeB2BContract({
+            monthly_payroll: monthlyPayroll,
+            fiscal_months: fiscalMonths,
+            bundle_price: bundlePrice,
+            cogs_per_unit: cogsPerUnit,
+            units_sold: unitsSold,
+            contract_start: contractStart,
+            contract_end: contractEnd
+        });
+
+        // Show max units hint next to the units sold field
+        document.getElementById('b2bMaxUnitsHint').textContent = `(max: ${computed.maxUnitsPerMonth.toLocaleString()})`;
+
+        const fmt = Utils.formatCurrency;
+        const limitClass = computed.isWithinLimit ? 'b2b-limit-ok' : 'b2b-limit-exceeded';
+        const limitLabel = computed.isWithinLimit ? 'Within Limit' : 'Exceeds Limit';
+
+        preview.innerHTML = `
+            <div class="b2b-preview-grid">
+                <div class="b2b-preview-row">
+                    <span>Gross Margin (auto-calculated)</span>
+                    <span>${(computed.grossMargin * 100).toFixed(2)}%</span>
+                </div>
+                <div class="b2b-preview-row">
+                    <span>Total Gross Payroll</span>
+                    <span>${fmt(computed.totalGrossPayroll)}</span>
+                </div>
+                <div class="b2b-preview-row">
+                    <span>Max 75% of Payroll</span>
+                    <span>${fmt(computed.maxAllowedSales)}</span>
+                </div>
+                <div class="b2b-preview-row">
+                    <span>Max Revenue (÷ margin)</span>
+                    <span>${fmt(computed.maxRevenue)}</span>
+                </div>
+                <div class="b2b-preview-row b2b-preview-divider">
+                    <span>Monthly Contracted Sales</span>
+                    <span>${fmt(computed.monthlyContractedSales)}</span>
+                </div>
+                <div class="b2b-preview-row">
+                    <span>Max Units (per month)</span>
+                    <span>${computed.maxUnitsPerMonth.toLocaleString()}</span>
+                </div>
+                <div class="b2b-preview-row">
+                    <span>Units Sold (per month)</span>
+                    <span>${computed.unitsSold.toLocaleString()}</span>
+                </div>
+                <div class="b2b-preview-row">
+                    <span>Monthly Sales (rounded)</span>
+                    <span>${fmt(computed.monthlyContractedRounded)}</span>
+                </div>
+                <div class="b2b-preview-row">
+                    <span>Monthly Gross Profit</span>
+                    <span>${fmt(computed.monthlyGrossProfit)}</span>
+                </div>
+                <div class="b2b-preview-row b2b-preview-divider">
+                    <span>Total Contract Value</span>
+                    <strong>${fmt(computed.totalContractValue)}</strong>
+                </div>
+                <div class="b2b-preview-row">
+                    <span>Total Gross Profit</span>
+                    <span class="${limitClass}">${fmt(computed.totalGrossProfit)} <small>(${limitLabel})</small></span>
+                </div>
+            </div>
+        `;
+    },
+
+    /**
+     * Handle save B2B contract form submission
+     */
+    handleSaveB2BContract() {
+        try {
+            const editId = document.getElementById('editingB2BContractId').value;
+            const companyName = document.getElementById('b2bCompanyName').value.trim();
+            const bundleDescription = document.getElementById('b2bBundleDescription').value.trim();
+            const contractStart = document.getElementById('b2bContractStart').value;
+            const contractEnd = document.getElementById('b2bContractEnd').value;
+            const fiscalMonths = parseInt(document.getElementById('b2bFiscalMonths').value) || 0;
+            const monthlyPayroll = parseFloat(document.getElementById('b2bMonthlyPayroll').value) || 0;
+            const bundlePrice = parseFloat(document.getElementById('b2bBundlePrice').value) || 0;
+            const cogsPerUnit = parseFloat(document.getElementById('b2bCogsPerUnit').value) || 0;
+            const unitsSoldInput = document.getElementById('b2bUnitsSold').value;
+            const unitsSold = unitsSoldInput ? parseInt(unitsSoldInput) : null;
+            const categoryId = document.getElementById('b2bCategoryId').value || null;
+            const notes = document.getElementById('b2bNotes').value.trim();
+
+            // Validation
+            if (!companyName) { UI.showNotification('Company name is required', 'error'); return; }
+            if (!contractStart || !contractEnd) { UI.showNotification('Contract start and end months are required', 'error'); return; }
+            if (contractStart > contractEnd) { UI.showNotification('Contract start must be before end', 'error'); return; }
+            if (fiscalMonths <= 0) { UI.showNotification('Fiscal months must be greater than 0', 'error'); return; }
+            if (monthlyPayroll <= 0) { UI.showNotification('Monthly payroll must be greater than 0', 'error'); return; }
+            if (bundlePrice <= 0) { UI.showNotification('Bundle price must be greater than 0', 'error'); return; }
+            if (cogsPerUnit < 0) { UI.showNotification('COGS per unit cannot be negative', 'error'); return; }
+            if (cogsPerUnit >= bundlePrice) { UI.showNotification('COGS per unit must be less than bundle price', 'error'); return; }
+
+            const params = {
+                company_name: companyName,
+                bundle_description: bundleDescription,
+                contract_start: contractStart,
+                contract_end: contractEnd,
+                fiscal_months: fiscalMonths,
+                monthly_payroll: monthlyPayroll,
+                bundle_price: bundlePrice,
+                cogs_per_unit: cogsPerUnit,
+                units_sold: unitsSold,
+                category_id: categoryId,
+                notes: notes
+            };
+
+            if (editId) {
+                Database.updateB2BContract(parseInt(editId), params);
+                // If finalized, re-sync entries
+                const contract = Database.getB2BContractById(parseInt(editId));
+                if (contract && contract.is_finalized) {
+                    this.syncB2BContractJournalEntries(contract);
+                }
+                UI.showNotification('Contract updated', 'success');
+            } else {
+                const newId = Database.addB2BContract(params);
+                this.selectedB2BContractId = newId;
+                UI.showNotification('Contract added', 'success');
+            }
+
+            UI.hideModal('b2bContractModal');
+            this.refreshAll();
+        } catch (error) {
+            console.error('Error saving B2B contract:', error);
+            UI.showNotification('Error saving contract: ' + error.message, 'error');
+        }
+    },
+
+    /**
+     * Handle finalize B2B contract
+     * @param {number} id
+     */
+    handleFinalizeB2BContract(id) {
+        const contract = Database.getB2BContractById(id);
+        if (!contract) return;
+
+        // Ensure category exists
+        if (!contract.category_id) {
+            const catId = this._getOrCreateB2BCategory();
+            Database.updateB2BContract(id, { ...contract, category_id: catId });
+            contract.category_id = catId;
+        }
+
+        Database.setB2BContractFinalized(id, true);
+        this.syncB2BContractJournalEntries(id);
+        UI.showNotification('Contract finalized – journal entries created', 'success');
+        this.refreshAll();
+    },
+
+    /**
+     * Handle unfinalize B2B contract
+     * @param {number} id
+     */
+    handleUnfinalizeB2BContract(id) {
+        // Check for received/paid entries
+        const received = Database.db.exec(
+            "SELECT COUNT(*) FROM transactions WHERE source_type IN ('b2b_contract', 'b2b_contract_cogs') AND source_id = ? AND status IN ('received', 'paid')",
+            [id]
+        );
+        const receivedCount = (received.length > 0) ? received[0].values[0][0] : 0;
+
+        this.unfinalizeB2BContract(id);
+        let msg = 'Contract unfinalized – pending entries removed';
+        if (receivedCount > 0) {
+            msg += ` (${receivedCount} received entries preserved)`;
+        }
+        UI.showNotification(msg, 'success');
+        this.refreshAll();
+    },
+
+    /**
+     * Handle delete B2B contract
+     * @param {number} id
+     */
+    handleDeleteB2BContract(id) {
+        this.deleteB2BContractTargetId = id;
+        const contract = Database.getB2BContractById(id);
+        document.getElementById('deleteB2BContractMessage').textContent =
+            `Delete contract "${contract.company_name}"? This will also remove all auto-created journal entries.`;
+        UI.showModal('deleteB2BContractModal');
+    },
+
+    /**
+     * Confirm delete B2B contract
+     */
+    confirmDeleteB2BContract() {
+        if (!this.deleteB2BContractTargetId) return;
+        Database.deleteB2BContract(this.deleteB2BContractTargetId);
+        if (this.selectedB2BContractId === this.deleteB2BContractTargetId) {
+            this.selectedB2BContractId = null;
+        }
+        this.deleteB2BContractTargetId = null;
+        UI.hideModal('deleteB2BContractModal');
+        UI.showNotification('Contract deleted', 'success');
+        this.refreshAll();
+    },
+
+    /**
+     * Initialize B2B contract event listeners
+     */
+    initB2BContractEvents() {
+        document.getElementById('addB2BContractBtn').addEventListener('click', () => this.openB2BContractModal());
+        document.getElementById('saveB2BContractBtn').addEventListener('click', () => this.handleSaveB2BContract());
+        document.getElementById('cancelB2BContractBtn').addEventListener('click', () => UI.hideModal('b2bContractModal'));
+        document.getElementById('confirmDeleteB2BContractBtn').addEventListener('click', () => this.confirmDeleteB2BContract());
+        document.getElementById('cancelDeleteB2BContractBtn').addEventListener('click', () => {
+            UI.hideModal('deleteB2BContractModal');
+            this.deleteB2BContractTargetId = null;
+        });
+
+        // Live calculation preview
+        ['b2bMonthlyPayroll', 'b2bFiscalMonths', 'b2bBundlePrice', 'b2bCogsPerUnit', 'b2bUnitsSold', 'b2bContractStart', 'b2bContractEnd'].forEach(id => {
+            document.getElementById(id).addEventListener('input', () => this._updateB2BCalcPreview());
+        });
+
+        // Auto-calculate fiscal months when start/end change
+        ['b2bContractStart', 'b2bContractEnd'].forEach(id => {
+            document.getElementById(id).addEventListener('change', () => {
+                const start = document.getElementById('b2bContractStart').value;
+                const end = document.getElementById('b2bContractEnd').value;
+                if (start && end && start <= end) {
+                    const months = Utils.generateMonthRange(start, end);
+                    document.getElementById('b2bFiscalMonths').value = months.length;
+                    this._updateB2BCalcPreview();
+                }
+            });
+        });
+
+        // List panel click delegation
+        document.getElementById('b2bListPanel').addEventListener('click', (e) => {
+            const item = e.target.closest('.b2b-list-item');
+            if (item) {
+                this.selectedB2BContractId = parseInt(item.dataset.id);
+                this.refreshB2BContracts();
+            }
+        });
+
+        // Detail panel button delegation
+        document.getElementById('b2bDetailPanel').addEventListener('click', (e) => {
+            const btn = e.target.closest('button');
+            if (!btn) return;
+            const id = parseInt(btn.dataset.id);
+            if (btn.classList.contains('b2b-edit-btn')) {
+                this.openB2BContractModal(id);
+            } else if (btn.classList.contains('b2b-delete-btn')) {
+                this.handleDeleteB2BContract(id);
+            } else if (btn.classList.contains('b2b-finalize-btn')) {
+                this.handleFinalizeB2BContract(id);
+            } else if (btn.classList.contains('b2b-unfinalize-btn')) {
+                this.handleUnfinalizeB2BContract(id);
+            }
+        });
+    },
+
     // ==================== CHANGE LOG ====================
 
     changelogData: [
+        {
+            version: '2.1',
+            date: '2026-03-15',
+            title: 'B2B Contracts & Budget Overrides',
+            changes: [
+                { type: 'feature', text: 'B2B Contracts tab — manage wholesale contracts with 75% payroll profit limit, COGS tracking, payment timelines, and auto-generated journal entries' },
+                { type: 'feature', text: 'Budget per-month overrides — click any monthly amount in budget detail to set a custom value for that month' },
+                { type: 'feature', text: 'VE Events: inline edit panel for event details, COGS tracking, and gross margin bar visualization' },
+                { type: 'feature', text: 'VE Sales: bulk "Add All to Journal" and "Remove All from Journal" buttons for events' },
+                { type: 'improved', text: 'Dashboard and Analyze charts now use P&L data with overrides for accurate revenue/expense totals' },
+                { type: 'improved', text: 'Analyze Balance Sheet chart includes fixed assets, loan balances, and sales tax payable' },
+                { type: 'improved', text: 'Financial ratios use proper current assets/liabilities breakdown' },
+                { type: 'fix', text: 'Filter month dropdown now retains selection when data refreshes' },
+                { type: 'fix', text: 'Auto-generated budget journal entries no longer show edit/duplicate buttons' }
+            ]
+        },
         {
             version: '2.0',
             date: '2026-03-14',

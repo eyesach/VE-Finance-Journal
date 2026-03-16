@@ -108,6 +108,10 @@
                         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
                         VE Sales
                     </button>
+                    <button class="main-tab" data-tab="b2bcontract">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                        B2B Contract
+                    </button>
                     <span class="sidebar-nav-group">Info</span>
                     <button class="main-tab" data-tab="quickguide">
                         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
@@ -1298,6 +1302,8 @@
                     <div class="ve-events-header">
                         <h3>Events <span class="ve-count" id="veEventsCount">(0)</span></h3>
                         <div class="ve-events-header-actions">
+                            <button class="btn btn-sm" id="veAddAllToJournalBtn" title="Add all events to journal">Add All to Journal</button>
+                            <button class="btn btn-sm" id="veRemoveAllFromJournalBtn" title="Remove all events from journal">Remove All from Journal</button>
                             <button class="btn btn-sm" id="veAutoDetectBtn">Auto-Detect</button>
                             <button class="btn btn-sm btn-primary" id="veAddEventBtn">+ New Event</button>
                         </div>
@@ -1315,6 +1321,34 @@
                 <div class="dashboard-kpi-cards" id="dashboardKpiCards"></div>
                 <div class="dashboard-sections" id="dashboardSections"></div>
             </div>
+        </div>
+
+        <!-- B2B Contract Tab -->
+        <div id="b2bcontractTab" style="display: none;">
+            <section class="b2b-section">
+                <div class="b2b-header">
+                    <h3>B2B Contracts</h3>
+                    <p class="b2b-subtitle">Max profit limited to 75% of payroll expenses</p>
+                    <div class="b2b-controls">
+                        <button id="addB2BContractBtn" class="btn btn-primary btn-small">+ Add Contract</button>
+                    </div>
+                </div>
+                <div class="b2b-layout">
+                    <div id="b2bListPanel" class="b2b-list-panel"></div>
+                    <div id="b2bDetailPanel" class="b2b-detail-panel">
+                        <div class="empty-state">
+                            <svg class="empty-state-icon" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                                <polyline points="14 2 14 8 20 8"/>
+                                <line x1="16" y1="13" x2="8" y2="13"/>
+                                <line x1="16" y1="17" x2="8" y2="17"/>
+                            </svg>
+                            <p class="empty-state-title">No Contract Selected</p>
+                            <p class="empty-state-desc">Select a contract to view its details and payment timeline, or add a new one.</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
         </div>
 
         <!-- Quick Guide Tab -->
@@ -1962,6 +1996,89 @@
                 <div class="form-actions">
                     <button type="button" id="cancelDeleteLoanBtn" class="btn btn-secondary">Cancel</button>
                     <button type="button" id="confirmDeleteLoanBtn" class="btn btn-danger">Delete</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- B2B Contract Modal -->
+        <div id="b2bContractModal" class="modal">
+            <div class="modal-content modal-wide">
+                <h3 id="b2bContractModalTitle">Add B2B Contract</h3>
+                <form id="b2bContractForm" class="compact-form">
+                    <input type="hidden" id="editingB2BContractId" value="">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="b2bCompanyName">Company Name *</label>
+                            <input type="text" id="b2bCompanyName" required placeholder="e.g. Siply">
+                        </div>
+                        <div class="form-group">
+                            <label for="b2bBundleDescription">Bundle Description</label>
+                            <input type="text" id="b2bBundleDescription" placeholder="e.g. Sporting Goods Bundle">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="b2bContractStart">Contract Start *</label>
+                            <input type="month" id="b2bContractStart" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="b2bContractEnd">Contract End *</label>
+                            <input type="month" id="b2bContractEnd" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="b2bFiscalMonths">Fiscal Months *</label>
+                            <input type="number" id="b2bFiscalMonths" min="1" max="24" required placeholder="7">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="b2bMonthlyPayroll">Monthly Payroll *</label>
+                            <input type="number" id="b2bMonthlyPayroll" step="0.01" min="0" required placeholder="108080.60">
+                        </div>
+                        <div class="form-group">
+                            <label for="b2bBundlePrice">Revenue Per Unit *</label>
+                            <input type="number" id="b2bBundlePrice" step="0.01" min="0" required placeholder="175.00">
+                        </div>
+                        <div class="form-group">
+                            <label for="b2bCogsPerUnit">COGS Per Unit *</label>
+                            <input type="number" id="b2bCogsPerUnit" step="0.01" min="0" required placeholder="126.00">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="b2bUnitsSold">Units Sold / Month <small id="b2bMaxUnitsHint"></small></label>
+                            <input type="number" id="b2bUnitsSold" min="0" placeholder="Leave blank for max">
+                        </div>
+                        <div class="form-group">
+                            <label for="b2bCategoryId">Category</label>
+                            <select id="b2bCategoryId">
+                                <option value="">Auto-create category</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="b2bNotes">Notes</label>
+                            <input type="text" id="b2bNotes" placeholder="Optional notes">
+                        </div>
+                    </div>
+                    <div id="b2bCalcPreview" class="b2b-calc-preview">
+                        <p class="b2b-preview-empty">Fill in the fields above to see calculations.</p>
+                    </div>
+                    <div class="form-actions">
+                        <button type="button" id="cancelB2BContractBtn" class="btn btn-secondary">Cancel</button>
+                        <button type="button" id="saveB2BContractBtn" class="btn btn-primary">Save</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Delete B2B Contract Confirmation -->
+        <div id="deleteB2BContractModal" class="modal">
+            <div class="modal-content">
+                <h3>Delete B2B Contract</h3>
+                <p id="deleteB2BContractMessage">Are you sure? This will also remove all auto-created journal entries.</p>
+                <div class="form-actions">
+                    <button type="button" id="cancelDeleteB2BContractBtn" class="btn btn-secondary">Cancel</button>
+                    <button type="button" id="confirmDeleteB2BContractBtn" class="btn btn-danger">Delete</button>
                 </div>
             </div>
         </div>
