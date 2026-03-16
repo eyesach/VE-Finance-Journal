@@ -10013,15 +10013,15 @@ const App = {
                 <div class="ve-event-edit-panel" data-event-id="${evt.id}" style="display:none;">
                     <div class="ve-edit-row">
                         <label>Start Date</label>
-                        <input type="date" class="ve-edit-start" value="${evt.start_date}" data-event-id="${evt.id}">
+                        <input type="date" class="ve-edit-start" value="${Utils.escapeHtml(evt.start_date)}" data-event-id="${evt.id}">
                     </div>
                     <div class="ve-edit-row">
                         <label>End Date</label>
-                        <input type="date" class="ve-edit-end" value="${evt.end_date}" data-event-id="${evt.id}">
+                        <input type="date" class="ve-edit-end" value="${Utils.escapeHtml(evt.end_date)}" data-event-id="${evt.id}">
                     </div>
                     <div class="ve-edit-row">
                         <label>COGS / Inventory Cost</label>
-                        <input type="number" step="0.01" min="0" class="ve-edit-cogs" value="${evt.cogs || ''}" placeholder="0.00" data-event-id="${evt.id}">
+                        <input type="number" step="0.01" min="0" class="ve-edit-cogs" value="${Utils.escapeHtml(String(evt.cogs || ''))}" placeholder="0.00" data-event-id="${evt.id}">
                     </div>
                     <div class="ve-edit-row">
                         <label>Notes</label>
@@ -10737,7 +10737,7 @@ const App = {
         const categories = Database.getCategories();
         const b2bCats = categories.filter(c => c.is_b2b);
         catSelect.innerHTML = '<option value="">Auto-create category</option>' +
-            b2bCats.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+            b2bCats.map(c => `<option value="${c.id}">${Utils.escapeHtml(c.name)}</option>`).join('');
 
         if (editId) {
             const contract = Database.getB2BContractById(editId);
