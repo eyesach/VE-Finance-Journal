@@ -1175,7 +1175,7 @@ const UI = {
         nonB2bRevenueEntries.forEach(([catId, catData]) => {
             let rowTotal = 0;
             const projAvg = computeProjectedAvg(catData.months);
-            html += `<tr class="pnl-indent"><td>${Utils.escapeHtml(catData.name)}</td>`;
+            html += `<tr class="pnl-indent" draggable="true" data-category-id="${catId}" data-section="revenue"><td class="pnl-drag-handle">${Utils.escapeHtml(catData.name)}</td>`;
             months.forEach(m => {
                 if (psActive && useProjectedView(m)) {
                     // Projected sales covers this month for non-B2B
@@ -1198,7 +1198,7 @@ const UI = {
         b2bRevenueEntries.forEach(([catId, catData]) => {
             let rowTotal = 0;
             const projAvg = computeProjectedAvg(catData.months);
-            html += `<tr class="pnl-indent"><td>${Utils.escapeHtml(catData.name)}</td>`;
+            html += `<tr class="pnl-indent" draggable="true" data-category-id="${catId}" data-section="revenue"><td class="pnl-drag-handle">${Utils.escapeHtml(catData.name)}</td>`;
             months.forEach(m => {
                 const computed = catData.months[m] || 0;
                 const fallback = isFuture(m) && computed === 0 ? projAvg : computed;
@@ -1253,7 +1253,7 @@ const UI = {
         cogsEntries.forEach(([catId, catData]) => {
             let rowTotal = 0;
             const projAvg = computeProjectedAvg(catData.months);
-            html += `<tr class="pnl-indent"><td>${Utils.escapeHtml(catData.name)}</td>`;
+            html += `<tr class="pnl-indent" draggable="true" data-category-id="${catId}" data-section="cogs"><td class="pnl-drag-handle">${Utils.escapeHtml(catData.name)}</td>`;
             months.forEach(m => {
                 const computed = catData.months[m] || 0;
                 const fallback = isFuture(m) && computed === 0 ? projAvg : computed;
@@ -1305,7 +1305,7 @@ const UI = {
         opexEntries.forEach(([catId, catData]) => {
             let rowTotal = 0;
             const projAvg = computeProjectedAvg(catData.months);
-            html += `<tr class="pnl-indent"><td>${Utils.escapeHtml(catData.name)}</td>`;
+            html += `<tr class="pnl-indent" draggable="true" data-category-id="${catId}" data-section="opex"><td class="pnl-drag-handle">${Utils.escapeHtml(catData.name)}</td>`;
             months.forEach(m => {
                 const computed = catData.months[m] || 0;
                 const fallback = isFuture(m) && computed === 0 ? projAvg : computed;
@@ -1322,7 +1322,7 @@ const UI = {
         // Depreciation rows (manual input only — values come from pl_overrides)
         depreciation.forEach(cat => {
             let rowTotal = 0;
-            html += `<tr class="pnl-indent"><td>${Utils.escapeHtml(cat.category_name)}</td>`;
+            html += `<tr class="pnl-indent" draggable="true" data-category-id="${cat.category_id}" data-section="opex"><td class="pnl-drag-handle">${Utils.escapeHtml(cat.category_name)}</td>`;
             months.forEach(m => {
                 const val = getVal(cat.category_id, m, 0);
                 monthOpex[m] += val;
@@ -2014,7 +2014,26 @@ const UI = {
             const endMonth = selectedExpense.end_month;
             const months = [];
             let m = startMonth;
-            const maxMonths = 24;
+            // For loan-linked expenses, show all months (up to term length); otherwise cap at 24
+            const isLoanLinked = selectedExpense.notes && /^Auto-created from loan #(\d+)$/.test(selectedExpense.notes);
+            let loanScheduleByMonth = null;
+            let loanData = null;
+            if (isLoanLinked) {
+                const loanId = parseInt(selectedExpense.notes.match(/^Auto-created from loan #(\d+)$/)[1]);
+                loanData = Database.getLoanById(loanId);
+                if (loanData) {
+                    const skippedPayments = Database.getSkippedPayments(loanId);
+                    const paymentOverrides = Database.getLoanPaymentOverrides(loanId);
+                    const schedule = Utils.computeAmortizationSchedule({
+                        principal: loanData.principal, annual_rate: loanData.annual_rate,
+                        payments_per_year: loanData.payments_per_year, term_months: loanData.term_months,
+                        start_date: loanData.start_date, first_payment_date: loanData.first_payment_date
+                    }, skippedPayments, paymentOverrides);
+                    loanScheduleByMonth = {};
+                    schedule.forEach(p => { loanScheduleByMonth[p.month] = p; });
+                }
+            }
+            const maxMonths = isLoanLinked ? 600 : 24;
             for (let i = 0; i < maxMonths; i++) {
                 if (endMonth && m > endMonth) break;
                 months.push(m);
@@ -2042,13 +2061,23 @@ const UI = {
             let cumulative = 0;
             months.forEach(month => {
                 const overrideAmt = overrides[month];
-                const amount = overrideAmt !== undefined ? overrideAmt : selectedExpense.monthly_amount;
+                // For loan-linked expenses, use the amortization schedule amount
+                let baseAmount = selectedExpense.monthly_amount;
+                if (loanScheduleByMonth) {
+                    const entry = loanScheduleByMonth[month];
+                    if (entry && !entry.skipped) {
+                        baseAmount = entry.payment;
+                    } else if (entry && entry.skipped) {
+                        baseAmount = 0;
+                    }
+                }
+                const amount = overrideAmt !== undefined ? overrideAmt : baseAmount;
                 cumulative += amount;
                 const isCurrent = month === currentMonth;
                 const isOverridden = overrideAmt !== undefined;
                 html += `<tr${isCurrent ? ' class="budget-current-month"' : ''}>
                     <td>${Utils.formatMonthShort(month)}</td>
-                    <td class="budget-amount-cell${isOverridden ? ' budget-amount-overridden' : ''}" data-expense-id="${selectedExpense.id}" data-month="${month}" data-default="${selectedExpense.monthly_amount}" title="Click to edit">${fmtAmt(amount)}${isOverridden ? ' <button class="budget-override-reset" data-expense-id="' + selectedExpense.id + '" data-month="' + month + '" title="Reset to default">&times;</button>' : ''}</td>
+                    <td class="budget-amount-cell${isOverridden ? ' budget-amount-overridden' : ''}" data-expense-id="${selectedExpense.id}" data-month="${month}" data-default="${baseAmount}" title="Click to edit">${fmtAmt(amount)}${isOverridden ? ' <button class="budget-override-reset" data-expense-id="' + selectedExpense.id + '" data-month="' + month + '" title="Reset to default">&times;</button>' : ''}</td>
                     <td>${fmtAmt(cumulative)}</td>
                 </tr>`;
             });
@@ -3195,7 +3224,7 @@ const UI = {
         const computed = app._computeB2BContract(selectedContract);
         const transactions = contractTransactions[selectedContract.id] || [];
         const cogsTransactions = contractCogsTransactions[selectedContract.id] || [];
-        const monthlyCogs = selectedContract.cogs_per_unit * computed.unitsSold;
+        const monthlyCogs = Math.round(computed.cogsPerUnit * computed.unitsSold * 100) / 100;
         const limitClass = computed.isWithinLimit ? 'b2b-limit-ok' : 'b2b-limit-exceeded';
         const limitLabel = computed.isWithinLimit ? 'Within 75% Limit' : 'Exceeds 75% Limit';
 
@@ -3246,6 +3275,43 @@ const UI = {
             </div>
         </div>`;
 
+        // Product lines table
+        const products = Database.getB2BContractProducts(selectedContract.id);
+        if (products.length > 0) {
+            let totalQty = 0, monthlyTotal = 0, weightedPmSum = 0, weightedPmDenom = 0;
+            html += `<div class="b2b-calc-breakdown">
+                <h4>Product Lines</h4>
+                <table class="b2b-breakdown-table b2b-products-detail-table">
+                    <thead><tr><th>Product</th><th>B2B Price</th><th>COGS</th><th>PM%</th><th>Qty</th><th>Total</th></tr></thead>
+                    <tbody>`;
+            products.forEach(p => {
+                const pm = p.b2b_price > 0 ? ((p.b2b_price - p.cogs) / p.b2b_price * 100) : 0;
+                const total = Math.round(p.b2b_price * p.quantity * 100) / 100;
+                totalQty += p.quantity;
+                monthlyTotal += total;
+                if (p.b2b_price > 0 && p.quantity > 0) {
+                    weightedPmSum += pm * total;
+                    weightedPmDenom += total;
+                }
+                html += `<tr>
+                    <td>${Utils.escapeHtml(p.product_name)}</td>
+                    <td>${fmtAmt(p.b2b_price)}</td>
+                    <td>${fmtAmt(p.cogs)}</td>
+                    <td>${pm.toFixed(2)}%</td>
+                    <td>${p.quantity.toLocaleString()}</td>
+                    <td>${fmtAmt(total)}</td>
+                </tr>`;
+            });
+            const avgPm = weightedPmDenom > 0 ? (weightedPmSum / weightedPmDenom) : 0;
+            html += `</tbody>
+                <tfoot><tr class="b2b-row-highlight">
+                    <td><strong>Totals</strong></td><td></td><td></td>
+                    <td>${avgPm.toFixed(2)}%</td>
+                    <td>${totalQty.toLocaleString()}</td>
+                    <td>${fmtAmt(monthlyTotal)}</td>
+                </tr></tfoot></table></div>`;
+        }
+
         // Calculation breakdown
         html += `<div class="b2b-calc-breakdown">
             <h4>Calculation Breakdown</h4>
@@ -3254,14 +3320,9 @@ const UI = {
                     <tr><td>Monthly Payroll</td><td>${fmtAmt(selectedContract.monthly_payroll)}</td></tr>
                     <tr><td>Total Gross Payroll (${selectedContract.fiscal_months} months)</td><td>${fmtAmt(computed.totalGrossPayroll)}</td></tr>
                     <tr class="b2b-row-highlight"><td>Max 75% of Payroll</td><td>${fmtAmt(computed.maxAllowedSales)}</td></tr>
-                    <tr><td>COGS Per Unit</td><td>${fmtAmt(selectedContract.cogs_per_unit)}</td></tr>
-                    <tr><td>Gross Margin (auto-calculated)</td><td>${(computed.grossMargin * 100).toFixed(2)}%</td></tr>
-                    <tr><td>Max Revenue (75% ÷ margin)</td><td>${fmtAmt(computed.maxRevenue)}</td></tr>
-                    <tr><td>Monthly Contracted Sales</td><td>${fmtAmt(computed.monthlyContractedSales)}</td></tr>
-                    <tr><td>Revenue Per Unit</td><td>${fmtAmt(selectedContract.bundle_price)}</td></tr>
-                    <tr><td>Max Units Allowed (per month)</td><td>${computed.maxUnitsPerMonth.toLocaleString()}</td></tr>
-                    <tr class="b2b-row-highlight"><td>Units Sold (per month)</td><td>${computed.unitsSold.toLocaleString()}</td></tr>
-                    <tr class="b2b-row-highlight"><td>Monthly Sales (rounded to whole unit)</td><td>${fmtAmt(computed.monthlyContractedRounded)}</td></tr>
+                    <tr><td>Avg Gross Margin</td><td>${(computed.grossMargin * 100).toFixed(2)}%</td></tr>
+                    <tr><td>Monthly Revenue</td><td>${fmtAmt(computed.monthlyContractedRounded)}</td></tr>
+                    <tr><td>Monthly COGS</td><td>${fmtAmt(monthlyCogs)}</td></tr>
                     <tr><td>Monthly Gross Profit</td><td>${fmtAmt(computed.monthlyGrossProfit)}</td></tr>
                     <tr class="b2b-row-highlight"><td>Total Contract Value</td><td>${fmtAmt(computed.totalContractValue)}</td></tr>
                     <tr><td>Total Gross Profit</td><td class="${limitClass}">${fmtAmt(computed.totalGrossProfit)}</td></tr>

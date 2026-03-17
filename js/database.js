@@ -88,11 +88,13 @@ const Database = {
                 default_type TEXT,
                 folder_id INTEGER,
                 cashflow_sort_order INTEGER DEFAULT 0,
+                pl_sort_order INTEGER DEFAULT 0,
                 show_on_pl INTEGER DEFAULT 0,
                 is_cogs INTEGER DEFAULT 0,
                 is_depreciation INTEGER DEFAULT 0,
                 is_sales_tax INTEGER DEFAULT 0,
                 is_b2b INTEGER DEFAULT 0,
+                default_status TEXT,
                 is_sales INTEGER DEFAULT 0,
                 is_inventory_cost INTEGER DEFAULT 0,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -273,6 +275,18 @@ const Database = {
         `);
 
         this.db.run(`
+            CREATE TABLE IF NOT EXISTS b2b_contract_products (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                contract_id INTEGER NOT NULL,
+                product_name TEXT NOT NULL,
+                b2b_price DECIMAL(10,2) NOT NULL DEFAULT 0,
+                cogs DECIMAL(10,2) NOT NULL DEFAULT 0,
+                quantity INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY (contract_id) REFERENCES b2b_contracts(id)
+            )
+        `);
+
+        this.db.run(`
             CREATE TABLE IF NOT EXISTS ve_sales (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 transaction_no TEXT NOT NULL,
@@ -414,6 +428,13 @@ const Database = {
             this.db.exec('SELECT cashflow_sort_order FROM categories LIMIT 1');
         } catch (e) {
             this.db.run('ALTER TABLE categories ADD COLUMN cashflow_sort_order INTEGER DEFAULT 0');
+        }
+
+        // Add pl_sort_order column to categories
+        try {
+            this.db.exec('SELECT pl_sort_order FROM categories LIMIT 1');
+        } catch (e) {
+            this.db.run('ALTER TABLE categories ADD COLUMN pl_sort_order INTEGER DEFAULT 0');
         }
 
         // Add P&L flags to categories
@@ -793,6 +814,31 @@ const Database = {
             catch (e2) { this.db.run('ALTER TABLE b2b_contracts ADD COLUMN units_sold INTEGER'); }
         }
 
+        // === Add cost_mode and gross_margin_pct to b2b_contracts ===
+        try { this.db.exec('SELECT cost_mode FROM b2b_contracts LIMIT 1'); }
+        catch (e) { this.db.run("ALTER TABLE b2b_contracts ADD COLUMN cost_mode TEXT DEFAULT 'cogs'"); }
+        try { this.db.exec('SELECT gross_margin_pct FROM b2b_contracts LIMIT 1'); }
+        catch (e) { this.db.run('ALTER TABLE b2b_contracts ADD COLUMN gross_margin_pct DECIMAL(5,2)'); }
+
+        // === Create/migrate b2b_contract_products table ===
+        try {
+            this.db.exec('SELECT b2b_price FROM b2b_contract_products LIMIT 1');
+        } catch (e) {
+            // Table missing or has old schema — drop and recreate
+            this.db.run('DROP TABLE IF EXISTS b2b_contract_products');
+            this.db.run(`
+                CREATE TABLE b2b_contract_products (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    contract_id INTEGER NOT NULL,
+                    product_name TEXT NOT NULL,
+                    b2b_price DECIMAL(10,2) NOT NULL DEFAULT 0,
+                    cogs DECIMAL(10,2) NOT NULL DEFAULT 0,
+                    quantity INTEGER NOT NULL DEFAULT 0,
+                    FOREIGN KEY (contract_id) REFERENCES b2b_contracts(id)
+                )
+            `);
+        }
+
         // === Add budget_override flag to transactions ===
         try { this.db.exec('SELECT budget_override FROM transactions LIMIT 1'); }
         catch (e) { this.db.run('ALTER TABLE transactions ADD COLUMN budget_override INTEGER DEFAULT 0'); }
@@ -1047,6 +1093,19 @@ const Database = {
      */
     updateCashflowSortOrder(orderList) {
         const stmt = this.db.prepare('UPDATE categories SET cashflow_sort_order = ? WHERE id = ?');
+        orderList.forEach(({ id, sortOrder }) => {
+            stmt.run([sortOrder, id]);
+        });
+        stmt.free();
+        this.autoSave();
+    },
+
+    /**
+     * Update P&L sort order for a list of category IDs
+     * @param {Array<{id: number, sortOrder: number}>} orderList
+     */
+    updatePLSortOrder(orderList) {
+        const stmt = this.db.prepare('UPDATE categories SET pl_sort_order = ? WHERE id = ?');
         orderList.forEach(({ id, sortOrder }) => {
             stmt.run([sortOrder, id]);
         });
@@ -1676,7 +1735,7 @@ const Database = {
             AND (c.is_b2b = 1 OR c.is_sales = 1)
             AND COALESCE(t.source_type, '') NOT IN ('loan_receivable', 'loan_payment')
             GROUP BY c.id, t.month_due
-            ORDER BY c.cashflow_sort_order ASC, c.name ASC
+            ORDER BY c.pl_sort_order ASC, c.name ASC
         `);
         const revenue = revenueResult.length > 0 ? this.rowsToObjects(revenueResult[0]) : [];
 
@@ -1692,7 +1751,7 @@ const Database = {
             AND c.is_cogs = 1
             AND c.show_on_pl != 1
             GROUP BY c.id, t.month_due
-            ORDER BY c.cashflow_sort_order ASC, c.name ASC
+            ORDER BY c.pl_sort_order ASC, c.name ASC
         `);
         const cogs = cogsResult.length > 0 ? this.rowsToObjects(cogsResult[0]) : [];
 
@@ -1711,7 +1770,7 @@ const Database = {
             AND c.show_on_pl != 1
             AND COALESCE(t.source_type, '') NOT IN ('loan_payment', 'loan_receivable')
             GROUP BY c.id, t.month_due
-            ORDER BY c.cashflow_sort_order ASC, c.name ASC
+            ORDER BY c.pl_sort_order ASC, c.name ASC
         `);
         const opex = opexResult.length > 0 ? this.rowsToObjects(opexResult[0]) : [];
 
@@ -1721,7 +1780,7 @@ const Database = {
             SELECT id as category_id, name as category_name
             FROM categories
             WHERE is_depreciation = 1
-            ORDER BY cashflow_sort_order ASC, name ASC
+            ORDER BY pl_sort_order ASC, name ASC
         `);
         const depreciation = depreciationResult.length > 0 ? this.rowsToObjects(depreciationResult[0]) : [];
 
@@ -2246,9 +2305,9 @@ const Database = {
      */
     addB2BContract(params) {
         this.db.run(
-            `INSERT INTO b2b_contracts (company_name, bundle_description, contract_start, contract_end, fiscal_months, monthly_payroll, bundle_price, cogs_per_unit, units_sold, category_id, notes)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [params.company_name.trim(), params.bundle_description || null, params.contract_start, params.contract_end, params.fiscal_months, params.monthly_payroll, params.bundle_price, params.cogs_per_unit, params.units_sold || null, params.category_id || null, params.notes || null]
+            `INSERT INTO b2b_contracts (company_name, bundle_description, contract_start, contract_end, fiscal_months, monthly_payroll, bundle_price, cogs_per_unit, units_sold, category_id, notes, cost_mode, gross_margin_pct)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [params.company_name.trim(), params.bundle_description || null, params.contract_start, params.contract_end, params.fiscal_months, params.monthly_payroll, params.bundle_price, params.cogs_per_unit, params.units_sold || null, params.category_id || null, params.notes || null, params.cost_mode || 'cogs', params.gross_margin_pct || null]
         );
         const result = this.db.exec('SELECT last_insert_rowid() as id');
         this.autoSave();
@@ -2262,8 +2321,8 @@ const Database = {
      */
     updateB2BContract(id, params) {
         this.db.run(
-            `UPDATE b2b_contracts SET company_name = ?, bundle_description = ?, contract_start = ?, contract_end = ?, fiscal_months = ?, monthly_payroll = ?, bundle_price = ?, cogs_per_unit = ?, units_sold = ?, category_id = ?, notes = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-            [params.company_name.trim(), params.bundle_description || null, params.contract_start, params.contract_end, params.fiscal_months, params.monthly_payroll, params.bundle_price, params.cogs_per_unit, params.units_sold || null, params.category_id || null, params.notes || null, id]
+            `UPDATE b2b_contracts SET company_name = ?, bundle_description = ?, contract_start = ?, contract_end = ?, fiscal_months = ?, monthly_payroll = ?, bundle_price = ?, cogs_per_unit = ?, units_sold = ?, category_id = ?, notes = ?, cost_mode = ?, gross_margin_pct = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+            [params.company_name.trim(), params.bundle_description || null, params.contract_start, params.contract_end, params.fiscal_months, params.monthly_payroll, params.bundle_price, params.cogs_per_unit, params.units_sold || null, params.category_id || null, params.notes || null, params.cost_mode || 'cogs', params.gross_margin_pct || null, id]
         );
         this.autoSave();
     },
@@ -2274,6 +2333,7 @@ const Database = {
      */
     deleteB2BContract(id) {
         this.db.run('DELETE FROM b2b_contracts WHERE id = ?', [id]);
+        this.db.run('DELETE FROM b2b_contract_products WHERE contract_id = ?', [id]);
         this.deleteB2BContractTransactions(id);
         this.autoSave();
     },
@@ -2299,6 +2359,29 @@ const Database = {
             'UPDATE b2b_contracts SET is_finalized = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
             [finalized ? 1 : 0, id]
         );
+        this.autoSave();
+    },
+
+    // ==================== B2B CONTRACT PRODUCTS ====================
+
+    getB2BContractProducts(contractId) {
+        const results = this.db.exec('SELECT * FROM b2b_contract_products WHERE contract_id = ? ORDER BY id', [contractId]);
+        if (!results.length) return [];
+        return results[0].values.map(row => {
+            const obj = {};
+            results[0].columns.forEach((col, i) => obj[col] = row[i]);
+            return obj;
+        });
+    },
+
+    setB2BContractProducts(contractId, products) {
+        this.db.run('DELETE FROM b2b_contract_products WHERE contract_id = ?', [contractId]);
+        products.forEach(p => {
+            this.db.run(
+                'INSERT INTO b2b_contract_products (contract_id, product_name, b2b_price, cogs, quantity) VALUES (?, ?, ?, ?, ?)',
+                [contractId, p.product_name, p.b2b_price, p.cogs, p.quantity]
+            );
+        });
         this.autoSave();
     },
 
@@ -2964,6 +3047,11 @@ const Database = {
             case 'vesales':
                 this.db.run('DELETE FROM ve_sale_items');
                 this.db.run('DELETE FROM ve_sales');
+                break;
+            case 'b2bcontract':
+                this.db.run("DELETE FROM transactions WHERE source_type IN ('b2b_contract', 'b2b_contract_cogs')");
+                this.db.run('DELETE FROM b2b_contract_products');
+                this.db.run('DELETE FROM b2b_contracts');
                 break;
         }
         this.autoSave();

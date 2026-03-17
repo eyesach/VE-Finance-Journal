@@ -728,6 +728,7 @@
                 <div class="equity-header">
                     <h3>Stockholders' Equity</h3>
                     <div class="equity-controls">
+                        <button id="resyncEquityBtn" class="btn btn-secondary btn-small" title="Re-create missing journal entries for equity">Sync Journal</button>
                         <button id="editEquityBtn" class="btn btn-secondary btn-small">Edit Equity</button>
                     </div>
                 </div>
@@ -1304,7 +1305,13 @@
                         <div class="ve-events-header-actions">
                             <button class="btn btn-sm" id="veAddAllToJournalBtn" title="Add all events to journal">Add All to Journal</button>
                             <button class="btn btn-sm" id="veRemoveAllFromJournalBtn" title="Remove all events from journal">Remove All from Journal</button>
-                            <button class="btn btn-sm" id="veAutoDetectBtn">Auto-Detect</button>
+                            <div class="ve-autodetect-dropdown" style="display:inline-block;position:relative;">
+                                <button class="btn btn-sm" id="veAutoDetectBtn">Auto-Detect &#9662;</button>
+                                <div class="ve-autodetect-menu" id="veAutoDetectMenu" style="display:none;position:absolute;right:0;top:100%;z-index:100;background:var(--card-bg,#fff);border:1px solid var(--border-color,#ddd);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.15);min-width:160px;">
+                                    <button class="ve-autodetect-option" id="veAutoDetectByDay" style="display:block;width:100%;text-align:left;padding:8px 14px;border:none;background:none;cursor:pointer;font-size:.85rem;">By Day</button>
+                                    <button class="ve-autodetect-option" id="veAutoDetectByMonth" style="display:block;width:100%;text-align:left;padding:8px 14px;border:none;background:none;cursor:pointer;font-size:.85rem;">By Month</button>
+                                </div>
+                            </div>
                             <button class="btn btn-sm btn-primary" id="veAddEventBtn">+ New Event</button>
                         </div>
                     </div>
@@ -2036,20 +2043,6 @@
                             <input type="number" id="b2bMonthlyPayroll" step="0.01" min="0" required placeholder="108080.60">
                         </div>
                         <div class="form-group">
-                            <label for="b2bBundlePrice">Revenue Per Unit *</label>
-                            <input type="number" id="b2bBundlePrice" step="0.01" min="0" required placeholder="175.00">
-                        </div>
-                        <div class="form-group">
-                            <label for="b2bCogsPerUnit">COGS Per Unit *</label>
-                            <input type="number" id="b2bCogsPerUnit" step="0.01" min="0" required placeholder="126.00">
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="b2bUnitsSold">Units Sold / Month <small id="b2bMaxUnitsHint"></small></label>
-                            <input type="number" id="b2bUnitsSold" min="0" placeholder="Leave blank for max">
-                        </div>
-                        <div class="form-group">
                             <label for="b2bCategoryId">Category</label>
                             <select id="b2bCategoryId">
                                 <option value="">Auto-create category</option>
@@ -2059,6 +2052,41 @@
                             <label for="b2bNotes">Notes</label>
                             <input type="text" id="b2bNotes" placeholder="Optional notes">
                         </div>
+                    </div>
+                    <!-- Product Lines -->
+                    <div class="b2b-products-section">
+                        <div class="b2b-products-header">
+                            <h4>Product Lines</h4>
+                            <button type="button" id="addB2BProductRowBtn" class="btn btn-secondary btn-small">+ Add Product</button>
+                        </div>
+                        <div class="b2b-products-table-wrap">
+                            <table class="b2b-products-table" id="b2bProductsTable">
+                                <thead>
+                                    <tr>
+                                        <th>Product</th>
+                                        <th>B2B Price</th>
+                                        <th>COGS</th>
+                                        <th>PM%</th>
+                                        <th>Qty</th>
+                                        <th>Total</th>
+                                        <th></th>
+                                    </tr>
+                                </thead>
+                                <tbody id="b2bProductsBody"></tbody>
+                                <tfoot id="b2bProductsFoot">
+                                    <tr class="b2b-products-summary">
+                                        <td><strong>Totals</strong></td>
+                                        <td></td>
+                                        <td></td>
+                                        <td id="b2bAvgPM">—</td>
+                                        <td id="b2bTotalQty">0</td>
+                                        <td id="b2bMonthlyTotal">$0.00</td>
+                                        <td></td>
+                                    </tr>
+                                </tfoot>
+                            </table>
+                        </div>
+                        <div id="b2bMaxUnitsHint" class="b2b-max-units-hint"></div>
                     </div>
                     <div id="b2bCalcPreview" class="b2b-calc-preview">
                         <p class="b2b-preview-empty">Fill in the fields above to see calculations.</p>

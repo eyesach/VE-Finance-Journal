@@ -211,6 +211,7 @@ const App = {
      * Refresh all UI components
      */
     refreshAll() {
+        this._syncAllLoanBudgetExpenses();
         this.syncAllBudgetJournalEntries();
         this.syncAllB2BContractEntries();
         this.refreshCategories();
@@ -923,7 +924,72 @@ const App = {
         const taxModeSelect = document.getElementById('plTaxMode');
         if (taxModeSelect) taxModeSelect.value = taxMode;
         UI.renderProfitLossSpreadsheet(plData, overrides, taxMode, currentMonth, projectedSales);
+        this.setupPnLDragDrop();
         this.setupPnLCellEditing();
+    },
+
+    /**
+     * Set up drag-and-drop for P&L category rows
+     */
+    setupPnLDragDrop() {
+        const container = document.getElementById('pnlSpreadsheet');
+        if (!container || container.dataset.pnlDragSetup) return;
+        container.dataset.pnlDragSetup = '1';
+
+        let draggedRow = null;
+
+        container.addEventListener('dragstart', (e) => {
+            const row = e.target.closest('tr[draggable="true"]');
+            if (!row) return;
+            draggedRow = row;
+            row.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', row.dataset.categoryId);
+        });
+
+        container.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            const row = e.target.closest('tr[draggable="true"]');
+            if (!row || row === draggedRow || !draggedRow) return;
+            if (row.dataset.section !== draggedRow.dataset.section) return;
+            e.dataTransfer.dropEffect = 'move';
+            container.querySelectorAll(`tr[data-section="${draggedRow.dataset.section}"].drag-over`)
+                .forEach(r => r.classList.remove('drag-over'));
+            row.classList.add('drag-over');
+        });
+
+        container.addEventListener('dragleave', (e) => {
+            const row = e.target.closest('tr[draggable="true"]');
+            if (row) row.classList.remove('drag-over');
+        });
+
+        container.addEventListener('drop', (e) => {
+            e.preventDefault();
+            const targetRow = e.target.closest('tr[draggable="true"]');
+            if (!targetRow || !draggedRow || targetRow === draggedRow) return;
+            if (targetRow.dataset.section !== draggedRow.dataset.section) return;
+
+            const parent = draggedRow.parentNode;
+            parent.insertBefore(draggedRow, targetRow);
+
+            const section = draggedRow.dataset.section;
+            const rows = parent.querySelectorAll(`tr[data-section="${section}"]`);
+            const orderList = [];
+            rows.forEach((row, index) => {
+                orderList.push({ id: parseInt(row.dataset.categoryId), sortOrder: index });
+            });
+
+            Database.updatePLSortOrder(orderList);
+            targetRow.classList.remove('drag-over');
+        });
+
+        container.addEventListener('dragend', () => {
+            if (draggedRow) {
+                draggedRow.classList.remove('dragging');
+                draggedRow = null;
+            }
+            container.querySelectorAll('.drag-over').forEach(r => r.classList.remove('drag-over'));
+        });
     },
 
     /**
@@ -1736,7 +1802,7 @@ const App = {
         const taxMode = Database.getPLTaxMode();
         const equityConfig = Database.getEquityConfig();
         const seedEffective = (equityConfig.seed_received_date || equityConfig.seed_expected_date || '');
-        const apicEffective = (equityConfig.apic_received_date || equityConfig.apic_expected_date || '');
+        const apicEffective = (equityConfig.apic_expected_date || equityConfig.apic_received_date || '');
         const seedMonth = seedEffective ? seedEffective.substring(0, 7) : '';
         const apicMonth = apicEffective ? apicEffective.substring(0, 7) : '';
         const commonStock = (seedMonth && seedMonth > asOfMonth) ? 0 : round2(equityConfig.common_stock_par * equityConfig.common_stock_shares);
@@ -3176,6 +3242,7 @@ const App = {
 
         // Equity config (in Assets & Equity tab)
         document.getElementById('editEquityBtn').addEventListener('click', () => this.openEquityModal());
+        document.getElementById('resyncEquityBtn').addEventListener('click', () => this.resyncEquityJournalEntries());
         document.getElementById('equityForm').addEventListener('submit', (e) => {
             e.preventDefault();
             this.handleSaveEquity();
@@ -5173,7 +5240,7 @@ const App = {
         // Equity — only include amounts if as-of month >= effective date
         const equityConfig = Database.getEquityConfig();
         const seedEffective = (equityConfig.seed_received_date || equityConfig.seed_expected_date || '');
-        const apicEffective = (equityConfig.apic_received_date || equityConfig.apic_expected_date || '');
+        const apicEffective = (equityConfig.apic_expected_date || equityConfig.apic_received_date || '');
         const seedMonth = seedEffective ? seedEffective.substring(0, 7) : '';
         const apicMonth = apicEffective ? apicEffective.substring(0, 7) : '';
 
@@ -5483,6 +5550,37 @@ const App = {
         });
     },
 
+    resyncEquityJournalEntries() {
+        const config = Database.getEquityConfig();
+        const seedAmount = Math.round(config.common_stock_par * config.common_stock_shares * 100) / 100;
+        const apicVal = Math.round((config.apic || 0) * 100) / 100;
+
+        // Check for existing equity investment transactions
+        const existing = Database.db.exec(
+            "SELECT item_description FROM transactions WHERE source_type = 'investment'"
+        );
+        const existingDescs = existing.length ? existing[0].values.map(r => r[0]) : [];
+
+        let created = 0;
+
+        if (seedAmount > 0 && config.seed_received_date && !existingDescs.includes('Seed Money (Common Stock)')) {
+            this._autoCreateEquityTransaction('Seed Money (Common Stock)', seedAmount, config.seed_expected_date || config.seed_received_date, config.seed_received_date);
+            created++;
+        }
+
+        if (apicVal > 0 && config.apic_received_date && !existingDescs.includes('Additional Paid-In Capital')) {
+            this._autoCreateEquityTransaction('Additional Paid-In Capital', apicVal, config.apic_expected_date || config.apic_received_date, config.apic_received_date);
+            created++;
+        }
+
+        if (created > 0) {
+            UI.showNotification(`Created ${created} equity journal ${created === 1 ? 'entry' : 'entries'}`, 'success');
+            this.refreshAll();
+        } else {
+            UI.showNotification('Equity journal entries already exist', 'info');
+        }
+    },
+
     // ==================== LOAN HANDLERS ====================
 
     openLoanConfigModal(editId) {
@@ -5533,6 +5631,7 @@ const App = {
         if (editingId) {
             Database.updateLoan(parseInt(editingId), params);
             this._syncLoanReceivable(parseInt(editingId), params);
+            this._syncLoanBudgetExpense(parseInt(editingId), params);
             UI.showNotification('Loan updated', 'success');
         } else {
             const loanId = Database.addLoan(params);
@@ -5625,6 +5724,67 @@ const App = {
             lastPayMonth,
             catId,
             `Auto-created from loan #${loanId}`
+        );
+    },
+
+    /**
+     * Sync ALL loan-linked budget expenses on every refreshAll().
+     * Ensures budget expenses always reflect current loan data.
+     */
+    _syncAllLoanBudgetExpenses() {
+        const expenses = Database.getBudgetExpenses();
+        expenses.forEach(exp => {
+            if (!exp.notes) return;
+            const match = exp.notes.match(/^Auto-created from loan #(\d+)$/);
+            if (!match) return;
+            const loanId = parseInt(match[1]);
+            const loan = Database.getLoanById(loanId);
+            if (!loan) return;
+            this._syncLoanBudgetExpense(loanId, loan);
+        });
+    },
+
+    /**
+     * Sync the linked budget expense when a loan is edited.
+     * Updates name, amount, date range, and category to match the loan.
+     */
+    _syncLoanBudgetExpense(loanId, params) {
+        const sentinel = `Auto-created from loan #${loanId}`;
+        const expenses = Database.getBudgetExpenses();
+        const linked = expenses.find(e => e.notes === sentinel);
+        if (!linked) return;
+
+        const schedule = Utils.computeAmortizationSchedule(
+            { principal: params.principal, annual_rate: params.annual_rate,
+              payments_per_year: params.payments_per_year, term_months: params.term_months,
+              start_date: params.start_date, first_payment_date: params.first_payment_date },
+            new Set(), {}
+        );
+        if (schedule.length === 0) return;
+
+        const monthlyPayment = schedule[0].payment;
+        const firstPayMonth = schedule[0].month;
+        const lastPayMonth = schedule[schedule.length - 1].month;
+
+        // Update or create the category to match the (possibly renamed) loan
+        let categories = Database.getCategories();
+        let cat = categories.find(c => c.id === linked.category_id);
+        let catId = linked.category_id;
+        if (cat && cat.name !== params.name) {
+            Database.updateCategory(cat.id, params.name, cat.is_monthly, cat.default_amount, cat.transaction_type, cat.folder_id, cat.show_on_pl, cat.is_cogs, cat.is_depreciation, cat.is_sales_tax, cat.is_b2b, cat.default_status, cat.is_sales, cat.is_inventory_cost);
+        } else if (!cat) {
+            catId = Database.addCategory(params.name, true, monthlyPayment, 'payable', null, true);
+        }
+
+        Database.updateBudgetExpense(
+            linked.id,
+            `${params.name} Payment`,
+            monthlyPayment,
+            firstPayMonth,
+            lastPayMonth,
+            catId,
+            sentinel,
+            linked.group_id
         );
     },
 
@@ -5829,6 +5989,13 @@ const App = {
         document.getElementById('budgetExpenseModalTitle').textContent = 'Add Budget Expense';
         document.getElementById('saveBudgetExpenseBtn').textContent = 'Add Expense';
 
+        // Re-enable all fields (may have been disabled for loan-linked expense)
+        ['budgetExpenseAmount', 'budgetStartMonth', 'budgetStartYear', 'budgetEndMonth', 'budgetEndYear', 'budgetExpenseNotes'].forEach(fieldId => {
+            document.getElementById(fieldId).disabled = false;
+        });
+        const notice = document.getElementById('loanLinkNotice');
+        if (notice) notice.style.display = 'none';
+
         // Populate category dropdown
         const catSelect = document.getElementById('budgetExpenseCategory');
         catSelect.innerHTML = '<option value="">None (won\'t record)</option>';
@@ -5928,9 +6095,39 @@ const App = {
             return;
         }
 
+        let didSyncLoan = false;
         try {
             if (editingId) {
-                Database.updateBudgetExpense(parseInt(editingId), name, amount, start, end, categoryId ? parseInt(categoryId) : null, notes, groupId ? parseInt(groupId) : null);
+                // For loan-linked expenses: preserve sentinel notes, use loan-controlled values for locked fields
+                const existing = Database.getBudgetExpenseById(parseInt(editingId));
+                const isLoanLinked = existing && existing.notes && /^Auto-created from loan #(\d+)$/.test(existing.notes);
+                let finalNotes = notes;
+                let finalAmount = amount;
+                let finalStart = start;
+                let finalEnd = end;
+                if (isLoanLinked) {
+                    finalNotes = existing.notes; // preserve sentinel
+                    finalAmount = existing.monthly_amount; // controlled by loan
+                    finalStart = existing.start_month;
+                    finalEnd = existing.end_month;
+
+                    // Sync name change back to the loan
+                    const loanId = parseInt(existing.notes.match(/^Auto-created from loan #(\d+)$/)[1]);
+                    const loan = Database.getLoanById(loanId);
+                    if (loan) {
+                        const newLoanName = name.replace(/ Payment$/, '');
+                        if (newLoanName !== loan.name) {
+                            Database.updateLoan(loanId, { ...loan, name: newLoanName });
+                            // Update the loan's category name too
+                            if (existing.category_id) {
+                                const cat = Database.getCategories().find(c => c.id === existing.category_id);
+                                if (cat) Database.updateCategory(cat.id, newLoanName, cat.is_monthly, cat.default_amount, cat.transaction_type, cat.folder_id, cat.show_on_pl, cat.is_cogs, cat.is_depreciation, cat.is_sales_tax, cat.is_b2b, cat.default_status, cat.is_sales, cat.is_inventory_cost);
+                            }
+                            didSyncLoan = true;
+                        }
+                    }
+                }
+                Database.updateBudgetExpense(parseInt(editingId), name, finalAmount, finalStart, finalEnd, categoryId ? parseInt(categoryId) : null, finalNotes, groupId ? parseInt(groupId) : null);
                 UI.showNotification('Expense updated', 'success');
             } else {
                 const id = Database.addBudgetExpense(name, amount, start, end, categoryId ? parseInt(categoryId) : null, notes, groupId ? parseInt(groupId) : null);
@@ -5938,7 +6135,11 @@ const App = {
                 UI.showNotification('Expense added', 'success');
             }
             UI.hideModal('budgetExpenseModal');
-            this.refreshBudget();
+            if (didSyncLoan) {
+                this.refreshAll();
+            } else {
+                this.refreshBudget();
+            }
         } catch (error) {
             console.error('Error saving budget expense:', error);
             UI.showNotification('Failed to save expense', 'error');
@@ -5968,9 +6169,39 @@ const App = {
             document.getElementById('budgetEndMonth').value = endMo;
             document.getElementById('budgetEndYear').value = endYear;
         }
+
+        // Lock loan-controlled fields if this expense is linked to a loan
+        const isLoanLinked = expense.notes && /^Auto-created from loan #\d+$/.test(expense.notes);
+        const loanControlledFields = ['budgetExpenseAmount', 'budgetStartMonth', 'budgetStartYear', 'budgetEndMonth', 'budgetEndYear', 'budgetExpenseNotes'];
+        loanControlledFields.forEach(fieldId => {
+            document.getElementById(fieldId).disabled = isLoanLinked;
+        });
+        // Show/hide loan link notice
+        let notice = document.getElementById('loanLinkNotice');
+        if (!notice) {
+            notice = document.createElement('div');
+            notice.id = 'loanLinkNotice';
+            notice.style.cssText = 'padding:8px 12px;background:var(--accent-color,#4f46e5);color:#fff;border-radius:6px;margin-bottom:12px;font-size:0.85rem;';
+            document.getElementById('budgetExpenseForm').prepend(notice);
+        }
+        if (isLoanLinked) {
+            const loanId = expense.notes.match(/^Auto-created from loan #(\d+)$/)[1];
+            const loan = Database.getLoanById(parseInt(loanId));
+            notice.textContent = `Linked to loan "${loan ? loan.name : '#' + loanId}". Amount and dates are controlled by the loan. Edit the loan to change them.`;
+            notice.style.display = '';
+        } else {
+            notice.style.display = 'none';
+        }
     },
 
     handleDeleteBudgetExpense(id) {
+        const expense = Database.getBudgetExpenseById(id);
+        if (expense && expense.notes && /^Auto-created from loan #(\d+)$/.test(expense.notes)) {
+            const loanId = parseInt(expense.notes.match(/^Auto-created from loan #(\d+)$/)[1]);
+            const loan = Database.getLoanById(loanId);
+            UI.showNotification(`This expense is linked to loan "${loan ? loan.name : '#' + loanId}". Delete the loan instead to remove both.`, 'warning');
+            return;
+        }
         this.deleteBudgetExpenseTargetId = id;
         UI.showModal('deleteBudgetExpenseModal');
     },
@@ -9193,10 +9424,16 @@ const App = {
 
     veParseDate(val) {
         if (!val) return null;
-        if (val instanceof Date) return isNaN(val.getTime()) ? null : val.toISOString().split('T')[0];
+        const formatLocal = (dt) => {
+            const y = dt.getFullYear();
+            const m = String(dt.getMonth() + 1).padStart(2, '0');
+            const day = String(dt.getDate()).padStart(2, '0');
+            return `${y}-${m}-${day}`;
+        };
+        if (val instanceof Date) return isNaN(val.getTime()) ? null : formatLocal(val);
         const str = String(val).trim();
         const d = new Date(str);
-        return isNaN(d.getTime()) ? null : d.toISOString().split('T')[0];
+        return isNaN(d.getTime()) ? null : formatLocal(d);
     },
 
     veResolveColumns(headers) {
@@ -9373,9 +9610,15 @@ const App = {
         // Override source on all parsed sales
         for (const s of sales) s.source = effectiveSource;
 
+        // Preserve event assignments before clearing (same pattern as JSON import)
+        const eventMap = Database.getVEEventAssignments(effectiveSource);
+
         // Only clear the specific source being imported
         Database.clearVESales(effectiveSource);
         Database.upsertVESales(sales);
+
+        // Restore event assignments to matching transaction numbers
+        Database.restoreVEEventAssignments(eventMap);
         let totalItems = 0;
         for (const [txNo, items] of lineItems) {
             Database.upsertVESaleItems(txNo, items);
@@ -10175,7 +10418,7 @@ const App = {
         this._manageInventoryCostEntry(txId, updateData);
     },
 
-    veAutoDetectEvents() {
+    veAutoDetectEvents(mode = 'day') {
         const unassigned = this._veSales.filter(s => !s.event_id && s.date);
         if (unassigned.length === 0) {
             UI.showNotification('No unassigned sales to group into events.', 'info');
@@ -10188,24 +10431,41 @@ const App = {
             (bySource[s.source] || (bySource[s.source] = [])).push(s);
         }
 
-        // Cluster consecutive sales within each source where date gap <= 1 day
         const clusters = [];
-        for (const source of Object.keys(bySource)) {
-            const sorted = bySource[source].sort((a, b) => a.date.localeCompare(b.date));
-            if (sorted.length === 0) continue;
-            let current = [sorted[0]];
-            for (let i = 1; i < sorted.length; i++) {
-                const lastDate = new Date(current[current.length - 1].date + 'T00:00:00');
-                const thisDate = new Date(sorted[i].date + 'T00:00:00');
-                const diffDays = (thisDate - lastDate) / (1000 * 60 * 60 * 24);
-                if (diffDays <= 1) {
-                    current.push(sorted[i]);
-                } else {
-                    clusters.push([...current]);
-                    current = [sorted[i]];
+        if (mode === 'month') {
+            // Group all sales in the same month together per source
+            for (const source of Object.keys(bySource)) {
+                const sorted = bySource[source].sort((a, b) => a.date.localeCompare(b.date));
+                if (sorted.length === 0) continue;
+                const byMonth = {};
+                for (const s of sorted) {
+                    const monthKey = s.date.substring(0, 7); // "YYYY-MM"
+                    if (!byMonth[monthKey]) byMonth[monthKey] = [];
+                    byMonth[monthKey].push(s);
+                }
+                for (const key of Object.keys(byMonth).sort()) {
+                    clusters.push(byMonth[key]);
                 }
             }
-            clusters.push(current);
+        } else {
+            // Cluster consecutive sales within each source where date gap <= 1 day
+            for (const source of Object.keys(bySource)) {
+                const sorted = bySource[source].sort((a, b) => a.date.localeCompare(b.date));
+                if (sorted.length === 0) continue;
+                let current = [sorted[0]];
+                for (let i = 1; i < sorted.length; i++) {
+                    const lastDate = new Date(current[current.length - 1].date + 'T00:00:00');
+                    const thisDate = new Date(sorted[i].date + 'T00:00:00');
+                    const diffDays = (thisDate - lastDate) / (1000 * 60 * 60 * 24);
+                    if (diffDays <= 1) {
+                        current.push(sorted[i]);
+                    } else {
+                        clusters.push([...current]);
+                        current = [sorted[i]];
+                    }
+                }
+                clusters.push(current);
+            }
         }
         // Sort clusters by start date
         clusters.sort((a, b) => a[0].date.localeCompare(b[0].date));
@@ -10221,8 +10481,13 @@ const App = {
             const endDate = dates[dates.length - 1];
             const sources = new Set(c.map(s => s.source));
             const suggestedType = sources.has('tradeshow') ? 'tradeshow' : 'online_event';
-            const suggestedName = suggestedType === 'tradeshow'
-                ? `Trade Show ${startDate}` : `Online Event ${startDate}`;
+            let suggestedName;
+            if (mode === 'month') {
+                const monthLabel = new Date(startDate + 'T00:00:00').toLocaleString('default', { month: 'long', year: 'numeric' });
+                suggestedName = suggestedType === 'tradeshow' ? `Trade Show ${monthLabel}` : `Online Sales ${monthLabel}`;
+            } else {
+                suggestedName = suggestedType === 'tradeshow' ? `Trade Show ${startDate}` : `Online Event ${startDate}`;
+            }
             const dateRange = startDate === endDate ? this.veFmtDate(startDate) : `${this.veFmtDate(startDate)} — ${this.veFmtDate(endDate)}`;
             const total = c.reduce((sum, s) => sum + (s.total || 0), 0);
 
@@ -10348,7 +10613,18 @@ const App = {
         });
 
         // Events panel
-        document.getElementById('veAutoDetectBtn').addEventListener('click', () => this.veAutoDetectEvents());
+        document.getElementById('veAutoDetectBtn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            const menu = document.getElementById('veAutoDetectMenu');
+            const isOpen = menu.style.display !== 'none';
+            menu.style.display = isOpen ? 'none' : 'block';
+            if (!isOpen) {
+                const closeMenu = (ev) => { if (!menu.contains(ev.target)) { menu.style.display = 'none'; document.removeEventListener('click', closeMenu); } };
+                setTimeout(() => document.addEventListener('click', closeMenu), 0);
+            }
+        });
+        document.getElementById('veAutoDetectByDay').addEventListener('click', () => { document.getElementById('veAutoDetectMenu').style.display = 'none'; this.veAutoDetectEvents('day'); });
+        document.getElementById('veAutoDetectByMonth').addEventListener('click', () => { document.getElementById('veAutoDetectMenu').style.display = 'none'; this.veAutoDetectEvents('month'); });
         document.getElementById('veAddEventBtn').addEventListener('click', () => this.veShowNewEventForm());
         document.getElementById('veAddAllToJournalBtn').addEventListener('click', () => this.veAddAllEventsToJournal());
         document.getElementById('veRemoveAllFromJournalBtn').addEventListener('click', () => this.veRemoveAllEventsFromJournal());
@@ -10482,25 +10758,35 @@ const App = {
      * @returns {Object} Computed values
      */
     _computeB2BContract(c) {
-        const grossMargin = c.bundle_price > 0 ? (c.bundle_price - c.cogs_per_unit) / c.bundle_price : 0;
+        // Derive COGS from gross margin if cost_mode is 'margin'
+        let cogsPerUnit = c.cogs_per_unit;
+        let grossMargin;
+        if (c.cost_mode === 'margin' && c.gross_margin_pct != null) {
+            grossMargin = c.gross_margin_pct / 100;
+            cogsPerUnit = Math.round((c.bundle_price * (1 - grossMargin)) * 100) / 100;
+        } else {
+            grossMargin = c.bundle_price > 0 ? (c.bundle_price - cogsPerUnit) / c.bundle_price : 0;
+        }
+
         const totalGrossPayroll = c.monthly_payroll * c.fiscal_months;
-        const maxAllowedSales = totalGrossPayroll * 0.75;
-        const maxRevenue = grossMargin > 0 ? maxAllowedSales / grossMargin : 0;
+        const maxAllowedSales = Math.round(totalGrossPayroll * 0.75 * 100) / 100;
+        const maxRevenue = grossMargin > 0 ? Math.round((maxAllowedSales / grossMargin) * 100) / 100 : 0;
         const maxAllowedForContract = maxRevenue;
-        const monthlyContractedSales = c.fiscal_months > 0 ? maxAllowedForContract / c.fiscal_months : 0;
+        const monthlyContractedSales = c.fiscal_months > 0 ? Math.round((maxAllowedForContract / c.fiscal_months) * 100) / 100 : 0;
         const maxUnitsPerMonth = c.bundle_price > 0 ? Math.floor(monthlyContractedSales / c.bundle_price) : 0;
 
         // Use user-specified units_sold if provided, otherwise use max
         const unitsSold = (c.units_sold && c.units_sold > 0) ? c.units_sold : maxUnitsPerMonth;
-        const monthlyContractedRounded = unitsSold * c.bundle_price;
-        const monthlyGrossProfit = monthlyContractedRounded * grossMargin;
-        const totalContractValue = monthlyContractedRounded * c.fiscal_months;
-        const totalGrossProfit = monthlyGrossProfit * c.fiscal_months;
+        const monthlyContractedRounded = Math.round(unitsSold * c.bundle_price * 100) / 100;
+        const monthlyGrossProfit = Math.round(monthlyContractedRounded * grossMargin * 100) / 100;
+        const totalContractValue = Math.round(monthlyContractedRounded * c.fiscal_months * 100) / 100;
+        const totalGrossProfit = Math.round(monthlyGrossProfit * c.fiscal_months * 100) / 100;
         const isWithinLimit = totalGrossProfit <= maxAllowedSales;
         const months = (c.contract_start && c.contract_end) ? Utils.generateMonthRange(c.contract_start, c.contract_end) : [];
 
         return {
             grossMargin,
+            cogsPerUnit,
             totalGrossPayroll,
             maxAllowedSales,
             maxRevenue,
@@ -10547,7 +10833,7 @@ const App = {
         const catId = contract.category_id || this._getOrCreateB2BCategory();
         const cogsCatId = Database.getOrCreateInventoryCostCategory();
         const currentMonth = Utils.getCurrentMonth();
-        const monthlyCogs = contract.cogs_per_unit * computed.unitsSold;
+        const monthlyCogs = Math.round(computed.cogsPerUnit * computed.unitsSold * 100) / 100;
 
         computed.months.forEach(month => {
             // Only create entries up to current month (like budget sync)
@@ -10603,7 +10889,7 @@ const App = {
                         Database.updateTransaction(cogsId, {
                             entry_date: month + '-01',
                             category_id: cogsCatId,
-                            item_description: `${contract.company_name} – B2B COGS (${computed.unitsSold} × ${Utils.formatCurrency(contract.cogs_per_unit)})`,
+                            item_description: `${contract.company_name} – B2B COGS (${computed.unitsSold} × ${Utils.formatCurrency(computed.cogsPerUnit)})`,
                             amount: monthlyCogs,
                             transaction_type: 'payable',
                             status: 'pending',
@@ -10617,7 +10903,7 @@ const App = {
                     Database.addTransaction({
                         entry_date: month + '-01',
                         category_id: cogsCatId,
-                        item_description: `${contract.company_name} – B2B COGS (${computed.unitsSold} × ${Utils.formatCurrency(contract.cogs_per_unit)})`,
+                        item_description: `${contract.company_name} – B2B COGS (${computed.unitsSold} × ${Utils.formatCurrency(computed.cogsPerUnit)})`,
                         amount: monthlyCogs,
                         transaction_type: 'payable',
                         status: 'pending',
@@ -10704,6 +10990,9 @@ const App = {
         catSelect.innerHTML = '<option value="">Auto-create category</option>' +
             b2bCats.map(c => `<option value="${c.id}">${Utils.escapeHtml(c.name)}</option>`).join('');
 
+        // Clear product rows
+        document.getElementById('b2bProductsBody').innerHTML = '';
+
         if (editId) {
             const contract = Database.getB2BContractById(editId);
             if (!contract) return;
@@ -10716,11 +11005,22 @@ const App = {
             document.getElementById('b2bContractEnd').value = contract.contract_end;
             document.getElementById('b2bFiscalMonths').value = contract.fiscal_months;
             document.getElementById('b2bMonthlyPayroll').value = contract.monthly_payroll;
-            document.getElementById('b2bBundlePrice').value = contract.bundle_price;
-            document.getElementById('b2bCogsPerUnit').value = contract.cogs_per_unit;
-            document.getElementById('b2bUnitsSold').value = contract.units_sold || '';
             catSelect.value = contract.category_id || '';
             document.getElementById('b2bNotes').value = contract.notes || '';
+
+            // Load product lines
+            const products = Database.getB2BContractProducts(editId);
+            if (products.length > 0) {
+                products.forEach(p => this._addB2BProductRow(p));
+            } else {
+                // Legacy: create a product row from the single-field values
+                this._addB2BProductRow({
+                    product_name: contract.bundle_description || 'Product',
+                    b2b_price: contract.bundle_price,
+                    cogs: contract.cogs_per_unit,
+                    quantity: contract.units_sold || 0
+                });
+            }
         } else {
             title.textContent = 'Add B2B Contract';
             saveBtn.textContent = 'Save';
@@ -10732,10 +11032,77 @@ const App = {
                 const months = Utils.generateMonthRange(timeline.start, timeline.end);
                 document.getElementById('b2bFiscalMonths').value = months.length;
             }
+            // Start with one empty product row
+            this._addB2BProductRow();
         }
 
         this._updateB2BCalcPreview();
         UI.showModal('b2bContractModal');
+    },
+
+    /**
+     * Add a product row to the B2B modal products table
+     */
+    _addB2BProductRow(data) {
+        const tbody = document.getElementById('b2bProductsBody');
+        const tr = document.createElement('tr');
+        const b2bPrice = data && data.b2b_price != null ? data.b2b_price : '';
+        const cogs = data && data.cogs != null ? data.cogs : '';
+        const qty = data && data.quantity ? data.quantity : '';
+        const pm = (b2bPrice && cogs !== '' && b2bPrice > 0) ? (((b2bPrice - cogs) / b2bPrice) * 100).toFixed(2) + '%' : '—';
+        const total = (b2bPrice && qty) ? Utils.formatCurrency(b2bPrice * qty) : '—';
+        tr.innerHTML = `
+            <td><input type="text" class="b2b-p-name" value="${Utils.escapeHtml((data && data.product_name) || '')}" placeholder="Product name"></td>
+            <td><input type="number" class="b2b-p-price" step="0.01" min="0" value="${b2bPrice}" placeholder="0.00"></td>
+            <td><input type="number" class="b2b-p-cogs" step="0.01" min="0" value="${cogs}" placeholder="0.00"></td>
+            <td><span class="b2b-product-computed b2b-p-pm">${pm}</span></td>
+            <td><input type="number" class="b2b-p-qty" min="0" value="${qty}" placeholder="0"></td>
+            <td><span class="b2b-product-computed b2b-p-total">${total}</span></td>
+            <td><button type="button" class="b2b-product-delete" title="Remove">&times;</button></td>
+        `;
+        tbody.appendChild(tr);
+
+        // Wire up live calc for this row
+        const inputs = tr.querySelectorAll('input');
+        inputs.forEach(inp => inp.addEventListener('input', () => this._updateB2BProductRow(tr)));
+        tr.querySelector('.b2b-product-delete').addEventListener('click', () => {
+            tr.remove();
+            this._updateB2BCalcPreview();
+        });
+    },
+
+    /**
+     * Recalculate a single product row's derived fields
+     */
+    _updateB2BProductRow(tr) {
+        const b2bPrice = parseFloat(tr.querySelector('.b2b-p-price').value) || 0;
+        const cogs = parseFloat(tr.querySelector('.b2b-p-cogs').value) || 0;
+        const qty = parseInt(tr.querySelector('.b2b-p-qty').value) || 0;
+        const pm = b2bPrice > 0 ? (((b2bPrice - cogs) / b2bPrice) * 100) : 0;
+        const total = Math.round(b2bPrice * qty * 100) / 100;
+
+        tr.querySelector('.b2b-p-pm').textContent = b2bPrice > 0 ? pm.toFixed(2) + '%' : '—';
+        tr.querySelector('.b2b-p-total').textContent = (b2bPrice > 0 && qty > 0) ? Utils.formatCurrency(total) : '—';
+
+        this._updateB2BCalcPreview();
+    },
+
+    /**
+     * Get all product rows from the modal as an array of objects
+     */
+    _getB2BProductRows() {
+        const rows = document.querySelectorAll('#b2bProductsBody tr');
+        const products = [];
+        rows.forEach(tr => {
+            const name = tr.querySelector('.b2b-p-name').value.trim();
+            const b2bPrice = parseFloat(tr.querySelector('.b2b-p-price').value) || 0;
+            const cogs = parseFloat(tr.querySelector('.b2b-p-cogs').value) || 0;
+            const qty = parseInt(tr.querySelector('.b2b-p-qty').value) || 0;
+            if (b2bPrice > 0 || cogs > 0 || qty > 0 || name) {
+                products.push({ product_name: name || 'Unnamed', b2b_price: b2bPrice, cogs, quantity: qty });
+            }
+        });
+        return products;
     },
 
     /**
@@ -10745,81 +11112,89 @@ const App = {
         const preview = document.getElementById('b2bCalcPreview');
         const monthlyPayroll = parseFloat(document.getElementById('b2bMonthlyPayroll').value) || 0;
         const fiscalMonths = parseInt(document.getElementById('b2bFiscalMonths').value) || 0;
-        const bundlePrice = parseFloat(document.getElementById('b2bBundlePrice').value) || 0;
-        const cogsPerUnit = parseFloat(document.getElementById('b2bCogsPerUnit').value) || 0;
-        const unitsSoldInput = document.getElementById('b2bUnitsSold').value;
-        const unitsSold = unitsSoldInput ? parseInt(unitsSoldInput) : null;
         const contractStart = document.getElementById('b2bContractStart').value;
         const contractEnd = document.getElementById('b2bContractEnd').value;
+        const products = this._getB2BProductRows();
 
-        if (!monthlyPayroll || !fiscalMonths || !bundlePrice || cogsPerUnit >= bundlePrice) {
-            preview.innerHTML = '<p class="b2b-preview-empty">Fill in the fields above to see calculations. COGS must be less than bundle price.</p>';
+        // Aggregate from products
+        let totalQty = 0, monthlyRevenue = 0, monthlyCogs = 0;
+        let weightedPmSum = 0, weightedPmDenom = 0;
+        products.forEach(p => {
+            totalQty += p.quantity;
+            monthlyRevenue += Math.round(p.b2b_price * p.quantity * 100) / 100;
+            monthlyCogs += Math.round(p.cogs * p.quantity * 100) / 100;
+            if (p.b2b_price > 0 && p.quantity > 0) {
+                const pm = (p.b2b_price - p.cogs) / p.b2b_price;
+                weightedPmSum += pm * (p.b2b_price * p.quantity);
+                weightedPmDenom += p.b2b_price * p.quantity;
+            }
+        });
+        const avgPm = weightedPmDenom > 0 ? (weightedPmSum / weightedPmDenom) : 0;
+
+        // Update summary footer
+        document.getElementById('b2bAvgPM').textContent = products.length > 0 ? (avgPm * 100).toFixed(2) + '%' : '—';
+        document.getElementById('b2bTotalQty').textContent = totalQty.toLocaleString();
+        document.getElementById('b2bMonthlyTotal').textContent = Utils.formatCurrency(monthlyRevenue);
+
+        if (!monthlyPayroll || !fiscalMonths || products.length === 0 || monthlyRevenue <= 0) {
+            preview.innerHTML = '<p class="b2b-preview-empty">Add product lines and fill in payroll/fiscal months to see calculations.</p>';
             document.getElementById('b2bMaxUnitsHint').textContent = '';
             return;
         }
 
-        const computed = this._computeB2BContract({
-            monthly_payroll: monthlyPayroll,
-            fiscal_months: fiscalMonths,
-            bundle_price: bundlePrice,
-            cogs_per_unit: cogsPerUnit,
-            units_sold: unitsSold,
-            contract_start: contractStart,
-            contract_end: contractEnd
-        });
-
-        // Show max units hint next to the units sold field
-        document.getElementById('b2bMaxUnitsHint').textContent = `(max: ${computed.maxUnitsPerMonth.toLocaleString()})`;
+        // Compute 75% payroll limit
+        const monthlyGrossProfit = Math.round((monthlyRevenue - monthlyCogs) * 100) / 100;
+        const totalGrossPayroll = monthlyPayroll * fiscalMonths;
+        const maxAllowedSales = Math.round(totalGrossPayroll * 0.75 * 100) / 100;
+        const totalGrossProfit = Math.round(monthlyGrossProfit * fiscalMonths * 100) / 100;
+        const totalContractValue = Math.round(monthlyRevenue * fiscalMonths * 100) / 100;
+        const isWithinLimit = totalGrossProfit <= maxAllowedSales;
 
         const fmt = Utils.formatCurrency;
-        const limitClass = computed.isWithinLimit ? 'b2b-limit-ok' : 'b2b-limit-exceeded';
-        const limitLabel = computed.isWithinLimit ? 'Within Limit' : 'Exceeds Limit';
+        const limitClass = isWithinLimit ? 'b2b-limit-ok' : 'b2b-limit-exceeded';
+        const limitLabel = isWithinLimit ? 'Within Limit' : 'Exceeds Limit';
+
+        // Show max revenue hint
+        const grossMargin = monthlyRevenue > 0 ? (monthlyRevenue - monthlyCogs) / monthlyRevenue : 0;
+        const maxRevenueFromLimit = grossMargin > 0 ? Math.round((maxAllowedSales / grossMargin) * 100) / 100 : 0;
+        const monthlyGoal = Math.round((maxRevenueFromLimit / fiscalMonths) * 100) / 100;
+        document.getElementById('b2bMaxUnitsHint').textContent = maxRevenueFromLimit > 0
+            ? `Monthly GOAL: ${fmt(monthlyGoal)} · Yearly GOAL: ${fmt(maxRevenueFromLimit)}`
+            : '';
 
         preview.innerHTML = `
             <div class="b2b-preview-grid">
                 <div class="b2b-preview-row">
-                    <span>Gross Margin (auto-calculated)</span>
-                    <span>${(computed.grossMargin * 100).toFixed(2)}%</span>
+                    <span>Avg Profit Margin (weighted)</span>
+                    <span>${(avgPm * 100).toFixed(2)}%</span>
                 </div>
                 <div class="b2b-preview-row">
                     <span>Total Gross Payroll</span>
-                    <span>${fmt(computed.totalGrossPayroll)}</span>
+                    <span>${fmt(totalGrossPayroll)}</span>
                 </div>
                 <div class="b2b-preview-row">
                     <span>Max 75% of Payroll</span>
-                    <span>${fmt(computed.maxAllowedSales)}</span>
-                </div>
-                <div class="b2b-preview-row">
-                    <span>Max Revenue (÷ margin)</span>
-                    <span>${fmt(computed.maxRevenue)}</span>
+                    <span>${fmt(maxAllowedSales)}</span>
                 </div>
                 <div class="b2b-preview-row b2b-preview-divider">
-                    <span>Monthly Contracted Sales</span>
-                    <span>${fmt(computed.monthlyContractedSales)}</span>
+                    <span>Monthly Revenue</span>
+                    <span>${fmt(monthlyRevenue)}</span>
                 </div>
                 <div class="b2b-preview-row">
-                    <span>Max Units (per month)</span>
-                    <span>${computed.maxUnitsPerMonth.toLocaleString()}</span>
-                </div>
-                <div class="b2b-preview-row">
-                    <span>Units Sold (per month)</span>
-                    <span>${computed.unitsSold.toLocaleString()}</span>
-                </div>
-                <div class="b2b-preview-row">
-                    <span>Monthly Sales (rounded)</span>
-                    <span>${fmt(computed.monthlyContractedRounded)}</span>
+                    <span>Monthly COGS</span>
+                    <span>${fmt(monthlyCogs)}</span>
                 </div>
                 <div class="b2b-preview-row">
                     <span>Monthly Gross Profit</span>
-                    <span>${fmt(computed.monthlyGrossProfit)}</span>
+                    <span>${fmt(monthlyGrossProfit)}</span>
                 </div>
                 <div class="b2b-preview-row b2b-preview-divider">
-                    <span>Total Contract Value</span>
-                    <strong>${fmt(computed.totalContractValue)}</strong>
+                    <span>Total Contract Value (${fiscalMonths} mo)</span>
+                    <strong>${fmt(totalContractValue)}</strong>
                 </div>
                 <div class="b2b-preview-row">
                     <span>Total Gross Profit</span>
-                    <span class="${limitClass}">${fmt(computed.totalGrossProfit)} <small>(${limitLabel})</small></span>
+                    <span class="${limitClass}">${fmt(totalGrossProfit)} <small>(${limitLabel})</small></span>
                 </div>
             </div>
         `;
@@ -10837,12 +11212,9 @@ const App = {
             const contractEnd = document.getElementById('b2bContractEnd').value;
             const fiscalMonths = parseInt(document.getElementById('b2bFiscalMonths').value) || 0;
             const monthlyPayroll = parseFloat(document.getElementById('b2bMonthlyPayroll').value) || 0;
-            const bundlePrice = parseFloat(document.getElementById('b2bBundlePrice').value) || 0;
-            const cogsPerUnit = parseFloat(document.getElementById('b2bCogsPerUnit').value) || 0;
-            const unitsSoldInput = document.getElementById('b2bUnitsSold').value;
-            const unitsSold = unitsSoldInput ? parseInt(unitsSoldInput) : null;
             const categoryId = document.getElementById('b2bCategoryId').value || null;
             const notes = document.getElementById('b2bNotes').value.trim();
+            const products = this._getB2BProductRows();
 
             // Validation
             if (!companyName) { UI.showNotification('Company name is required', 'error'); return; }
@@ -10850,9 +11222,21 @@ const App = {
             if (contractStart > contractEnd) { UI.showNotification('Contract start must be before end', 'error'); return; }
             if (fiscalMonths <= 0) { UI.showNotification('Fiscal months must be greater than 0', 'error'); return; }
             if (monthlyPayroll <= 0) { UI.showNotification('Monthly payroll must be greater than 0', 'error'); return; }
-            if (bundlePrice <= 0) { UI.showNotification('Bundle price must be greater than 0', 'error'); return; }
-            if (cogsPerUnit < 0) { UI.showNotification('COGS per unit cannot be negative', 'error'); return; }
-            if (cogsPerUnit >= bundlePrice) { UI.showNotification('COGS per unit must be less than bundle price', 'error'); return; }
+            if (products.length === 0) { UI.showNotification('Add at least one product line', 'error'); return; }
+
+            // Aggregate from products for the contract-level fields
+            let totalQty = 0, monthlyRevenue = 0, totalCogs = 0;
+            products.forEach(p => {
+                totalQty += p.quantity;
+                monthlyRevenue += Math.round(p.b2b_price * p.quantity * 100) / 100;
+                totalCogs += Math.round(p.cogs * p.quantity * 100) / 100;
+            });
+
+            if (monthlyRevenue <= 0) { UI.showNotification('Products must have positive revenue', 'error'); return; }
+
+            // Weighted average price and cogs for backward-compatible storage
+            const avgBundlePrice = totalQty > 0 ? Math.round((monthlyRevenue / totalQty) * 100) / 100 : 0;
+            const avgCogsPerUnit = totalQty > 0 ? Math.round((totalCogs / totalQty) * 100) / 100 : 0;
 
             const params = {
                 company_name: companyName,
@@ -10861,23 +11245,28 @@ const App = {
                 contract_end: contractEnd,
                 fiscal_months: fiscalMonths,
                 monthly_payroll: monthlyPayroll,
-                bundle_price: bundlePrice,
-                cogs_per_unit: cogsPerUnit,
-                units_sold: unitsSold,
+                bundle_price: avgBundlePrice,
+                cogs_per_unit: avgCogsPerUnit,
+                cost_mode: 'products',
+                gross_margin_pct: null,
+                units_sold: totalQty,
                 category_id: categoryId,
                 notes: notes
             };
 
             if (editId) {
-                Database.updateB2BContract(parseInt(editId), params);
+                const id = parseInt(editId);
+                Database.updateB2BContract(id, params);
+                Database.setB2BContractProducts(id, products);
                 // If finalized, re-sync entries
-                const contract = Database.getB2BContractById(parseInt(editId));
+                const contract = Database.getB2BContractById(id);
                 if (contract && contract.is_finalized) {
                     this.syncB2BContractJournalEntries(contract);
                 }
                 UI.showNotification('Contract updated', 'success');
             } else {
                 const newId = Database.addB2BContract(params);
+                Database.setB2BContractProducts(newId, products);
                 this.selectedB2BContractId = newId;
                 UI.showNotification('Contract added', 'success');
             }
@@ -10973,9 +11362,12 @@ const App = {
         });
 
         // Live calculation preview
-        ['b2bMonthlyPayroll', 'b2bFiscalMonths', 'b2bBundlePrice', 'b2bCogsPerUnit', 'b2bUnitsSold', 'b2bContractStart', 'b2bContractEnd'].forEach(id => {
+        ['b2bMonthlyPayroll', 'b2bFiscalMonths', 'b2bContractStart', 'b2bContractEnd'].forEach(id => {
             document.getElementById(id).addEventListener('input', () => this._updateB2BCalcPreview());
         });
+
+        // Add product row button
+        document.getElementById('addB2BProductRowBtn').addEventListener('click', () => this._addB2BProductRow());
 
         // Auto-calculate fiscal months when start/end change
         ['b2bContractStart', 'b2bContractEnd'].forEach(id => {
