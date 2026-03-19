@@ -6465,13 +6465,20 @@ const App = {
      * Handle save database (always prompts for location)
      */
     async handleSaveDatabase() {
-        const blob = Database.exportToFile();
-        // Show save-as modal so user can name the file, then download via <a> tag
         const owner = document.getElementById('journalOwner').value.trim();
-        document.getElementById('saveAsName').value = owner
-            ? `${Utils.sanitizeFilename(owner)}_accounting_journal`
-            : `accounting_journal_${new Date().toISOString().split('T')[0]}`;
-        UI.showModal('saveAsModal');
+        const suggestedName = owner
+            ? `${Utils.sanitizeFilename(owner)}_accounting_journal.db`
+            : `accounting_journal_${new Date().toISOString().split('T')[0]}.db`;
+
+        if (window.showSaveFilePicker) {
+            const blob = Database.exportToFile();
+            await this.downloadBlob(blob, suggestedName);
+            UI.showNotification('Database saved successfully', 'success');
+        } else {
+            // Fallback: show naming modal for browsers without file picker
+            document.getElementById('saveAsName').value = suggestedName.replace(/\.db$/, '');
+            UI.showModal('saveAsModal');
+        }
     },
 
     /**
