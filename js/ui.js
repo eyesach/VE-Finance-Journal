@@ -2815,7 +2815,7 @@ const UI = {
 
         container.innerHTML = `
             <div class="be-card">
-                <span class="be-card-label">Actual Revenue</span>
+                <span class="be-card-label">Actual Gross Profit</span>
                 <span class="be-card-value">${Utils.formatCurrency(data.actualTotal)}</span>
                 ${actualBreakdown}
                 <span class="be-card-breakdown">${data.elapsedCount} of ${data.totalMonths} months</span>
@@ -2831,7 +2831,7 @@ const UI = {
                 <span class="be-card-breakdown">${data.onTrack ? 'Ahead by' : 'Behind by'} ${Utils.formatCurrency(Math.abs(data.actualTotal - data.targetByNow))}</span>
             </div>
             <div class="be-card be-card-highlight">
-                <span class="be-card-label">Remaining Revenue</span>
+                <span class="be-card-label">Remaining Profit Needed</span>
                 <span class="be-card-value">${Utils.formatCurrency(data.remainingRevenue)}</span>
                 <span class="be-card-breakdown">${data.remainingCount} months left</span>
             </div>
@@ -2841,7 +2841,7 @@ const UI = {
                 <span class="be-card-breakdown">Per month to break even</span>
             </div>
             <div class="be-card">
-                <span class="be-card-label">Total BE Revenue</span>
+                <span class="be-card-label">Total BE Profit Target</span>
                 <span class="be-card-value">${Utils.formatCurrency(data.totalBERevenue)}</span>
                 <span class="be-card-breakdown">Full ${data.totalMonths}-month target</span>
             </div>

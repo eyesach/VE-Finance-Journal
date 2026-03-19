@@ -1865,17 +1865,20 @@ const App = {
         const container = document.getElementById('analyzeBEProgress');
         if (!container) return;
 
-        const tlMonths = this._getTimelineMonths();
-        const currentMonth = tlMonths.length > 0 ? tlMonths[tlMonths.length - 1] : Utils.getCurrentMonth();
+        // Use the real current month (not timeline end which may be in the future)
+        const currentMonth = Utils.getCurrentMonth();
         const expenses = Database.getActiveBudgetExpensesForMonth(currentMonth);
         const totalTarget = expenses.reduce((s, e) => s + e.monthly_amount, 0);
 
-        const revResult = Database.db.exec(
-            "SELECT COALESCE(SUM(t.amount),0) FROM transactions t JOIN categories c ON t.category_id = c.id WHERE t.transaction_type='receivable' AND ((t.status='received' AND t.month_paid=?) OR (t.status='pending' AND t.month_due=?)) AND c.is_cogs = 0 AND c.show_on_pl != 1 AND (c.is_b2b = 1 OR c.is_sales = 1) AND COALESCE(t.source_type, '') NOT IN ('loan_receivable', 'loan_payment')", [currentMonth, currentMonth]);
-        const currentRevenue = revResult[0] ? revResult[0].values[0][0] : 0;
+        // Gross profit directly from P&L (Revenue - COGS, with overrides)
+        const gpByMonth = Database.getMonthlyGrossProfit([currentMonth]);
+        const currentGP = gpByMonth[currentMonth] || 0;
 
-        const pct = totalTarget > 0 ? Math.min(100, Math.round(currentRevenue / totalTarget * 100)) : 0;
+        const pct = totalTarget > 0 ? Math.min(100, Math.round(currentGP / totalTarget * 100)) : 0;
         const color = pct >= 100 ? 'var(--color-success, #10b981)' : pct >= 60 ? 'var(--color-warning, #f59e0b)' : 'var(--color-danger, #ef4444)';
+
+        const revByMonth = Database.getMonthlyTotalRevenue([currentMonth]);
+        const cogsByMonth = Database.getMonthlyTotalCogs([currentMonth]);
 
         container.innerHTML =
             '<div style="text-align:center;margin-bottom:16px;">' +
@@ -1883,8 +1886,12 @@ const App = {
                 '<div style="font-size:0.85rem;color:var(--text-muted);">Break-Even Progress This Month</div>' +
             '</div>' +
             '<div class="dash-be-info">' +
-                '<span>Revenue: ' + Utils.formatCurrency(currentRevenue) + '</span>' +
+                '<span>Gross Profit: ' + Utils.formatCurrency(currentGP) + '</span>' +
                 '<span>Target: ' + Utils.formatCurrency(totalTarget) + '</span>' +
+            '</div>' +
+            '<div style="font-size:0.75rem;color:var(--text-muted);display:flex;justify-content:space-between;margin-top:2px;">' +
+                '<span>Revenue: ' + Utils.formatCurrency(revByMonth[currentMonth] || 0) + '</span>' +
+                '<span>COGS: ' + Utils.formatCurrency(cogsByMonth[currentMonth] || 0) + '</span>' +
             '</div>' +
             '<div class="dash-be-track" style="height:32px;">' +
                 '<div class="dash-be-fill" style="width: ' + pct + '%; background: ' + color + ';"></div>' +
@@ -1895,23 +1902,21 @@ const App = {
         const container = document.getElementById('dashBreakevenBar');
         if (!container) return;
 
-        // Use last month in timeline range, or current month
-        const tlMonths = this._getTimelineMonths();
-        const currentMonth = tlMonths.length > 0 ? tlMonths[tlMonths.length - 1] : Utils.getCurrentMonth();
+        // Use the real current month (not timeline end which may be in the future)
+        const currentMonth = Utils.getCurrentMonth();
         const expenses = Database.getActiveBudgetExpensesForMonth(currentMonth);
         const totalMonthlyExpenses = expenses.reduce((s, e) => s + e.monthly_amount, 0);
 
-        // Get current month revenue (sales only)
-        const revResult = Database.db.exec(
-            "SELECT COALESCE(SUM(t.amount),0) FROM transactions t JOIN categories c ON t.category_id = c.id WHERE t.transaction_type='receivable' AND ((t.status='received' AND t.month_paid=?) OR (t.status='pending' AND t.month_due=?)) AND c.is_cogs = 0 AND c.show_on_pl != 1 AND (c.is_b2b = 1 OR c.is_sales = 1) AND COALESCE(t.source_type, '') NOT IN ('loan_receivable', 'loan_payment')", [currentMonth, currentMonth]);
-        const currentRevenue = revResult[0] ? revResult[0].values[0][0] : 0;
+        // Gross profit directly from P&L (Revenue - COGS, with overrides)
+        const gpByMonth = Database.getMonthlyGrossProfit([currentMonth]);
+        const currentGP = gpByMonth[currentMonth] || 0;
 
-        const pct = totalMonthlyExpenses > 0 ? Math.min(100, Math.round(currentRevenue / totalMonthlyExpenses * 100)) : 0;
+        const pct = totalMonthlyExpenses > 0 ? Math.min(100, Math.round(currentGP / totalMonthlyExpenses * 100)) : 0;
         const color = pct >= 100 ? 'var(--color-success, #10b981)' : pct >= 60 ? 'var(--color-warning, #f59e0b)' : 'var(--color-danger, #ef4444)';
 
         container.innerHTML =
             '<div class="dash-be-info">' +
-                '<span>Revenue: ' + Utils.formatCurrency(currentRevenue) + '</span>' +
+                '<span>Gross Profit: ' + Utils.formatCurrency(currentGP) + '</span>' +
                 '<span>Target: ' + Utils.formatCurrency(totalMonthlyExpenses) + '</span>' +
             '</div>' +
             '<div class="dash-be-track">' +
@@ -6422,7 +6427,7 @@ const App = {
     /**
      * Export all transactions as CSV
      */
-    handleExportCsv() {
+    async handleExportCsv() {
         const transactions = Database.getTransactionsForExport();
 
         if (transactions.length === 0) {
@@ -6438,7 +6443,7 @@ const App = {
         const date = new Date().toISOString().split('T')[0];
         const filename = `${prefix}_export_${date}.csv`;
 
-        this.downloadBlob(blob, filename);
+        await this.downloadBlob(blob, filename);
         UI.showNotification('CSV exported successfully', 'success');
     },
 
@@ -6509,7 +6514,7 @@ const App = {
     /**
      * Confirm save as from modal (fallback)
      */
-    confirmSaveAs() {
+    async confirmSaveAs() {
         const name = document.getElementById('saveAsName').value.trim();
         if (!name) {
             UI.showNotification('Please enter a file name', 'error');
@@ -6517,7 +6522,7 @@ const App = {
         }
 
         const blob = Database.exportToFile();
-        this.downloadBlob(blob, `${Utils.sanitizeFilename(name)}.db`);
+        await this.downloadBlob(blob, `${Utils.sanitizeFilename(name)}.db`);
         UI.hideModal('saveAsModal');
         UI.showNotification('Database saved successfully', 'success');
     },
@@ -7120,22 +7125,17 @@ const App = {
         }
         const totalOpexByMonth = UI._pnlMonthOpex || {};
 
-        // Determine monthly fixed costs
+        // Determine monthly fixed costs — sum all months from P&L to match exactly
         let avgMonthlyFixed;
+        let totalFixedFromPL;
         if (cfg.fixedCostOverride != null && cfg.fixedCostOverride > 0) {
             // Manual override takes priority
             avgMonthlyFixed = cfg.fixedCostOverride;
+            totalFixedFromPL = avgMonthlyFixed * months.length;
         } else {
-            const actualMonths = months.filter(m => m <= currentMonth);
-            const na = actualMonths.length || 1;
-
-            if (useProjected) {
-                const pastValues = actualMonths.map(m => totalOpexByMonth[m] || 0).filter(v => v > 0);
-                avgMonthlyFixed = pastValues.length > 0 ? pastValues.reduce((a, b) => a + b, 0) / pastValues.length : 0;
-            } else {
-                const sum = actualMonths.reduce((acc, m) => acc + (totalOpexByMonth[m] || 0), 0);
-                avgMonthlyFixed = sum / na;
-            }
+            // Sum all months (actual + projected) to match P&L total exactly
+            totalFixedFromPL = months.reduce((acc, m) => acc + (totalOpexByMonth[m] || 0), 0);
+            avgMonthlyFixed = months.length > 0 ? totalFixedFromPL / months.length : 0;
         }
 
         // Core break-even calculation
@@ -7167,7 +7167,7 @@ const App = {
             const consumerCogs = consumer.enabled ? (consumer.avgCogs || 0) : 0;
             const b2bRate = b2b.enabled ? (b2b.ratePerUnit || 0) : 0;
             const b2bCogs = b2b.enabled ? (b2b.cogsPerUnit || 0) : 0;
-            const fixedTotal = Math.round(avgMonthlyFixed * monthCount * 100) / 100;
+            const fixedTotal = Math.round(totalFixedFromPL * 100) / 100;
             const beRevenue = (b2bTotal * b2bRate) + (consumerBETotal * consumerPrice);
             const beVarCosts = (b2bTotal * b2bCogs) + (consumerBETotal * consumerCogs);
             const exactBEPoint = {
@@ -7186,17 +7186,16 @@ const App = {
             let timelinePoints = null;
             if (months.length > 1) {
                 const hasOverride = cfg.fixedCostOverride != null && cfg.fixedCostOverride > 0;
-                const projAvgFixed = avgMonthlyFixed;
                 timelinePoints = Utils.computeBreakevenTimeline(
                     cfg, months, {}, {},
                     hasOverride
-                        ? () => projAvgFixed
-                        : (useProjected
-                            ? () => projAvgFixed
-                            : (m) => totalOpexByMonth[m] || 0)
+                        ? () => avgMonthlyFixed
+                        : (m) => totalOpexByMonth[m] || 0
                 );
-                const actualRevenueByMonth = Database.getActualRevenueByMonth();
-                this._renderBeTimelineChart(timelinePoints, actualRevenueByMonth);
+                // Use P&L gross profit for the timeline chart
+                const tlMonthList = timelinePoints.map(tp => tp.month);
+                const actualProfitByMonth = Database.getMonthlyGrossProfit(tlMonthList);
+                this._renderBeTimelineChart(timelinePoints, actualProfitByMonth);
             }
 
             // Progress tracker ("as of" analysis)
@@ -7325,11 +7324,11 @@ const App = {
     },
 
     /**
-     * Render the monthly timeline chart comparing actual revenue to break-even revenue needed
+     * Render the monthly timeline chart comparing actual gross profit to break-even target
      * @param {Array} timelinePoints - From Utils.computeBreakevenTimeline()
-     * @param {Object} actualRevenueByMonth - { 'YYYY-MM': totalRevenue } from P&L
+     * @param {Object} actualProfitByMonth - { 'YYYY-MM': grossProfit }
      */
-    _renderBeTimelineChart(timelinePoints, actualRevenueByMonth) {
+    _renderBeTimelineChart(timelinePoints, actualProfitByMonth) {
         const canvas = document.getElementById('beTimelineChart');
         if (!canvas || typeof Chart === 'undefined') return;
 
@@ -7342,14 +7341,14 @@ const App = {
                 labels: timelinePoints.map(p => Utils.formatMonthShort(p.month)),
                 datasets: [
                     {
-                        label: 'Actual Revenue',
-                        data: timelinePoints.map(p => actualRevenueByMonth[p.month] || 0),
+                        label: 'Actual Gross Profit',
+                        data: timelinePoints.map(p => actualProfitByMonth[p.month] || 0),
                         backgroundColor: successColor + '60',
                         borderColor: successColor,
                         borderWidth: 1
                     },
                     {
-                        label: 'Revenue Needed (excl. B2B)',
+                        label: 'Profit Needed (excl. B2B)',
                         data: timelinePoints.map(p => p.consumerBERevenue),
                         backgroundColor: primaryColor + '40',
                         borderColor: primaryColor,
@@ -7427,7 +7426,8 @@ const App = {
      * Compute progress data and render cards + chart
      */
     _computeAndRenderProgress(beResult, cfg, months, asOfMonth, timelinePoints) {
-        // Pull from P&L (respects overrides, works with all old entries)
+        // Gross profit directly from P&L (Revenue - COGS, with overrides)
+        const gpByMonth = Database.getMonthlyGrossProfit(months);
         const plRevenue = Database.getPLRevenueByMonth();
         const totalMonths = months.length;
         const timelineStart = months[0];
@@ -7438,10 +7438,10 @@ const App = {
         const elapsedCount = elapsedMonths.length;
         const remainingCount = totalMonths - elapsedCount;
 
-        // Actual cumulative revenue through asOfMonth (from P&L data)
+        // Actual cumulative gross profit through asOfMonth (from P&L)
         let actualTotal = 0, actualB2b = 0, actualConsumer = 0;
         elapsedMonths.forEach(m => {
-            actualTotal += (plRevenue.total[m] || 0);
+            actualTotal += (gpByMonth[m] || 0);
             actualB2b += (plRevenue.b2b[m] || 0);
             actualConsumer += (plRevenue.consumer[m] || 0);
         });
@@ -7483,10 +7483,10 @@ const App = {
 
         months.forEach(m => {
             chartMonths.push(Utils.formatMonthShort(m));
-            const monthActual = plRevenue.consumer[m] || 0;
+            const monthActual = gpByMonth[m] || 0;
             chartActual.push(Math.round(monthActual * 100) / 100);
 
-            // Consumer BE revenue target for this month (excludes B2B)
+            // Break-even target for this month
             let monthTarget = 0;
             if (timelinePoints) {
                 const tp = timelinePoints.find(p => p.month === m);
@@ -7553,7 +7553,7 @@ const App = {
         const datasets = [
             {
                 type: 'line',
-                label: 'Revenue',
+                label: 'Gross Profit',
                 data: data.chartCumulativeActual,
                 borderColor: successColor,
                 backgroundColor: successColor + '20',
@@ -7566,7 +7566,7 @@ const App = {
             },
             {
                 type: 'line',
-                label: 'Projected Revenue',
+                label: 'Projected Profit',
                 data: data.chartProjected,
                 borderColor: projectedColor,
                 backgroundColor: projectedColor + '15',
@@ -7770,19 +7770,12 @@ const App = {
         // Fall back to P&L renderer's computed per-month operating expenses
         const totalOpexByMonth = UI._pnlMonthOpex || {};
 
-        const actualMonths = months.filter(m => m <= currentMonth);
-        let totalFixed = 0;
-
-        if (useProjected) {
-            const values = actualMonths.map(m => totalOpexByMonth[m] || 0).filter(v => v > 0);
-            totalFixed = values.length > 0 ? values.reduce((a, b) => a + b, 0) / values.length : 0;
-        } else {
-            const sum = actualMonths.reduce((acc, m) => acc + (totalOpexByMonth[m] || 0), 0);
-            totalFixed = sum / (actualMonths.length || 1);
-        }
+        // Sum all months (actual + projected) to match P&L total
+        const totalSum = months.reduce((acc, m) => acc + (totalOpexByMonth[m] || 0), 0);
+        const totalFixed = months.length > 0 ? totalSum / months.length : 0;
 
         if (hint) hint.textContent = totalFixed > 0
-            ? `Avg. monthly fixed costs: ${Utils.formatCurrency(totalFixed)}/mo (${useProjected ? 'projected' : 'actual'}, from P&L)`
+            ? `Avg. monthly fixed costs: ${Utils.formatCurrency(totalFixed)}/mo (from P&L)`
             : '';
     },
 
@@ -7832,7 +7825,31 @@ const App = {
      * @param {Blob} blob - The file blob
      * @param {string} filename - The filename
      */
-    downloadBlob(blob, filename) {
+    async downloadBlob(blob, filename) {
+        if (window.showSaveFilePicker) {
+            try {
+                const ext = filename.split('.').pop().toLowerCase();
+                const typeMap = {
+                    zip: { description: 'ZIP Archive', mime: 'application/zip' },
+                    csv: { description: 'CSV File', mime: 'text/csv' },
+                    db:  { description: 'Database File', mime: 'application/octet-stream' }
+                };
+                const fileType = typeMap[ext] || typeMap.db;
+                const handle = await window.showSaveFilePicker({
+                    suggestedName: filename,
+                    types: [{
+                        description: fileType.description,
+                        accept: { [fileType.mime]: [`.${ext}`] }
+                    }]
+                });
+                const writable = await handle.createWritable();
+                await writable.write(blob);
+                await writable.close();
+                return;
+            } catch (e) {
+                if (e.name === 'AbortError') return;
+            }
+        }
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;

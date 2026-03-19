@@ -1880,6 +1880,48 @@ const Database = {
     },
 
     /**
+     * Compute total COGS per month, matching P&L renderer exactly.
+     * @param {string[]} months - Array of month strings (YYYY-MM)
+     * @returns {{ [month: string]: number }}
+     */
+    getMonthlyTotalCogs(months) {
+        const plData = this.getPLSpreadsheet();
+        const overrides = this.getAllPLOverrides();
+        const result = {};
+        months.forEach(m => { result[m] = 0; });
+
+        const cogsByCat = {};
+        (plData.cogs || []).forEach(row => {
+            if (!cogsByCat[row.category_id]) cogsByCat[row.category_id] = {};
+            cogsByCat[row.category_id][row.month] = (cogsByCat[row.category_id][row.month] || 0) + row.total;
+        });
+
+        Object.entries(cogsByCat).forEach(([catId, catMonths]) => {
+            months.forEach(m => {
+                const key = `${catId}-${m}`;
+                const computed = catMonths[m] || 0;
+                const val = (key in overrides) ? overrides[key] : computed;
+                result[m] += val;
+            });
+        });
+
+        return result;
+    },
+
+    /**
+     * Compute gross profit per month (Revenue - COGS), matching P&L exactly.
+     * @param {string[]} months - Array of month strings (YYYY-MM)
+     * @returns {{ [month: string]: number }}
+     */
+    getMonthlyGrossProfit(months) {
+        const rev = this.getMonthlyTotalRevenue(months);
+        const cogs = this.getMonthlyTotalCogs(months);
+        const result = {};
+        months.forEach(m => { result[m] = (rev[m] || 0) - (cogs[m] || 0); });
+        return result;
+    },
+
+    /**
      * Get P&L tax mode setting
      * @returns {string} 'corporate' or 'passthrough'
      */
@@ -3840,8 +3882,14 @@ const Database = {
         return this.rowsToObjects(results[0]);
     },
 
-    getVEEventAssignments() {
-        const results = this.db.exec('SELECT transaction_no, event_id FROM ve_sales WHERE event_id IS NOT NULL');
+    getVEEventAssignments(source) {
+        let sql = 'SELECT transaction_no, event_id FROM ve_sales WHERE event_id IS NOT NULL';
+        const params = [];
+        if (source) {
+            sql += ' AND source = ?';
+            params.push(source);
+        }
+        const results = this.db.exec(sql, params);
         const map = new Map();
         if (results.length > 0) {
             for (const row of results[0].values) {
