@@ -269,6 +269,9 @@ const Database = {
                 is_finalized INTEGER DEFAULT 0,
                 category_id INTEGER,
                 notes TEXT,
+                entry_mode TEXT DEFAULT 'products',
+                direct_revenue DECIMAL(10,2),
+                direct_cogs DECIMAL(10,2),
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
@@ -819,6 +822,14 @@ const Database = {
         catch (e) { this.db.run("ALTER TABLE b2b_contracts ADD COLUMN cost_mode TEXT DEFAULT 'cogs'"); }
         try { this.db.exec('SELECT gross_margin_pct FROM b2b_contracts LIMIT 1'); }
         catch (e) { this.db.run('ALTER TABLE b2b_contracts ADD COLUMN gross_margin_pct DECIMAL(5,2)'); }
+
+        // === Add entry_mode and direct fields to b2b_contracts ===
+        try { this.db.exec('SELECT entry_mode FROM b2b_contracts LIMIT 1'); }
+        catch (e) { this.db.run("ALTER TABLE b2b_contracts ADD COLUMN entry_mode TEXT DEFAULT 'products'"); }
+        try { this.db.exec('SELECT direct_revenue FROM b2b_contracts LIMIT 1'); }
+        catch (e) { this.db.run('ALTER TABLE b2b_contracts ADD COLUMN direct_revenue DECIMAL(10,2)'); }
+        try { this.db.exec('SELECT direct_cogs FROM b2b_contracts LIMIT 1'); }
+        catch (e) { this.db.run('ALTER TABLE b2b_contracts ADD COLUMN direct_cogs DECIMAL(10,2)'); }
 
         // === Create/migrate b2b_contract_products table ===
         try {
@@ -2347,9 +2358,9 @@ const Database = {
      */
     addB2BContract(params) {
         this.db.run(
-            `INSERT INTO b2b_contracts (company_name, bundle_description, contract_start, contract_end, fiscal_months, monthly_payroll, bundle_price, cogs_per_unit, units_sold, category_id, notes, cost_mode, gross_margin_pct)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [params.company_name.trim(), params.bundle_description || null, params.contract_start, params.contract_end, params.fiscal_months, params.monthly_payroll, params.bundle_price, params.cogs_per_unit, params.units_sold || null, params.category_id || null, params.notes || null, params.cost_mode || 'cogs', params.gross_margin_pct || null]
+            `INSERT INTO b2b_contracts (company_name, bundle_description, contract_start, contract_end, fiscal_months, monthly_payroll, bundle_price, cogs_per_unit, units_sold, category_id, notes, cost_mode, gross_margin_pct, entry_mode, direct_revenue, direct_cogs)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [params.company_name.trim(), params.bundle_description || null, params.contract_start, params.contract_end, params.fiscal_months, params.monthly_payroll, params.bundle_price, params.cogs_per_unit, params.units_sold || null, params.category_id || null, params.notes || null, params.cost_mode || 'cogs', params.gross_margin_pct || null, params.entry_mode || 'products', params.direct_revenue || null, params.direct_cogs || null]
         );
         const result = this.db.exec('SELECT last_insert_rowid() as id');
         this.autoSave();
@@ -2363,8 +2374,8 @@ const Database = {
      */
     updateB2BContract(id, params) {
         this.db.run(
-            `UPDATE b2b_contracts SET company_name = ?, bundle_description = ?, contract_start = ?, contract_end = ?, fiscal_months = ?, monthly_payroll = ?, bundle_price = ?, cogs_per_unit = ?, units_sold = ?, category_id = ?, notes = ?, cost_mode = ?, gross_margin_pct = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-            [params.company_name.trim(), params.bundle_description || null, params.contract_start, params.contract_end, params.fiscal_months, params.monthly_payroll, params.bundle_price, params.cogs_per_unit, params.units_sold || null, params.category_id || null, params.notes || null, params.cost_mode || 'cogs', params.gross_margin_pct || null, id]
+            `UPDATE b2b_contracts SET company_name = ?, bundle_description = ?, contract_start = ?, contract_end = ?, fiscal_months = ?, monthly_payroll = ?, bundle_price = ?, cogs_per_unit = ?, units_sold = ?, category_id = ?, notes = ?, cost_mode = ?, gross_margin_pct = ?, entry_mode = ?, direct_revenue = ?, direct_cogs = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+            [params.company_name.trim(), params.bundle_description || null, params.contract_start, params.contract_end, params.fiscal_months, params.monthly_payroll, params.bundle_price, params.cogs_per_unit, params.units_sold || null, params.category_id || null, params.notes || null, params.cost_mode || 'cogs', params.gross_margin_pct || null, params.entry_mode || 'products', params.direct_revenue || null, params.direct_cogs || null, id]
         );
         this.autoSave();
     },

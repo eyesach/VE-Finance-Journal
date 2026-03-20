@@ -3224,7 +3224,9 @@ const UI = {
         const computed = app._computeB2BContract(selectedContract);
         const transactions = contractTransactions[selectedContract.id] || [];
         const cogsTransactions = contractCogsTransactions[selectedContract.id] || [];
-        const monthlyCogs = Math.round(computed.cogsPerUnit * computed.unitsSold * 100) / 100;
+        const isDirect = selectedContract.entry_mode === 'direct';
+        const monthlyRevenue = isDirect ? Math.round((selectedContract.direct_revenue || 0) * 100) / 100 : computed.monthlyContractedRounded;
+        const monthlyCogs = isDirect ? Math.round((selectedContract.direct_cogs || 0) * 100) / 100 : Math.round(computed.cogsPerUnit * computed.unitsSold * 100) / 100;
         const limitClass = computed.isWithinLimit ? 'b2b-limit-ok' : 'b2b-limit-exceeded';
         const limitLabel = computed.isWithinLimit ? 'Within 75% Limit' : 'Exceeds 75% Limit';
 
@@ -3244,30 +3246,39 @@ const UI = {
         </div>`;
 
         // Summary cards
+        const monthlyGrossProfit = Math.round((monthlyRevenue - monthlyCogs) * 100) / 100;
+        const totalContractValue = Math.round(monthlyRevenue * selectedContract.fiscal_months * 100) / 100;
+        const totalGrossProfit = Math.round(monthlyGrossProfit * selectedContract.fiscal_months * 100) / 100;
+
         html += `<div class="b2b-summary-cards">
             <div class="b2b-summary-card">
                 <div class="b2b-summary-label">Total Contract Value</div>
-                <div class="b2b-summary-value">${fmtAmt(computed.totalContractValue)}</div>
+                <div class="b2b-summary-value">${fmtAmt(totalContractValue)}</div>
             </div>
             <div class="b2b-summary-card">
-                <div class="b2b-summary-label">Monthly Amount</div>
-                <div class="b2b-summary-value">${fmtAmt(computed.monthlyContractedRounded)}</div>
+                <div class="b2b-summary-label">Monthly Revenue</div>
+                <div class="b2b-summary-value">${fmtAmt(monthlyRevenue)}</div>
             </div>
+            ${isDirect ? `
+            <div class="b2b-summary-card">
+                <div class="b2b-summary-label">Entry Mode</div>
+                <div class="b2b-summary-value" style="font-size:var(--font-sm)">Direct</div>
+            </div>` : `
             <div class="b2b-summary-card">
                 <div class="b2b-summary-label">Units / Month</div>
                 <div class="b2b-summary-value">${computed.unitsSold.toLocaleString()} <small style="font-weight:400;color:var(--text-muted)">/ ${computed.maxUnitsPerMonth.toLocaleString()} max</small></div>
-            </div>
+            </div>`}
             <div class="b2b-summary-card">
                 <div class="b2b-summary-label">Monthly COGS</div>
                 <div class="b2b-summary-value">${fmtAmt(monthlyCogs)}</div>
             </div>
             <div class="b2b-summary-card">
                 <div class="b2b-summary-label">Monthly Gross Profit</div>
-                <div class="b2b-summary-value">${fmtAmt(computed.monthlyGrossProfit)}</div>
+                <div class="b2b-summary-value">${fmtAmt(monthlyGrossProfit)}</div>
             </div>
             <div class="b2b-summary-card">
                 <div class="b2b-summary-label">Total Gross Profit</div>
-                <div class="b2b-summary-value">${fmtAmt(computed.totalGrossProfit)}</div>
+                <div class="b2b-summary-value">${fmtAmt(totalGrossProfit)}</div>
             </div>
             <div class="b2b-summary-card">
                 <div class="b2b-summary-label">Profit Limit Status</div>
@@ -3275,8 +3286,8 @@ const UI = {
             </div>
         </div>`;
 
-        // Product lines table
-        const products = Database.getB2BContractProducts(selectedContract.id);
+        // Product lines table (only for products mode)
+        const products = !isDirect ? Database.getB2BContractProducts(selectedContract.id) : [];
         if (products.length > 0) {
             let totalQty = 0, monthlyTotal = 0, weightedPmSum = 0, weightedPmDenom = 0;
             html += `<div class="b2b-calc-breakdown">
@@ -3313,6 +3324,7 @@ const UI = {
         }
 
         // Calculation breakdown
+        const grossMarginPct = monthlyRevenue > 0 ? ((monthlyRevenue - monthlyCogs) / monthlyRevenue * 100) : 0;
         html += `<div class="b2b-calc-breakdown">
             <h4>Calculation Breakdown</h4>
             <table class="b2b-breakdown-table">
@@ -3320,12 +3332,12 @@ const UI = {
                     <tr><td>Monthly Payroll</td><td>${fmtAmt(selectedContract.monthly_payroll)}</td></tr>
                     <tr><td>Total Gross Payroll (${selectedContract.fiscal_months} months)</td><td>${fmtAmt(computed.totalGrossPayroll)}</td></tr>
                     <tr class="b2b-row-highlight"><td>Max 75% of Payroll</td><td>${fmtAmt(computed.maxAllowedSales)}</td></tr>
-                    <tr><td>Avg Gross Margin</td><td>${(computed.grossMargin * 100).toFixed(2)}%</td></tr>
-                    <tr><td>Monthly Revenue</td><td>${fmtAmt(computed.monthlyContractedRounded)}</td></tr>
+                    <tr><td>Gross Margin</td><td>${grossMarginPct.toFixed(2)}%</td></tr>
+                    <tr><td>Monthly Revenue</td><td>${fmtAmt(monthlyRevenue)}</td></tr>
                     <tr><td>Monthly COGS</td><td>${fmtAmt(monthlyCogs)}</td></tr>
-                    <tr><td>Monthly Gross Profit</td><td>${fmtAmt(computed.monthlyGrossProfit)}</td></tr>
-                    <tr class="b2b-row-highlight"><td>Total Contract Value</td><td>${fmtAmt(computed.totalContractValue)}</td></tr>
-                    <tr><td>Total Gross Profit</td><td class="${limitClass}">${fmtAmt(computed.totalGrossProfit)}</td></tr>
+                    <tr><td>Monthly Gross Profit</td><td>${fmtAmt(monthlyGrossProfit)}</td></tr>
+                    <tr class="b2b-row-highlight"><td>Total Contract Value</td><td>${fmtAmt(totalContractValue)}</td></tr>
+                    <tr><td>Total Gross Profit</td><td class="${limitClass}">${fmtAmt(totalGrossProfit)}</td></tr>
                 </tbody>
             </table>
         </div>`;

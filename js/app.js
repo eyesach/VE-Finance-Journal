@@ -2398,6 +2398,11 @@ const App = {
             UI.resetForm();
         });
 
+        // Save & New button - save entry and reset form for another
+        document.getElementById('saveAndNewBtn').addEventListener('click', () => {
+            this.handleFormSubmitAndNew();
+        });
+
         // Transaction type radio change
         document.querySelectorAll('input[name="transactionType"]').forEach(radio => {
             radio.addEventListener('change', (e) => {
@@ -3833,6 +3838,21 @@ const App = {
                 });
                 UI.hideNotesTooltip();
             }
+
+            // N = New Entry, Q = Quick Entry (only when no modifier keys, no modal open, no input focused)
+            if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
+            if (this.isViewOnly) return;
+            const tag = document.activeElement.tagName;
+            if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || document.activeElement.isContentEditable) return;
+            if (document.querySelector('.modal.active')) return;
+
+            if (e.key === 'n' || e.key === 'N') {
+                e.preventDefault();
+                document.getElementById('newEntryBtn').click();
+            } else if (e.key === 'q' || e.key === 'Q') {
+                e.preventDefault();
+                this.openQuickEntry('journal');
+            }
         });
 
         // ==================== SYNC / GROUP SHARING ====================
@@ -4002,6 +4022,95 @@ const App = {
             this._manageInventoryCostEntry(parentId, data);
 
             UI.resetForm(); // This also closes the entry modal
+            this.refreshAll();
+        } catch (error) {
+            console.error('Error saving transaction:', error);
+            UI.showNotification('Failed to save transaction', 'error');
+        }
+    },
+
+    /**
+     * Handle form submission then reset form for another entry (keep modal open)
+     */
+    handleFormSubmitAndNew() {
+        if (this._guardViewOnly()) return;
+        const data = UI.getFormData();
+        const validation = UI.validateFormData(data);
+
+        if (!validation.valid) {
+            UI.showNotification(validation.message, 'error');
+            return;
+        }
+
+        const editingId = document.getElementById('editingId').value;
+
+        try {
+            let parentId;
+            if (editingId) {
+                parentId = parseInt(editingId);
+                const beforeTx = Database.getTransactionById(parentId);
+                Database.updateTransaction(parentId, data);
+                const afterData = Object.assign({}, data);
+                this.pushUndo({
+                    type: 'transaction-edit',
+                    label: 'Edit "' + (data.item_description || 'transaction') + '"',
+                    undo: () => { if (beforeTx) Database.updateTransaction(parentId, beforeTx); },
+                    redo: () => { Database.updateTransaction(parentId, afterData); }
+                });
+                UI.showNotification('Transaction updated — ready for next entry', 'success');
+            } else {
+                parentId = Database.addTransaction(data);
+                const addedData = Object.assign({}, data);
+                this.pushUndo({
+                    type: 'transaction-create',
+                    label: 'Add "' + (data.item_description || 'transaction') + '"',
+                    undo: () => { Database.deleteTransaction(parentId); },
+                    redo: () => { Database.addTransaction(addedData); }
+                });
+                UI.showNotification('Transaction added — ready for next entry', 'success');
+            }
+
+            // Auto-manage linked sales tax entry
+            this._manageSalesTaxEntry(parentId, data);
+
+            // Auto-manage linked inventory cost entry
+            this._manageInventoryCostEntry(parentId, data);
+
+            // Remember category and date for the next entry
+            const keepCategoryId = data.category_id;
+            const keepDate = data.entry_date;
+            const keepType = data.transaction_type;
+
+            // Advance month due by 1 month
+            let nextMonthDue = '';
+            if (data.month_due) {
+                const [y, m] = data.month_due.split('-').map(Number);
+                const nm = m === 12 ? 1 : m + 1;
+                const ny = m === 12 ? y + 1 : y;
+                nextMonthDue = ny + '-' + String(nm).padStart(2, '0');
+            }
+
+            // Reset form but keep modal open
+            UI.resetForm(); // closes modal + clears fields
+            UI.showModal('entryModal'); // reopen immediately
+
+            // Restore kept values
+            document.getElementById('entryDate').value = keepDate;
+            document.getElementById('category').value = keepCategoryId;
+            document.getElementById('monthDue').value = nextMonthDue;
+            const typeRadio = document.querySelector('input[name="transactionType"][value="' + keepType + '"]');
+            if (typeRadio) typeRadio.checked = true;
+            UI.updateStatusOptions(keepType);
+
+            // Switch to add mode
+            document.getElementById('editingId').value = '';
+            document.getElementById('formTitle').textContent = 'Add New Entry';
+            document.getElementById('submitBtn').textContent = 'Add Entry';
+            this._monthDueManuallySet = true;
+
+            // Focus amount for fast next entry
+            document.getElementById('amount').focus();
+
             this.refreshAll();
         } catch (error) {
             console.error('Error saving transaction:', error);
@@ -10857,7 +10966,15 @@ const App = {
         const catId = contract.category_id || this._getOrCreateB2BCategory();
         const cogsCatId = Database.getOrCreateInventoryCostCategory();
         const currentMonth = Utils.getCurrentMonth();
-        const monthlyCogs = Math.round(computed.cogsPerUnit * computed.unitsSold * 100) / 100;
+        const isDirect = contract.entry_mode === 'direct';
+        const monthlyRevenue = isDirect ? Math.round((contract.direct_revenue || 0) * 100) / 100 : computed.monthlyContractedRounded;
+        const monthlyCogs = isDirect ? Math.round((contract.direct_cogs || 0) * 100) / 100 : Math.round(computed.cogsPerUnit * computed.unitsSold * 100) / 100;
+        const revenueDesc = isDirect
+            ? `${contract.company_name} – B2B Contract`
+            : `${contract.company_name} – B2B Contract (${computed.unitsSold} units)`;
+        const cogsDesc = isDirect
+            ? `${contract.company_name} – B2B COGS`
+            : `${contract.company_name} – B2B COGS (${computed.unitsSold} × ${Utils.formatCurrency(computed.cogsPerUnit)})`;
 
         computed.months.forEach(month => {
             // Only create entries up to current month (like budget sync)
@@ -10871,12 +10988,12 @@ const App = {
 
             if (existing.length > 0 && existing[0].values.length > 0) {
                 const [existingId, existingAmount, existingStatus] = existing[0].values[0];
-                if (existingStatus === 'pending' && Math.abs(existingAmount - computed.monthlyContractedRounded) > 0.01) {
+                if (existingStatus === 'pending' && Math.abs(existingAmount - monthlyRevenue) > 0.01) {
                     Database.updateTransaction(existingId, {
                         entry_date: month + '-01',
                         category_id: catId,
-                        item_description: `${contract.company_name} – B2B Contract (${computed.unitsSold} units)`,
-                        amount: computed.monthlyContractedRounded,
+                        item_description: revenueDesc,
+                        amount: monthlyRevenue,
                         transaction_type: 'receivable',
                         status: 'pending',
                         month_due: month,
@@ -10889,8 +11006,8 @@ const App = {
                 Database.addTransaction({
                     entry_date: month + '-01',
                     category_id: catId,
-                    item_description: `${contract.company_name} – B2B Contract (${computed.unitsSold} units)`,
-                    amount: computed.monthlyContractedRounded,
+                    item_description: revenueDesc,
+                    amount: monthlyRevenue,
                     transaction_type: 'receivable',
                     status: 'pending',
                     month_due: month,
@@ -10913,7 +11030,7 @@ const App = {
                         Database.updateTransaction(cogsId, {
                             entry_date: month + '-01',
                             category_id: cogsCatId,
-                            item_description: `${contract.company_name} – B2B COGS (${computed.unitsSold} × ${Utils.formatCurrency(computed.cogsPerUnit)})`,
+                            item_description: cogsDesc,
                             amount: monthlyCogs,
                             transaction_type: 'payable',
                             status: 'pending',
@@ -10927,7 +11044,7 @@ const App = {
                     Database.addTransaction({
                         entry_date: month + '-01',
                         category_id: cogsCatId,
-                        item_description: `${contract.company_name} – B2B COGS (${computed.unitsSold} × ${Utils.formatCurrency(computed.cogsPerUnit)})`,
+                        item_description: cogsDesc,
                         amount: monthlyCogs,
                         transaction_type: 'payable',
                         status: 'pending',
@@ -11014,8 +11131,10 @@ const App = {
         catSelect.innerHTML = '<option value="">Auto-create category</option>' +
             b2bCats.map(c => `<option value="${c.id}">${Utils.escapeHtml(c.name)}</option>`).join('');
 
-        // Clear product rows
+        // Clear product rows and direct fields
         document.getElementById('b2bProductsBody').innerHTML = '';
+        document.getElementById('b2bDirectRevenue').value = '';
+        document.getElementById('b2bDirectCogs').value = '';
 
         if (editId) {
             const contract = Database.getB2BContractById(editId);
@@ -11032,22 +11151,34 @@ const App = {
             catSelect.value = contract.category_id || '';
             document.getElementById('b2bNotes').value = contract.notes || '';
 
-            // Load product lines
-            const products = Database.getB2BContractProducts(editId);
-            if (products.length > 0) {
-                products.forEach(p => this._addB2BProductRow(p));
+            // Restore entry mode
+            const mode = contract.entry_mode || 'products';
+            this._setB2BEntryMode(mode);
+
+            if (mode === 'direct') {
+                document.getElementById('b2bDirectRevenue').value = contract.direct_revenue || '';
+                document.getElementById('b2bDirectCogs').value = contract.direct_cogs || '';
+                this._updateB2BDirectComputed();
             } else {
-                // Legacy: create a product row from the single-field values
-                this._addB2BProductRow({
-                    product_name: contract.bundle_description || 'Product',
-                    b2b_price: contract.bundle_price,
-                    cogs: contract.cogs_per_unit,
-                    quantity: contract.units_sold || 0
-                });
+                // Load product lines
+                const products = Database.getB2BContractProducts(editId);
+                if (products.length > 0) {
+                    products.forEach(p => this._addB2BProductRow(p));
+                } else {
+                    // Legacy: create a product row from the single-field values
+                    this._addB2BProductRow({
+                        product_name: contract.bundle_description || 'Product',
+                        b2b_price: contract.bundle_price,
+                        cogs: contract.cogs_per_unit,
+                        quantity: contract.units_sold || 0
+                    });
+                }
             }
         } else {
             title.textContent = 'Add B2B Contract';
             saveBtn.textContent = 'Save';
+            // Default to products mode
+            this._setB2BEntryMode('products');
             // Auto-fill from timeline settings
             const timeline = Database.getTimeline();
             if (timeline.start) document.getElementById('b2bContractStart').value = timeline.start;
@@ -11112,6 +11243,48 @@ const App = {
     },
 
     /**
+     * Toggle between products and direct entry mode in the B2B modal
+     */
+    _setB2BEntryMode(mode) {
+        const productsBtn = document.getElementById('b2bModeProducts');
+        const directBtn = document.getElementById('b2bModeDirect');
+        const productsSection = document.getElementById('b2bProductsSection');
+        const directSection = document.getElementById('b2bDirectSection');
+
+        if (mode === 'direct') {
+            productsBtn.classList.remove('active');
+            directBtn.classList.add('active');
+            productsSection.style.display = 'none';
+            directSection.style.display = 'block';
+        } else {
+            directBtn.classList.remove('active');
+            productsBtn.classList.add('active');
+            productsSection.style.display = '';
+            directSection.style.display = 'none';
+        }
+        this._updateB2BCalcPreview();
+    },
+
+    /**
+     * Get the current B2B entry mode from the toggle
+     */
+    _getB2BEntryMode() {
+        return document.getElementById('b2bModeDirect').classList.contains('active') ? 'direct' : 'products';
+    },
+
+    /**
+     * Update the computed fields in the direct entry section
+     */
+    _updateB2BDirectComputed() {
+        const revenue = parseFloat(document.getElementById('b2bDirectRevenue').value) || 0;
+        const cogs = parseFloat(document.getElementById('b2bDirectCogs').value) || 0;
+        const profit = Math.round((revenue - cogs) * 100) / 100;
+        const pm = revenue > 0 ? ((revenue - cogs) / revenue * 100) : 0;
+        document.getElementById('b2bDirectProfit').textContent = revenue > 0 ? Utils.formatCurrency(profit) : '—';
+        document.getElementById('b2bDirectPM').textContent = revenue > 0 ? pm.toFixed(2) + '%' : '—';
+    },
+
+    /**
      * Get all product rows from the modal as an array of objects
      */
     _getB2BProductRows() {
@@ -11138,30 +11311,42 @@ const App = {
         const fiscalMonths = parseInt(document.getElementById('b2bFiscalMonths').value) || 0;
         const contractStart = document.getElementById('b2bContractStart').value;
         const contractEnd = document.getElementById('b2bContractEnd').value;
-        const products = this._getB2BProductRows();
+        const entryMode = this._getB2BEntryMode();
 
-        // Aggregate from products
-        let totalQty = 0, monthlyRevenue = 0, monthlyCogs = 0;
-        let weightedPmSum = 0, weightedPmDenom = 0;
-        products.forEach(p => {
-            totalQty += p.quantity;
-            monthlyRevenue += Math.round(p.b2b_price * p.quantity * 100) / 100;
-            monthlyCogs += Math.round(p.cogs * p.quantity * 100) / 100;
-            if (p.b2b_price > 0 && p.quantity > 0) {
-                const pm = (p.b2b_price - p.cogs) / p.b2b_price;
-                weightedPmSum += pm * (p.b2b_price * p.quantity);
-                weightedPmDenom += p.b2b_price * p.quantity;
-            }
-        });
-        const avgPm = weightedPmDenom > 0 ? (weightedPmSum / weightedPmDenom) : 0;
+        let monthlyRevenue = 0, monthlyCogs = 0, avgPm = 0, totalQty = 0;
 
-        // Update summary footer
-        document.getElementById('b2bAvgPM').textContent = products.length > 0 ? (avgPm * 100).toFixed(2) + '%' : '—';
-        document.getElementById('b2bTotalQty').textContent = totalQty.toLocaleString();
-        document.getElementById('b2bMonthlyTotal').textContent = Utils.formatCurrency(monthlyRevenue);
+        if (entryMode === 'direct') {
+            monthlyRevenue = Math.round((parseFloat(document.getElementById('b2bDirectRevenue').value) || 0) * 100) / 100;
+            monthlyCogs = Math.round((parseFloat(document.getElementById('b2bDirectCogs').value) || 0) * 100) / 100;
+            avgPm = monthlyRevenue > 0 ? (monthlyRevenue - monthlyCogs) / monthlyRevenue : 0;
+        } else {
+            const products = this._getB2BProductRows();
+            let weightedPmSum = 0, weightedPmDenom = 0;
+            products.forEach(p => {
+                totalQty += p.quantity;
+                monthlyRevenue += Math.round(p.b2b_price * p.quantity * 100) / 100;
+                monthlyCogs += Math.round(p.cogs * p.quantity * 100) / 100;
+                if (p.b2b_price > 0 && p.quantity > 0) {
+                    const pm = (p.b2b_price - p.cogs) / p.b2b_price;
+                    weightedPmSum += pm * (p.b2b_price * p.quantity);
+                    weightedPmDenom += p.b2b_price * p.quantity;
+                }
+            });
+            avgPm = weightedPmDenom > 0 ? (weightedPmSum / weightedPmDenom) : 0;
 
-        if (!monthlyPayroll || !fiscalMonths || products.length === 0 || monthlyRevenue <= 0) {
-            preview.innerHTML = '<p class="b2b-preview-empty">Add product lines and fill in payroll/fiscal months to see calculations.</p>';
+            // Update summary footer (products mode only)
+            document.getElementById('b2bAvgPM').textContent = products.length > 0 ? (avgPm * 100).toFixed(2) + '%' : '—';
+            document.getElementById('b2bTotalQty').textContent = totalQty.toLocaleString();
+            document.getElementById('b2bMonthlyTotal').textContent = Utils.formatCurrency(monthlyRevenue);
+
+            if (products.length === 0) monthlyRevenue = 0;
+        }
+
+        if (!monthlyPayroll || !fiscalMonths || monthlyRevenue <= 0) {
+            const hint = entryMode === 'direct'
+                ? 'Enter revenue, COGS, and fill in payroll/fiscal months to see calculations.'
+                : 'Add product lines and fill in payroll/fiscal months to see calculations.';
+            preview.innerHTML = `<p class="b2b-preview-empty">${hint}</p>`;
             document.getElementById('b2bMaxUnitsHint').textContent = '';
             return;
         }
@@ -11238,7 +11423,7 @@ const App = {
             const monthlyPayroll = parseFloat(document.getElementById('b2bMonthlyPayroll').value) || 0;
             const categoryId = document.getElementById('b2bCategoryId').value || null;
             const notes = document.getElementById('b2bNotes').value.trim();
-            const products = this._getB2BProductRows();
+            const entryMode = this._getB2BEntryMode();
 
             // Validation
             if (!companyName) { UI.showNotification('Company name is required', 'error'); return; }
@@ -11246,37 +11431,71 @@ const App = {
             if (contractStart > contractEnd) { UI.showNotification('Contract start must be before end', 'error'); return; }
             if (fiscalMonths <= 0) { UI.showNotification('Fiscal months must be greater than 0', 'error'); return; }
             if (monthlyPayroll <= 0) { UI.showNotification('Monthly payroll must be greater than 0', 'error'); return; }
-            if (products.length === 0) { UI.showNotification('Add at least one product line', 'error'); return; }
 
-            // Aggregate from products for the contract-level fields
-            let totalQty = 0, monthlyRevenue = 0, totalCogs = 0;
-            products.forEach(p => {
-                totalQty += p.quantity;
-                monthlyRevenue += Math.round(p.b2b_price * p.quantity * 100) / 100;
-                totalCogs += Math.round(p.cogs * p.quantity * 100) / 100;
-            });
+            let params;
 
-            if (monthlyRevenue <= 0) { UI.showNotification('Products must have positive revenue', 'error'); return; }
+            if (entryMode === 'direct') {
+                const directRevenue = Math.round((parseFloat(document.getElementById('b2bDirectRevenue').value) || 0) * 100) / 100;
+                const directCogs = Math.round((parseFloat(document.getElementById('b2bDirectCogs').value) || 0) * 100) / 100;
+                if (directRevenue <= 0) { UI.showNotification('Monthly revenue must be greater than 0', 'error'); return; }
 
-            // Weighted average price and cogs for backward-compatible storage
-            const avgBundlePrice = totalQty > 0 ? Math.round((monthlyRevenue / totalQty) * 100) / 100 : 0;
-            const avgCogsPerUnit = totalQty > 0 ? Math.round((totalCogs / totalQty) * 100) / 100 : 0;
+                params = {
+                    company_name: companyName,
+                    bundle_description: bundleDescription,
+                    contract_start: contractStart,
+                    contract_end: contractEnd,
+                    fiscal_months: fiscalMonths,
+                    monthly_payroll: monthlyPayroll,
+                    bundle_price: directRevenue,
+                    cogs_per_unit: directCogs,
+                    cost_mode: 'direct',
+                    gross_margin_pct: null,
+                    units_sold: 1,
+                    category_id: categoryId,
+                    notes: notes,
+                    entry_mode: 'direct',
+                    direct_revenue: directRevenue,
+                    direct_cogs: directCogs
+                };
+            } else {
+                const products = this._getB2BProductRows();
+                if (products.length === 0) { UI.showNotification('Add at least one product line', 'error'); return; }
 
-            const params = {
-                company_name: companyName,
-                bundle_description: bundleDescription,
-                contract_start: contractStart,
-                contract_end: contractEnd,
-                fiscal_months: fiscalMonths,
-                monthly_payroll: monthlyPayroll,
-                bundle_price: avgBundlePrice,
-                cogs_per_unit: avgCogsPerUnit,
-                cost_mode: 'products',
-                gross_margin_pct: null,
-                units_sold: totalQty,
-                category_id: categoryId,
-                notes: notes
-            };
+                // Aggregate from products for the contract-level fields
+                let totalQty = 0, monthlyRevenue = 0, totalCogs = 0;
+                products.forEach(p => {
+                    totalQty += p.quantity;
+                    monthlyRevenue += Math.round(p.b2b_price * p.quantity * 100) / 100;
+                    totalCogs += Math.round(p.cogs * p.quantity * 100) / 100;
+                });
+
+                if (monthlyRevenue <= 0) { UI.showNotification('Products must have positive revenue', 'error'); return; }
+
+                // Weighted average price and cogs for backward-compatible storage
+                const avgBundlePrice = totalQty > 0 ? Math.round((monthlyRevenue / totalQty) * 100) / 100 : 0;
+                const avgCogsPerUnit = totalQty > 0 ? Math.round((totalCogs / totalQty) * 100) / 100 : 0;
+
+                params = {
+                    company_name: companyName,
+                    bundle_description: bundleDescription,
+                    contract_start: contractStart,
+                    contract_end: contractEnd,
+                    fiscal_months: fiscalMonths,
+                    monthly_payroll: monthlyPayroll,
+                    bundle_price: avgBundlePrice,
+                    cogs_per_unit: avgCogsPerUnit,
+                    cost_mode: 'products',
+                    gross_margin_pct: null,
+                    units_sold: totalQty,
+                    category_id: categoryId,
+                    notes: notes,
+                    entry_mode: 'products',
+                    direct_revenue: null,
+                    direct_cogs: null
+                };
+            }
+
+            const products = entryMode === 'products' ? this._getB2BProductRows() : [];
 
             if (editId) {
                 const id = parseInt(editId);
@@ -11383,6 +11602,18 @@ const App = {
         document.getElementById('cancelDeleteB2BContractBtn').addEventListener('click', () => {
             UI.hideModal('deleteB2BContractModal');
             this.deleteB2BContractTargetId = null;
+        });
+
+        // Entry mode toggle
+        document.getElementById('b2bModeProducts').addEventListener('click', () => this._setB2BEntryMode('products'));
+        document.getElementById('b2bModeDirect').addEventListener('click', () => this._setB2BEntryMode('direct'));
+
+        // Direct entry live calc
+        ['b2bDirectRevenue', 'b2bDirectCogs'].forEach(id => {
+            document.getElementById(id).addEventListener('input', () => {
+                this._updateB2BDirectComputed();
+                this._updateB2BCalcPreview();
+            });
         });
 
         // Live calculation preview

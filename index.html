@@ -444,6 +444,7 @@
 
                     <div class="form-actions">
                         <button type="button" id="cancelEditBtn" class="btn btn-secondary">Cancel</button>
+                        <button type="button" id="saveAndNewBtn" class="btn btn-secondary">Save &amp; New</button>
                         <button type="submit" id="submitBtn" class="btn btn-primary">Add Entry</button>
                     </div>
                 </form>
@@ -2053,8 +2054,39 @@
                             <input type="text" id="b2bNotes" placeholder="Optional notes">
                         </div>
                     </div>
+                    <!-- Entry Mode Toggle -->
+                    <div class="b2b-entry-mode-toggle">
+                        <label class="b2b-mode-label">Entry Mode:</label>
+                        <div class="toggle-group">
+                            <button type="button" class="toggle-btn active" data-mode="products" id="b2bModeProducts">Products</button>
+                            <button type="button" class="toggle-btn" data-mode="direct" id="b2bModeDirect">Direct</button>
+                        </div>
+                    </div>
+
+                    <!-- Direct Entry Fields (hidden by default) -->
+                    <div id="b2bDirectSection" class="b2b-direct-section" style="display: none;">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="b2bDirectRevenue">Monthly Revenue *</label>
+                                <input type="number" id="b2bDirectRevenue" step="0.01" min="0" placeholder="0.00">
+                            </div>
+                            <div class="form-group">
+                                <label for="b2bDirectCogs">Monthly COGS *</label>
+                                <input type="number" id="b2bDirectCogs" step="0.01" min="0" placeholder="0.00">
+                            </div>
+                            <div class="form-group">
+                                <label>Gross Profit</label>
+                                <div class="b2b-direct-computed" id="b2bDirectProfit">—</div>
+                            </div>
+                            <div class="form-group">
+                                <label>PM%</label>
+                                <div class="b2b-direct-computed" id="b2bDirectPM">—</div>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- Product Lines -->
-                    <div class="b2b-products-section">
+                    <div class="b2b-products-section" id="b2bProductsSection">
                         <div class="b2b-products-header">
                             <h4>Product Lines</h4>
                             <button type="button" id="addB2BProductRowBtn" class="btn btn-secondary btn-small">+ Add Product</button>

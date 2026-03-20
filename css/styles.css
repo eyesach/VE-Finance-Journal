@@ -2816,6 +2816,16 @@ body {
 /* Inline select in form labels */
 .inline-select { font-size: 0.85em; padding: 1px 4px; border: 1px solid var(--border-light); border-radius: var(--radius-sm); background: var(--c3, var(--bg)); color: var(--text); cursor: pointer; vertical-align: baseline; }
 
+/* B2B entry mode toggle */
+.b2b-entry-mode-toggle { display: flex; align-items: center; gap: 10px; margin: 12px 0 8px; }
+.b2b-mode-label { font-size: var(--font-sm); font-weight: 600; color: var(--text-muted); }
+.b2b-entry-mode-toggle .toggle-group { display: flex; border: 1px solid var(--border-light); border-radius: var(--radius-sm); overflow: hidden; }
+.b2b-entry-mode-toggle .toggle-btn { padding: 5px 14px; font-size: var(--font-xs); font-weight: 600; border: none; background: var(--bg); color: var(--text-muted); cursor: pointer; font-family: inherit; transition: all 0.15s ease; }
+.b2b-entry-mode-toggle .toggle-btn.active { background: var(--primary); color: #fff; }
+.b2b-entry-mode-toggle .toggle-btn:not(.active):hover { background: var(--c3, var(--bg)); color: var(--text); }
+.b2b-direct-section { margin: 8px 0 12px; padding: 12px; background: var(--c3, var(--bg)); border-radius: var(--radius-sm); border: 1px solid var(--border-light); }
+.b2b-direct-computed { font-family: var(--mono); font-size: var(--font-sm); color: var(--text-muted); padding: 6px 0; font-weight: 600; }
+
 /* Product lines table in B2B modal */
 .b2b-products-section { margin: 12px 0; }
 .b2b-products-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
