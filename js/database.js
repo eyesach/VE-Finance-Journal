@@ -633,9 +633,13 @@ const Database = {
         try { this.db.exec('SELECT inventory_cost FROM transactions LIMIT 1'); }
         catch (e) { this.db.run('ALTER TABLE transactions ADD COLUMN inventory_cost DECIMAL(10,2)'); }
 
-        // === Add ve_item_price to product_ve_mappings ===
-        try { this.db.exec('SELECT ve_item_price FROM product_ve_mappings LIMIT 1'); }
-        catch (e) { this.db.run('ALTER TABLE product_ve_mappings ADD COLUMN ve_item_price REAL NOT NULL DEFAULT 0'); }
+        // === Add ve_item_price to product_ve_mappings (only if table already exists) ===
+        try {
+            this.db.exec('SELECT ve_item_price FROM product_ve_mappings LIMIT 1');
+        } catch (e) {
+            try { this.db.run('ALTER TABLE product_ve_mappings ADD COLUMN ve_item_price REAL NOT NULL DEFAULT 0'); }
+            catch (_) { /* table does not exist yet — will be created below with the column included */ }
+        }
 
         // === Create budget_groups table ===
         this.db.run(`
