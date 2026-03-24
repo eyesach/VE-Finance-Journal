@@ -3083,21 +3083,31 @@ body.view-only-mode .pnl-editable-cell, body.view-only-mode .cf-editable-cell { 
 
 /* ========== RESPONSIVE: 1024px (sidebar auto-collapse) ========== */
 @media (max-width: 1024px) {
-    .app-container:not(.sidebar-collapsed) .app-sidebar { transform: translateX(-100%); }
-    .app-container:not(.sidebar-collapsed) .app-main { margin-left: 0; }
-    .app-container.sidebar-open .app-sidebar { transform: translateX(0); z-index: 500; width: var(--sidebar-w); position: fixed; }
+    .app-sidebar { transform: translateX(-100%); }
+    .app-main { margin-left: 0; }
+    .app-container.sidebar-open .app-sidebar { transform: translateX(0); z-index: 500; width: var(--sidebar-w); position: fixed; top: 0; left: 0; bottom: 0; }
     .app-container.sidebar-open .app-main { margin-left: 0; }
+    /* Backdrop overlay when sidebar is open */
+    .app-container.sidebar-open::before {
+        content: '';
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.4);
+        z-index: 499;
+    }
 }
 
 /* ========== RESPONSIVE: 768px (stack) ========== */
 @media (max-width: 768px) {
+    html, body { overflow-x: hidden; max-width: 100vw; }
+    .app-main { overflow-x: hidden; max-width: 100vw; }
     .summary-section { grid-template-columns: repeat(2, 1fr); padding: 12px 14px; }
     .summary-card { padding: 10px; }
     .summary-value, .s-value { font-size: 1rem; word-break: break-word; }
     .app-header { flex-direction: column; gap: 8px; text-align: center; padding: 10px 14px; }
     .header-title { width: 100%; text-align: center; }
     .journal-name-wrapper { justify-content: center; }
-    .header-actions { justify-content: center; }
+    .header-actions { justify-content: center; flex-wrap: wrap; }
     .form-row { grid-template-columns: 1fr; }
     .toolbar-section { flex-direction: column; gap: 6px; padding: 0 14px; }
     .filters-section { flex-direction: column; margin: 0 14px 12px; }
@@ -3135,6 +3145,8 @@ body.view-only-mode .pnl-editable-cell, body.view-only-mode .cf-editable-cell { 
     .ps-summary-cards, .pc-summary-cards { grid-template-columns: repeat(2, 1fr); }
     .loan-summary { grid-template-columns: repeat(2, 1fr); }
     .assets-summary-cards, .budget-summary-cards { grid-template-columns: repeat(2, 1fr); }
+    .gear-popover { left: 8px; right: 8px; min-width: 0; max-width: calc(100vw - 16px); }
+    .company-popover { left: 8px; right: 8px; min-width: 0; width: auto; max-width: calc(100vw - 16px); }
 }
 
 /* ========== RESPONSIVE: 480px (mobile) ========== */
@@ -3146,11 +3158,14 @@ body.view-only-mode .pnl-editable-cell, body.view-only-mode .cf-editable-cell { 
     .btn-icon:not(.always-visible) { opacity: 0.6; }
     .btn-icon { padding: 8px; min-width: 32px; min-height: 32px; }
     .status-select { min-height: 32px; padding: 4px 22px 4px 8px; }
-    .cashflow-spreadsheet-wrapper, .pnl-spreadsheet-wrapper, .ps-spreadsheet-wrapper { -webkit-overflow-scrolling: touch; }
+    .cashflow-spreadsheet-wrapper, .pnl-spreadsheet-wrapper, .ps-spreadsheet-wrapper,
+    .ve-table-wrapper, .pc-table-wrapper, .asset-depr-table-wrapper, .loan-table-wrapper,
+    .be-data-table-wrapper, .transactions-section { -webkit-overflow-scrolling: touch; overflow-x: auto; }
     .cashflow-table th:first-child, .cashflow-table td:first-child { min-width: 100px; max-width: 120px; font-size: var(--font-xs); overflow: hidden; text-overflow: ellipsis; }
     .pnl-table th:first-child, .pnl-table td:first-child { min-width: 90px; max-width: 110px; font-size: var(--font-xs); overflow: hidden; text-overflow: ellipsis; }
     .pnl-table { min-width: 350px; }
     .pnl-cell-input { width: 70px; font-size: var(--font-xs); }
+    .transaction-table { min-width: 500px; }
     .transaction-table th, .transaction-table td { padding: 6px; }
     .be-summary-cards { grid-template-columns: 1fr; }
     .bs-ratios-grid { grid-template-columns: 1fr; }
@@ -3161,6 +3176,11 @@ body.view-only-mode .pnl-editable-cell, body.view-only-mode .cf-editable-cell { 
     .actions-cell { display: flex; gap: 2px; align-items: center; }
     .form-group input, .form-group select, .form-group textarea { font-size: 16px; }
     .status-select, select { font-size: 16px; }
+    /* Prevent sections from clipping scrollable content on mobile */
+    .transactions-section, .cashflow-section, .pnl-section, .bs-section, .be-section,
+    .assets-section, .loan-section, .budget-section, .b2b-section, .pc-section,
+    .bs-ratios-section { overflow: visible; }
+    .modal-content { max-width: calc(100vw - 20px); }
 }
 
 /* ========== MISSING NOTIFICATION TYPE ========== */

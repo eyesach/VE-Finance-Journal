@@ -1057,6 +1057,11 @@ const App = {
      * @param {string} tab - 'journal' | 'cashflow' | 'pnl' | 'balancesheet' | 'assets' | 'loan' | 'budget' | 'breakeven'
      */
     switchMainTab(tab) {
+        // Close sidebar on mobile after selecting a tab
+        if (window.innerWidth <= 1024) {
+            document.querySelector('.app-container').classList.remove('sidebar-open');
+        }
+
         // Exit bulk select mode when switching tabs
         if (this.bulkSelectMode) {
             this.exitBulkSelectMode();
@@ -3482,8 +3487,26 @@ const App = {
         // ==================== SIDEBAR TOGGLE ====================
         document.getElementById('sidebarToggleBtn').addEventListener('click', () => {
             const container = document.querySelector('.app-container');
-            container.classList.toggle('sidebar-collapsed');
-            localStorage.setItem('sidebarCollapsed', container.classList.contains('sidebar-collapsed'));
+            const isMobile = window.innerWidth <= 1024;
+            if (isMobile) {
+                // On mobile, toggle sidebar-open (overlay mode)
+                container.classList.toggle('sidebar-open');
+            } else {
+                // On desktop, toggle sidebar-collapsed
+                container.classList.toggle('sidebar-collapsed');
+                localStorage.setItem('sidebarCollapsed', container.classList.contains('sidebar-collapsed'));
+            }
+        });
+
+        // Close mobile sidebar when tapping outside (on the backdrop)
+        document.querySelector('.app-container').addEventListener('click', (e) => {
+            const container = e.currentTarget;
+            if (window.innerWidth <= 1024 && container.classList.contains('sidebar-open')) {
+                const sidebar = document.querySelector('.app-sidebar');
+                if (!sidebar.contains(e.target) && !e.target.closest('.sidebar-toggle-btn')) {
+                    container.classList.remove('sidebar-open');
+                }
+            }
         });
 
         // ==================== ENTRY FORM ====================
