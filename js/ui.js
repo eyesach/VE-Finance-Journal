@@ -1624,6 +1624,11 @@ const UI = {
             ? ((currentAssets / currentLiabilities) >= 1 ? ' ratio-positive' : ' ratio-negative')
             : '';
 
+        const cashRatioVal = currentLiabilities > 0 ? fmtX(data.cash || 0, currentLiabilities) : '<span class="ratio-na">N/A</span>';
+        const cashRatioCls = currentLiabilities > 0
+            ? (((data.cash || 0) / currentLiabilities) >= 0.5 ? ' ratio-positive' : ' ratio-negative')
+            : '';
+
         html += `
         <div class="bs-ratios-group">
             <div class="bs-ratios-group-title">Liquidity</div>
@@ -1637,6 +1642,11 @@ const UI = {
                     <span class="bs-ratio-label">Quick Ratio</span>
                     <span class="bs-ratio-value${liqCls}">${liqVal}</span>
                     <span class="bs-ratio-formula">Same as Current Ratio (no inventory tracked)</span>
+                </div>
+                <div class="bs-ratio-card">
+                    <span class="bs-ratio-label">Cash Ratio</span>
+                    <span class="bs-ratio-value${cashRatioCls}">${cashRatioVal}</span>
+                    <span class="bs-ratio-formula">Cash / Current Liabilities</span>
                 </div>
             </div>
         </div>`;
@@ -3080,7 +3090,7 @@ const UI = {
 
     renderProductsTab(products, showDiscontinued, analytics) {
         const fmtAmt = (amt) => Utils.formatCurrency(amt);
-        analytics = analytics || { totals: { pretax_total: 0, sales_tax: 0, post_tax_total: 0, discount: 0, pretax_after_discount: 0, posttax_after_discount: 0 }, byProduct: [], linkedProductIds: new Set() };
+        analytics = analytics || { totals: { pretax_total: 0, sales_tax: 0, post_tax_total: 0, discount: 0, pretax_after_discount: 0 }, byProduct: [], linkedProductIds: new Set() };
         const linkedIds = analytics.linkedProductIds || new Set();
 
         // Filter products based on discontinued toggle
@@ -3100,7 +3110,6 @@ const UI = {
             const hasAnalytics = analytics.byProduct.length > 0;
             const discountCards = hasAnalytics && analytics.totals.discount > 0 ? `
                 <div class="budget-summary-card"><span class="budget-summary-label">VE Pretax After Discounts</span><span class="budget-summary-value">${fmtAmt(analytics.totals.pretax_after_discount)}</span></div>
-                <div class="budget-summary-card"><span class="budget-summary-label">VE Post-Tax After Discounts</span><span class="budget-summary-value">${fmtAmt(analytics.totals.posttax_after_discount)}</span></div>
             ` : '';
             const veCards = hasAnalytics ? `
                 <div class="budget-summary-card"><span class="budget-summary-label">VE Pretax Revenue</span><span class="budget-summary-value">${fmtAmt(analytics.totals.pretax_total)}</span></div>

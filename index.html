@@ -263,6 +263,14 @@
                                 </div>
                             </div>
                         </div>
+                        <div class="gear-popover-section">
+                            <label class="gear-label">Shipping Fee Rate</label>
+                            <div style="display:flex;align-items:center;gap:6px;">
+                                <input type="number" id="shippingFeeRate" min="0" max="100" step="0.01" value="1" style="width:70px;" title="Shipping fee as % of inventory cost">
+                                <span style="font-size:0.85em;color:var(--text-secondary);">%</span>
+                            </div>
+                            <div style="font-size:0.75em;color:var(--text-secondary);margin-top:2px;">Applied to auto-created inventory payments</div>
+                        </div>
                         <div class="gear-reset-section">
                             <button type="button" id="resetAllDataBtn" class="btn btn-danger btn-sm">Reset All Data</button>
                         </div>
@@ -1233,10 +1241,6 @@
                             <div class="ve-card-label">Pretax After Discounts</div>
                             <div class="ve-card-value ve-pretax" id="ve-cardPretaxAfterDisc">$0.00</div>
                         </div>
-                        <div class="ve-card" id="ve-posttaxAfterDiscCard" style="display:none;">
-                            <div class="ve-card-label">Post-Tax After Discounts</div>
-                            <div class="ve-card-value ve-total" id="ve-cardPosttaxAfterDisc">$0.00</div>
-                        </div>
                         <div class="ve-card" id="ve-shippingCard" style="display:none;">
                             <div class="ve-card-label">Shipping</div>
                             <div class="ve-card-value ve-shipping" id="ve-cardShipping">$0.00</div>
@@ -1326,7 +1330,6 @@
         <!-- Dashboard Tab (Analyze) -->
         <div id="dashboardTab" style="display: none;">
             <div class="dashboard-content">
-                <div class="dashboard-kpi-cards" id="dashboardKpiCards"></div>
                 <div class="dashboard-sections" id="dashboardSections"></div>
             </div>
         </div>
@@ -2323,6 +2326,35 @@
                 <div class="form-actions">
                     <button type="button" id="cancelDeleteBtn" class="btn btn-secondary">Cancel</button>
                     <button type="button" id="confirmDeleteBtn" class="btn btn-danger">Delete</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- KPI Detail Modal -->
+        <div id="kpiDetailModal" class="modal">
+            <div class="modal-content kpi-detail-modal">
+                <div class="kpi-detail-header">
+                    <h3 id="kpiDetailTitle">KPI Detail</h3>
+                    <button type="button" class="modal-close-btn" onclick="UI.hideModal('kpiDetailModal')">&times;</button>
+                </div>
+                <div class="kpi-detail-body" id="kpiDetailBody"></div>
+                <div class="kpi-detail-footer">
+                    <button type="button" id="kpiDetailGoBtn" class="btn btn-primary">Go to Tab</button>
+                    <button type="button" class="btn btn-secondary" onclick="UI.hideModal('kpiDetailModal')">Close</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Analyze KPI Modal (opens from dashboard chart sections) -->
+        <div id="analyzeKpiModal" class="modal">
+            <div class="modal-content analyze-kpi-modal">
+                <div class="kpi-detail-header">
+                    <h3 id="analyzeKpiTitle">Analysis</h3>
+                    <button type="button" class="modal-close-btn" onclick="UI.hideModal('analyzeKpiModal')">&times;</button>
+                </div>
+                <div class="analyze-kpi-body" id="analyzeKpiBody"></div>
+                <div class="kpi-detail-footer">
+                    <button type="button" class="btn btn-secondary" onclick="UI.hideModal('analyzeKpiModal')">Close</button>
                 </div>
             </div>
         </div>

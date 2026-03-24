@@ -6,16 +6,16 @@ Vanilla HTML/CSS/JS accounting app with SQLite (sql.js) in-browser database, mul
 
 | File | Lines | Role |
 |------|-------|------|
-| `index.html` | ~2642 | All UI structure: tabs, modals, forms |
-| `js/app.js` | ~11168 | Core logic, event handlers, all feature controllers |
-| `js/database.js` | ~3735 | SQLite schema, CRUD, financial calculations |
-| `js/ui.js` | ~3334 | DOM rendering, spreadsheets, forms, notifications |
-| `js/utils.js` | ~846 | Formatting, date helpers, financial math (amortization, depreciation, break-even) |
-| `js/companies.js` | ~449 | Multi-company manager (IndexedDB, up to 5 companies) |
-| `js/sync.js` | ~317 | Group sync with version history, polling |
-| `js/supabase-adapter.js` | ~305 | Supabase backend for sync, shares, members |
-| `js/tutorial.js` | ~1770 | Guided tours, interactive lessons, spotlight overlay |
-| `css/styles.css` | ~3907 | All styling, themes, dark mode, responsive breakpoints |
+| `index.html` | ~2736 | All UI structure: tabs, modals, forms |
+| `js/app.js` | ~13120 | Core logic, event handlers, all feature controllers |
+| `js/database.js` | ~4023 | SQLite schema, CRUD, financial calculations |
+| `js/ui.js` | ~3420 | DOM rendering, spreadsheets, forms, notifications |
+| `js/utils.js` | ~850 | Formatting, date helpers, financial math (amortization, depreciation, break-even) |
+| `js/companies.js` | ~450 | Multi-company manager (IndexedDB, up to 5 companies) |
+| `js/sync.js` | ~318 | Group sync with version history, polling |
+| `js/supabase-adapter.js` | ~306 | Supabase backend for sync, shares, members |
+| `js/tutorial.js` | ~1924 | Guided tours, interactive lessons, spotlight overlay |
+| `css/styles.css` | ~3994 | All styling, themes, dark mode, responsive breakpoints |
 
 ## Feature → Code Location Map
 
@@ -63,7 +63,7 @@ Vanilla HTML/CSS/JS accounting app with SQLite (sql.js) in-browser database, mul
 - **HTML**: `index.html:662-705` balancesheetTab, balanceSheetContent, bsRatiosSection
 - **Logic**: `app.js:4954-5200` refreshBalanceSheet
 - **DB**: `database.js:2974-3403` getCashAsOf, getARByCategory, getAPByCategory, getRetainedEarningsAsOf, getPLTotalsThrough
-- **UI render**: `ui.js:1443-1684` renderBalanceSheet, renderFinancialRatios
+- **UI render**: `ui.js:1443-1694` renderBalanceSheet, renderFinancialRatios (includes Cash Ratio)
 
 ### Fixed Assets & Depreciation
 - **HTML**: `index.html:708-736` assetsTab; `index.html:1805-1876` fixedAssetModal, deleteAssetModal
@@ -119,11 +119,16 @@ Vanilla HTML/CSS/JS accounting app with SQLite (sql.js) in-browser database, mul
 - **DB**: `database.js:2193-2277` getB2BContracts, addB2BContract, setB2BContractFinalized
 
 ### Dashboard
-- **HTML**: `index.html:1319-1324` dashboardTab
-- **Logic**: `app.js:1088-1777` refreshDashboard, KPI cards, sparklines, all dashboard charts
+- **HTML**: `index.html:1319-1324` dashboardTab; `index.html:2330-2364` kpiDetailModal, analyzeKpiModal
+- **Logic**: `app.js:1088-2224` refreshDashboard, _computeKpiData, _renderDashboardSections
+- **KPI system**: `app.js:1161-1208` _computeKpiData (cached metrics: cash, burn, EBITDA, CMGR, Rule of 40, DSCR, working capital)
+- **KPI modals**: `app.js:1208-1280` _openSectionAnalysis (section→KPI grid modal), _openKpiDetail (drill-down detail tables)
+- **KPI detail renderers**: `app.js:~1300-2100` _kpiDetail_cashposition, _kpiDetail_grossburn, _kpiDetail_netburn, _kpiDetail_revtrend, _kpiDetail_ebitda, _kpiDetail_cmgr, _kpiDetail_cmgrnonb2b, _kpiDetail_overdue, _kpiDetail_workingcapital, _kpiDetail_rule40, _kpiDetail_rule40nb, _kpiDetail_dscr
+- **Dashboard charts**: `app.js:~2100+` Revenue Concentration pie chart, AR Aging breakdown
+- **CSS**: `styles.css:2629-2690` KPI cards, detail modal, analyze modal, section clickable states
 
 ### Analyze Mode Charts
-- **Logic**: `app.js:1498-1748` _updateAnalyzeCharts, _renderAnalyzeCFChart, _renderAnalyzePnLChart, _renderAnalyzeBSChart
+- **Logic**: `app.js:~2500+` _updateAnalyzeCharts, _renderAnalyzeCFChart, _renderAnalyzePnLChart, _renderAnalyzeBSChart
 
 ### Work/Analyze Mode Toggle
 - **HTML**: `index.html:46-52` mode-toggle buttons
@@ -192,6 +197,11 @@ Vanilla HTML/CSS/JS accounting app with SQLite (sql.js) in-browser database, mul
 ### Sales Tax Auto-Entries
 - **Logic**: `app.js:3811-3895` _manageSalesTaxEntry, _manageInventoryCostEntry
 - **DB**: `database.js:893-969` getOrCreateSalesTaxCategory, getLinkedSalesTaxTransaction, getOrCreateInventoryCostCategory
+
+### Shipping Fee Auto-Entries
+- **HTML**: `index.html:266-276` shippingFeeRate input in gear popover
+- **Logic**: `app.js` _manageShippingEntry, loadShippingFeeRate
+- **DB**: `database.js:1055-1126` getOrCreateShippingCategory, getLinkedShippingTransaction, updateShippingTransaction, getShippingFeeConfig, setShippingFeeConfig
 
 ## CSS Responsive Breakpoints
 - `1024px`: Sidebar auto-collapse (`styles.css:3000-3005`)

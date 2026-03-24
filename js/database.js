@@ -853,6 +853,10 @@ const Database = {
         // === Add budget_override flag to transactions ===
         try { this.db.exec('SELECT budget_override FROM transactions LIMIT 1'); }
         catch (e) { this.db.run('ALTER TABLE transactions ADD COLUMN budget_override INTEGER DEFAULT 0'); }
+
+        // === Add is_shipping flag to categories ===
+        try { this.db.exec('SELECT is_shipping FROM categories LIMIT 1'); }
+        catch (e) { this.db.run('ALTER TABLE categories ADD COLUMN is_shipping INTEGER DEFAULT 0'); }
     },
 
     // ==================== FOLDER OPERATIONS ====================
@@ -938,10 +942,10 @@ const Database = {
      * @param {number|null} folderId - Folder ID
      * @returns {number} New category ID
      */
-    addCategory(name, isMonthly = false, defaultAmount = null, defaultType = null, folderId = null, showOnPl = false, isCogs = false, isDepreciation = false, isSalesTax = false, isB2b = false, defaultStatus = null, isSales = false, isInventoryCost = false) {
+    addCategory(name, isMonthly = false, defaultAmount = null, defaultType = null, folderId = null, showOnPl = false, isCogs = false, isDepreciation = false, isSalesTax = false, isB2b = false, defaultStatus = null, isSales = false, isInventoryCost = false, isShipping = false) {
         this.db.run(
-            'INSERT INTO categories (name, is_monthly, default_amount, default_type, folder_id, show_on_pl, is_cogs, is_depreciation, is_sales_tax, is_b2b, default_status, is_sales, is_inventory_cost) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            [name.trim(), isMonthly ? 1 : 0, defaultAmount, defaultType, folderId, showOnPl ? 1 : 0, isCogs ? 1 : 0, isDepreciation ? 1 : 0, isSalesTax ? 1 : 0, isB2b ? 1 : 0, defaultStatus, isSales ? 1 : 0, isInventoryCost ? 1 : 0]
+            'INSERT INTO categories (name, is_monthly, default_amount, default_type, folder_id, show_on_pl, is_cogs, is_depreciation, is_sales_tax, is_b2b, default_status, is_sales, is_inventory_cost, is_shipping) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [name.trim(), isMonthly ? 1 : 0, defaultAmount, defaultType, folderId, showOnPl ? 1 : 0, isCogs ? 1 : 0, isDepreciation ? 1 : 0, isSalesTax ? 1 : 0, isB2b ? 1 : 0, defaultStatus, isSales ? 1 : 0, isInventoryCost ? 1 : 0, isShipping ? 1 : 0]
         );
         const result = this.db.exec('SELECT last_insert_rowid() as id');
         this.autoSave();
@@ -1047,6 +1051,72 @@ const Database = {
         this.db.run(
             'UPDATE transactions SET amount = ?, entry_date = ?, month_due = ?, item_description = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
             [amount, entryDate, monthDue, description, id]
+        );
+        this.autoSave();
+    },
+
+    /**
+     * Get or create the system "Shipping Fee" category
+     * @returns {number} Category ID for the Shipping Fee category
+     */
+    getOrCreateShippingCategory() {
+        const result = this.db.exec('SELECT id FROM categories WHERE is_shipping = 1 LIMIT 1');
+        if (result.length > 0 && result[0].values.length > 0) {
+            return result[0].values[0][0];
+        }
+        return this.addCategory('Shipping Fee', false, null, 'payable', null, false, true, false, false, false, 'pending', false, false, true);
+    },
+
+    /**
+     * Get the linked shipping fee transaction for a parent
+     * @param {number} parentId - Parent transaction ID
+     * @returns {number|null} Child transaction ID or null
+     */
+    getLinkedShippingTransaction(parentId) {
+        const result = this.db.exec("SELECT id FROM transactions WHERE source_type = 'inventory_shipping' AND source_id = ?", [parentId]);
+        if (result.length > 0 && result[0].values.length > 0) {
+            return result[0].values[0][0];
+        }
+        return null;
+    },
+
+    /**
+     * Update only the mutable fields of a linked shipping fee transaction
+     */
+    updateShippingTransaction(id, amount, entryDate, monthDue, description) {
+        this.db.run(
+            'UPDATE transactions SET amount = ?, entry_date = ?, month_due = ?, item_description = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+            [amount, entryDate, monthDue, description, id]
+        );
+        this.autoSave();
+    },
+
+    // ==================== SHIPPING FEE CONFIG ====================
+
+    /**
+     * Get shipping fee config (rate as decimal, e.g. 0.01 = 1%)
+     * @returns {Object} { rate: number }
+     */
+    getShippingFeeConfig() {
+        const result = this.db.exec("SELECT value FROM app_meta WHERE key = 'shipping_fee_config'");
+        if (result.length === 0 || result[0].values.length === 0) {
+            return { rate: 0.01 };
+        }
+        try {
+            return Object.assign({ rate: 0.01 }, JSON.parse(result[0].values[0][0]));
+        } catch (e) {
+            return { rate: 0.01 };
+        }
+    },
+
+    /**
+     * Save shipping fee config
+     * @param {Object} config - { rate: number }
+     */
+    setShippingFeeConfig(config) {
+        this.db.run(
+            "INSERT OR REPLACE INTO app_meta (key, value) VALUES ('shipping_fee_config', ?)",
+            [JSON.stringify(config)]
         );
         this.autoSave();
     },
@@ -2744,7 +2814,7 @@ const Database = {
      * Returns { totals, byProduct, monthlyCogs }
      */
     getLinkedProductAnalytics(dateFrom, dateTo, source) {
-        const empty = { totals: { pretax_total: 0, sales_tax: 0, post_tax_total: 0, discount: 0, pretax_after_discount: 0, posttax_after_discount: 0 }, byProduct: [], monthlyCogs: [] };
+        const empty = { totals: { pretax_total: 0, sales_tax: 0, post_tax_total: 0, discount: 0, pretax_after_discount: 0 }, byProduct: [], monthlyCogs: [] };
         const hasMappings = this.db.exec('SELECT 1 FROM product_ve_mappings LIMIT 1');
         if (hasMappings.length === 0) return empty;
 
@@ -2767,14 +2837,12 @@ const Database = {
             WHERE 1=1 ${whereFrag}
         `, params);
 
-        let totals = { pretax_total: 0, sales_tax: 0, post_tax_total: 0, discount: 0, pretax_after_discount: 0, posttax_after_discount: 0 };
+        let totals = { pretax_total: 0, sales_tax: 0, post_tax_total: 0, discount: 0, pretax_after_discount: 0 };
         if (totalsResult.length > 0 && totalsResult[0].values.length > 0) {
             const pt = totalsResult[0].values[0][0] || 0;
             const st = totalsResult[0].values[0][1] || 0;
             const disc = totalsResult[0].values[0][2] || 0;
-            const pretaxAfterDisc = pt - disc;
-            const taxAfterDisc = st > 0 && pt > 0 ? st * (pretaxAfterDisc / pt) : 0;
-            totals = { pretax_total: pt, sales_tax: st, post_tax_total: pt + st, discount: disc, pretax_after_discount: pretaxAfterDisc, posttax_after_discount: pretaxAfterDisc + taxAfterDisc };
+            totals = { pretax_total: pt, sales_tax: st, post_tax_total: pt + st, discount: disc, pretax_after_discount: pt - disc };
         }
 
         // By-product aggregates

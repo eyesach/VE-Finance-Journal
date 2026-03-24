@@ -167,6 +167,9 @@ const App = {
             // Load and apply saved theme
             this.loadAndApplyTheme();
 
+            // Load shipping fee rate
+            this.loadShippingFeeRate();
+
             // Restore tab order, hidden tabs, and set up tab drag-drop
             this.restoreTabOrder();
             this.setupTabDragDrop();
@@ -1062,6 +1065,12 @@ const App = {
         // Show/hide Quick Add button
         this._showQuickAddButton(tab);
 
+        // Hide global summary cards on dashboard tab (KPI cards replace them)
+        const summarySection = document.querySelector('.summary-section');
+        if (summarySection) {
+            summarySection.style.display = tab === 'dashboard' ? 'none' : '';
+        }
+
         document.querySelectorAll('.main-tab').forEach(btn => {
             btn.classList.toggle('active', btn.dataset.tab === tab);
         });
@@ -1152,19 +1161,20 @@ const App = {
     _dashCharts: {},
 
     refreshDashboard() {
-        this._renderDashboardKPIs();
+        this._computeKpiData();
         this._renderDashboardSections();
     },
 
-    _renderDashboardKPIs() {
-        const container = document.getElementById('dashboardKpiCards');
-        if (!container) return;
+    // ==================== KPI DATA COMPUTATION (cached for modal use) ====================
 
+    _kpiCache: null,
+
+    _computeKpiData() {
         const summary = Database.calculateSummary();
         const currentMonth = Utils.getCurrentMonth();
 
-        // Calculate monthly data for sparklines using timeline range (take last 6 months of range)
-        const allMonths = this._getTimelineMonths();
+        // Calculate monthly data for sparklines — only up to current month (exclude future)
+        const allMonths = this._getTimelineMonths().filter(m => m <= currentMonth);
         const months = allMonths.slice(-6);
 
         // Get monthly revenue & expense data
@@ -1173,16 +1183,24 @@ const App = {
         const monthlyCash = [];
         let runningCash = 0;
 
+        // P&L accrual-basis expense totals (for burn metrics)
+        const plOpex = Database.getMonthlyTotalOpex(months);
+        const plCogs = {};
+        const cogsResult = Database.db.exec(
+            "SELECT t.month_due, SUM(t.amount) as total FROM transactions t JOIN categories c ON t.category_id = c.id WHERE t.month_due IN (" + months.map(() => '?').join(',') + ") AND c.is_cogs = 1 AND c.show_on_pl != 1 GROUP BY t.month_due", months);
+        if (cogsResult[0]) { for (const row of cogsResult[0].values) { plCogs[row[0]] = row[1]; } }
+
         for (const month of months) {
             const revResult = Database.db.exec(
-                "SELECT COALESCE(SUM(t.amount),0) FROM transactions t JOIN categories c ON t.category_id = c.id WHERE t.transaction_type='receivable' AND t.status='received' AND t.month_paid=? AND c.is_cogs = 0 AND c.show_on_pl != 1 AND (c.is_b2b = 1 OR c.is_sales = 1) AND COALESCE(t.source_type, '') NOT IN ('loan_receivable', 'loan_payment')", [month]);
-            const expResult = Database.db.exec(
+                "SELECT COALESCE(SUM(COALESCE(t.pretax_amount, t.amount)),0) FROM transactions t JOIN categories c ON t.category_id = c.id WHERE t.transaction_type='receivable' AND t.month_due=? AND c.is_cogs = 0 AND c.show_on_pl != 1 AND (c.is_b2b = 1 OR c.is_sales = 1) AND COALESCE(t.source_type, '') NOT IN ('loan_receivable', 'loan_payment')", [month]);
+            const cashExpResult = Database.db.exec(
                 "SELECT COALESCE(SUM(amount),0) FROM transactions WHERE transaction_type='payable' AND status='paid' AND month_paid=?", [month]);
-            const rev = revResult[0] ? revResult[0].values[0][0] : 0;
-            const exp = expResult[0] ? expResult[0].values[0][0] : 0;
+            const rev = Math.round((revResult[0] ? revResult[0].values[0][0] : 0) * 100) / 100;
+            const cashExp = Math.round((cashExpResult[0] ? cashExpResult[0].values[0][0] : 0) * 100) / 100;
+            const plExp = Math.round(((plOpex[month] || 0) + (plCogs[month] || 0)) * 100) / 100;
             monthlyRevenue.push(rev);
-            monthlyExpenses.push(exp);
-            runningCash += rev - exp;
+            monthlyExpenses.push(plExp);
+            runningCash = Math.round((runningCash + rev - cashExp) * 100) / 100;
             monthlyCash.push(runningCash);
         }
 
@@ -1190,42 +1208,1017 @@ const App = {
         const overdueResult = Database.db.exec(
             "SELECT COUNT(*), COALESCE(SUM(amount),0) FROM transactions WHERE transaction_type='receivable' AND status='pending' AND month_due < ?", [currentMonth]);
         const overdueCount = overdueResult[0] ? overdueResult[0].values[0][0] : 0;
-        const overdueAmount = overdueResult[0] ? overdueResult[0].values[0][1] : 0;
+        const overdueAmount = Math.round((overdueResult[0] ? overdueResult[0].values[0][1] : 0) * 100) / 100;
 
         // Burn rate (avg expenses last 6 months)
         const totalExp = monthlyExpenses.reduce((s, v) => s + v, 0);
-        const burnRate = monthlyExpenses.length > 0 ? totalExp / monthlyExpenses.length : 0;
+        const burnRate = Math.round((monthlyExpenses.length > 0 ? totalExp / monthlyExpenses.length : 0) * 100) / 100;
 
-        // Revenue trend
+        // Gross burn (total expenses) vs Net burn (expenses minus revenue)
+        const totalRev = monthlyRevenue.reduce((s, v) => s + v, 0);
+        const avgRevenue = Math.round((monthlyRevenue.length > 0 ? totalRev / monthlyRevenue.length : 0) * 100) / 100;
+        const netBurn = Math.round((burnRate - avgRevenue) * 100) / 100;
+        const monthlyNetBurn = months.map((m, i) => monthlyExpenses[i] - monthlyRevenue[i]);
+
+        // EBITDA — use P&L data for current timeline
+        const plData = Database.getPLSpreadsheet();
+        const plOverrides = Database.getAllPLOverrides();
+        const isFuture = (m) => m > currentMonth;
+        const pastMonths = months.filter(m => !isFuture(m));
+
+        const getPlVal = (catId, month, computed) => {
+            const key = `${catId}-${month}`;
+            return (key in plOverrides) ? plOverrides[key] : computed;
+        };
+        const groupPlByCategory = (rows) => {
+            const map = {};
+            (rows || []).forEach(row => {
+                if (!map[row.category_id]) map[row.category_id] = {};
+                map[row.category_id][row.month] = (map[row.category_id][row.month] || 0) + row.total;
+            });
+            return map;
+        };
+
+        // Sum revenue through current month
+        let ebitdaRevenue = 0;
+        const revByCat = groupPlByCategory(plData.revenue);
+        Object.entries(revByCat).forEach(([catId, catMonths]) => {
+            pastMonths.forEach(m => { ebitdaRevenue += getPlVal(catId, m, catMonths[m] || 0); });
+        });
+
+        // Sum COGS + OpEx through current month
+        let ebitdaExpenses = 0;
+        const cogsByCat = groupPlByCategory(plData.cogs);
+        Object.entries(cogsByCat).forEach(([catId, catMonths]) => {
+            pastMonths.forEach(m => { ebitdaExpenses += getPlVal(catId, m, catMonths[m] || 0); });
+        });
+        const opexByCat = groupPlByCategory(plData.opex);
+        Object.entries(opexByCat).forEach(([catId, catMonths]) => {
+            pastMonths.forEach(m => { ebitdaExpenses += getPlVal(catId, m, catMonths[m] || 0); });
+        });
+
+        // EBITDA = Revenue - (COGS + OpEx), excluding depreciation, interest, and tax
+        const ebitda = Math.round((ebitdaRevenue - ebitdaExpenses) * 100) / 100;
+        const ebitdaMargin = ebitdaRevenue > 0 ? ((ebitda / ebitdaRevenue) * 100).toFixed(1) : '0.0';
+
+        // Revenue trend — current month vs previous month
         const thisMonthRev = monthlyRevenue[monthlyRevenue.length - 1] || 0;
         const lastMonthRev = monthlyRevenue[monthlyRevenue.length - 2] || 0;
         const revTrend = lastMonthRev > 0 ? ((thisMonthRev - lastMonthRev) / lastMonthRev * 100).toFixed(1) : '0';
 
-        container.innerHTML =
-            '<div class="dash-kpi">' +
-                '<span class="dash-kpi-label">Cash Position</span>' +
-                '<span class="dash-kpi-value ' + (summary.cashBalance >= 0 ? 'positive' : 'negative') + '">' + Utils.formatCurrency(summary.cashBalance) + '</span>' +
-                '<canvas class="dash-sparkline" id="dashSparkCash" width="80" height="30"></canvas>' +
-            '</div>' +
-            '<div class="dash-kpi">' +
-                '<span class="dash-kpi-label">Monthly Burn Rate</span>' +
-                '<span class="dash-kpi-value negative">' + Utils.formatCurrency(burnRate) + '</span>' +
-                '<canvas class="dash-sparkline" id="dashSparkBurn" width="80" height="30"></canvas>' +
-            '</div>' +
-            '<div class="dash-kpi">' +
-                '<span class="dash-kpi-label">Revenue Trend</span>' +
-                '<span class="dash-kpi-value">' + Utils.formatCurrency(thisMonthRev) + ' <small style="font-size:0.7em;color:' + (revTrend >= 0 ? 'var(--color-success,#10b981)' : 'var(--color-danger,#ef4444)') + '">' + (revTrend >= 0 ? '+' : '') + revTrend + '%</small></span>' +
-                '<canvas class="dash-sparkline" id="dashSparkRev" width="80" height="30"></canvas>' +
-            '</div>' +
-            '<div class="dash-kpi">' +
-                '<span class="dash-kpi-label">Overdue Receivables</span>' +
-                '<span class="dash-kpi-value negative">' + Utils.formatCurrency(overdueAmount) + ' <small style="font-size:0.7em;color:var(--text-muted)">(' + overdueCount + ')</small></span>' +
-            '</div>';
+        // CMGR (Compound Monthly Growth Rate) over available months
+        const firstRev = monthlyRevenue.find(v => v > 0) || 0;
+        const lastRevVal = monthlyRevenue[monthlyRevenue.length - 1] || 0;
+        const revMonthsCount = monthlyRevenue.length;
+        let cmgr = 0;
+        if (firstRev > 0 && lastRevVal > 0 && revMonthsCount > 1) {
+            cmgr = (Math.pow(lastRevVal / firstRev, 1 / (revMonthsCount - 1)) - 1) * 100;
+        }
+        const cmgrFormatted = cmgr.toFixed(1);
 
-        // Render sparklines
-        this._renderSparkline('dashSparkCash', monthlyCash, 'rgba(59,130,246,0.8)');
-        this._renderSparkline('dashSparkBurn', monthlyExpenses, 'rgba(239,68,68,0.8)');
-        this._renderSparkline('dashSparkRev', monthlyRevenue, 'rgba(16,185,129,0.8)');
+        // Non-B2B CMGR (consumer sales only, excluding B2B categories)
+        const monthlyNonB2BRev = [];
+        for (const month of months) {
+            const nbRevResult = Database.db.exec(
+                "SELECT COALESCE(SUM(COALESCE(t.pretax_amount, t.amount)),0) FROM transactions t JOIN categories c ON t.category_id = c.id " +
+                "WHERE t.transaction_type='receivable' AND t.month_due=? AND c.is_cogs = 0 AND c.show_on_pl != 1 AND c.is_sales = 1 AND c.is_b2b = 0 " +
+                "AND COALESCE(t.source_type, '') NOT IN ('loan_receivable', 'loan_payment')", [month]);
+            monthlyNonB2BRev.push(Math.round((nbRevResult[0] ? nbRevResult[0].values[0][0] : 0) * 100) / 100);
+        }
+        const firstNB = monthlyNonB2BRev.find(v => v > 0) || 0;
+        const lastNB = monthlyNonB2BRev[monthlyNonB2BRev.length - 1] || 0;
+        const nbMonthsCount = monthlyNonB2BRev.length;
+        let cmgrNonB2B = 0;
+        if (firstNB > 0 && lastNB > 0 && nbMonthsCount > 1) {
+            cmgrNonB2B = (Math.pow(lastNB / firstNB, 1 / (nbMonthsCount - 1)) - 1) * 100;
+        }
+        const cmgrNonB2BFormatted = cmgrNonB2B.toFixed(1);
+        const thisMonthNB = monthlyNonB2BRev[monthlyNonB2BRev.length - 1] || 0;
+
+        // Working Capital trend (current assets - current liabilities per month)
+        const monthlyWorkingCap = [];
+        for (const month of months) {
+            const cashAsOf = Database.getCashAsOf(month);
+            const arAsOf = Database.getAccountsReceivableAsOf ? Database.getAccountsReceivableAsOf(month) : 0;
+            const apAsOf = Database.getAccountsPayableAsOf ? Database.getAccountsPayableAsOf(month) : 0;
+            const stpAsOf = Database.getSalesTaxPayableAsOf ? Database.getSalesTaxPayableAsOf(month) : 0;
+            monthlyWorkingCap.push((cashAsOf + arAsOf) - (apAsOf + stpAsOf));
+        }
+        const currentWC = monthlyWorkingCap[monthlyWorkingCap.length - 1] || 0;
+        const prevWC = monthlyWorkingCap.length > 1 ? monthlyWorkingCap[monthlyWorkingCap.length - 2] : 0;
+        const wcTrend = prevWC !== 0 ? ((currentWC - prevWC) / Math.abs(prevWC) * 100).toFixed(1) : '0.0';
+
+        // Rule of 40: Revenue Growth % + Profit Margin %
+        const revGrowthPct = parseFloat(cmgrFormatted) * 12; // Annualized
+        const profitMarginPct = ebitdaRevenue > 0 ? (ebitda / ebitdaRevenue) * 100 : 0;
+        const rule40Score = Math.round(revGrowthPct + profitMarginPct);
+        const rule40Cls = rule40Score >= 40 ? 'positive' : (rule40Score >= 20 ? 'dash-kpi-warning' : 'negative');
+
+        // Rule of 40 (Non-B2B): uses non-B2B CMGR for growth component
+        const nbRevGrowthPct = parseFloat(cmgrNonB2BFormatted) * 12; // Annualized
+        const rule40NB = Math.round(nbRevGrowthPct + profitMarginPct);
+        const rule40NBCls = rule40NB >= 40 ? 'positive' : (rule40NB >= 20 ? 'dash-kpi-warning' : 'negative');
+
+        // DSCR — Net Operating Income / Total Debt Service
+        const loans = Database.getLoans();
+        let totalDebtService = 0;
+        loans.forEach(loan => {
+            const skipped = Database.getSkippedPayments(loan.id);
+            const overridesLoan = Database.getLoanPaymentOverrides(loan.id);
+            const schedule = Utils.computeAmortizationSchedule({
+                principal: loan.principal, annual_rate: loan.annual_rate,
+                term_months: loan.term_months, payments_per_year: loan.payments_per_year,
+                start_date: loan.start_date, first_payment_date: loan.first_payment_date
+            }, skipped, overridesLoan);
+            schedule.forEach(pmt => {
+                if (pmt.month <= currentMonth && months.includes(pmt.month)) {
+                    totalDebtService += pmt.payment;
+                }
+            });
+        });
+        const dscr = totalDebtService > 0 ? (ebitda / totalDebtService) : null;
+        const dscrDisplay = dscr !== null ? dscr.toFixed(2) + 'x' : 'No debt';
+        const dscrCls = dscr === null ? '' : (dscr >= 1.25 ? 'positive' : (dscr >= 1.0 ? 'dash-kpi-warning' : 'negative'));
+
+        this._kpiCache = {
+            summary, currentMonth, months, revMonthsCount, nbMonthsCount,
+            monthlyRevenue, monthlyExpenses, monthlyCash, monthlyNetBurn, monthlyNonB2BRev, monthlyWorkingCap,
+            overdueCount, overdueAmount, burnRate, netBurn,
+            ebitda, ebitdaMargin, thisMonthRev, revTrend,
+            cmgr, cmgrFormatted, cmgrNonB2B, cmgrNonB2BFormatted, thisMonthNB,
+            currentWC, wcTrend,
+            rule40Score, rule40Cls, rule40NB, rule40NBCls,
+            dscr, dscrDisplay, dscrCls
+        };
+    },
+
+    // ==================== SECTION → KPI MODAL ====================
+
+    _sectionKpiMap: {
+        cashflow:         { title: 'Cash & Survival',        kpis: ['cashposition', 'grossburn', 'netburn'] },
+        pnl:              { title: 'Revenue & Profitability', kpis: ['revtrend', 'ebitda', 'cmgr', 'cmgrnonb2b', 'rule40', 'rule40nb'] },
+        mom:              { title: 'Growth Metrics',          kpis: ['cmgrnonb2b', 'rule40nb'] },
+        balancesheet:     { title: 'Health & Risk',           kpis: ['workingcapital', 'overdue', 'dscr'] },
+        revconcentration: { title: 'Revenue Growth',          kpis: ['revtrend', 'cmgr', 'cmgrnonb2b'] }
+    },
+
+    _openSectionAnalysis(section) {
+        const group = this._sectionKpiMap[section];
+        if (!group) {
+            this.switchMainTab(section === 'breakeven' ? 'breakeven' : section);
+            return;
+        }
+
+        this._computeKpiData();
+        const d = this._kpiCache;
+
+        document.getElementById('analyzeKpiTitle').textContent = group.title;
+        const body = document.getElementById('analyzeKpiBody');
+
+        let html = '<div class="analyze-kpi-grid">';
+        const sparklines = [];
+
+        group.kpis.forEach(type => {
+            const card = this._buildKpiCardHtml(type, d, sparklines);
+            if (card) html += card;
+        });
+        html += '</div>';
+
+        body.innerHTML = html;
+
+        body.querySelectorAll('.dash-kpi[data-kpi]').forEach(card => {
+            card.addEventListener('click', () => this._openKpiDetail(card.dataset.kpi));
+        });
+
+        sparklines.forEach(s => this._renderSparkline(s.id, s.data, s.color));
+
+        UI.showModal('analyzeKpiModal');
+    },
+
+    _buildKpiCardHtml(type, d, sparklines) {
+        const sid = 'modalSpark_' + type;
+        switch (type) {
+            case 'cashposition':
+                sparklines.push({ id: sid, data: d.monthlyCash, color: 'rgba(59,130,246,0.8)' });
+                return '<div class="dash-kpi" data-kpi="cashposition">' +
+                    '<span class="dash-kpi-label">Cash Position</span>' +
+                    '<span class="dash-kpi-value ' + (d.summary.cashBalance >= 0 ? 'positive' : 'negative') + '">' + Utils.formatCurrency(d.summary.cashBalance) + '</span>' +
+                    '<canvas class="dash-sparkline" id="' + sid + '" width="80" height="30"></canvas>' +
+                '</div>';
+            case 'grossburn':
+                sparklines.push({ id: sid, data: d.monthlyExpenses, color: 'rgba(239,68,68,0.8)' });
+                return '<div class="dash-kpi" data-kpi="grossburn">' +
+                    '<span class="dash-kpi-label">Gross Burn</span>' +
+                    '<span class="dash-kpi-value negative">' + Utils.formatCurrency(d.burnRate) + '<small style="font-size:0.6em;font-weight:500;">/mo</small></span>' +
+                    '<canvas class="dash-sparkline" id="' + sid + '" width="80" height="30"></canvas>' +
+                '</div>';
+            case 'netburn':
+                sparklines.push({ id: sid, data: d.monthlyNetBurn, color: 'rgba(251,146,60,0.8)' });
+                return '<div class="dash-kpi" data-kpi="netburn">' +
+                    '<span class="dash-kpi-label">Net Burn</span>' +
+                    '<span class="dash-kpi-value ' + (d.netBurn > 0 ? 'negative' : 'positive') + '">' + Utils.formatCurrency(Math.abs(d.netBurn)) + '<small style="font-size:0.6em;font-weight:500;">/mo ' + (d.netBurn <= 0 ? '(net positive)' : '') + '</small></span>' +
+                    '<canvas class="dash-sparkline" id="' + sid + '" width="80" height="30"></canvas>' +
+                '</div>';
+            case 'revtrend':
+                sparklines.push({ id: sid, data: d.monthlyRevenue, color: 'rgba(16,185,129,0.8)' });
+                return '<div class="dash-kpi" data-kpi="revtrend">' +
+                    '<span class="dash-kpi-label">Revenue Trend</span>' +
+                    '<span class="dash-kpi-value">' + Utils.formatCurrency(d.thisMonthRev) + ' <small style="font-size:0.7em;color:' + (d.revTrend >= 0 ? 'var(--color-success,#10b981)' : 'var(--color-danger,#ef4444)') + '">' + (d.revTrend >= 0 ? '+' : '') + d.revTrend + '%</small></span>' +
+                    '<canvas class="dash-sparkline" id="' + sid + '" width="80" height="30"></canvas>' +
+                '</div>';
+            case 'cmgr':
+                return '<div class="dash-kpi" data-kpi="cmgr">' +
+                    '<span class="dash-kpi-label">Growth Rate <small style="font-size:0.85em;text-transform:none;">(CMGR)</small></span>' +
+                    '<span class="dash-kpi-value ' + (d.cmgr >= 0 ? 'positive' : 'negative') + '">' + (d.cmgr >= 0 ? '+' : '') + d.cmgrFormatted + '%<small style="font-size:0.6em;font-weight:500;">/mo</small></span>' +
+                    '<span class="dash-kpi-sub" style="font-size:0.7rem;color:var(--text-muted);">over ' + d.revMonthsCount + ' months</span>' +
+                '</div>';
+            case 'cmgrnonb2b':
+                sparklines.push({ id: sid, data: d.monthlyNonB2BRev, color: 'rgba(251,146,60,0.8)' });
+                return '<div class="dash-kpi" data-kpi="cmgrnonb2b">' +
+                    '<span class="dash-kpi-label">Non-B2B CMGR</span>' +
+                    '<span class="dash-kpi-value ' + (d.cmgrNonB2B >= 0 ? 'positive' : 'negative') + '">' + (d.cmgrNonB2B >= 0 ? '+' : '') + d.cmgrNonB2BFormatted + '%<small style="font-size:0.6em;font-weight:500;">/mo</small></span>' +
+                    '<span class="dash-kpi-sub" style="font-size:0.7rem;color:var(--text-muted);">' + Utils.formatCurrency(d.thisMonthNB) + ' this month</span>' +
+                    '<canvas class="dash-sparkline" id="' + sid + '" width="80" height="30"></canvas>' +
+                '</div>';
+            case 'ebitda':
+                return '<div class="dash-kpi" data-kpi="ebitda">' +
+                    '<span class="dash-kpi-label">EBITDA</span>' +
+                    '<span class="dash-kpi-value ' + (d.ebitda >= 0 ? 'positive' : 'negative') + '">' + Utils.formatCurrency(d.ebitda) + '</span>' +
+                    '<span class="dash-kpi-sub" style="font-size:0.7rem;color:var(--text-muted);">margin: ' + d.ebitdaMargin + '%</span>' +
+                '</div>';
+            case 'rule40':
+                return '<div class="dash-kpi" data-kpi="rule40">' +
+                    '<span class="dash-kpi-label">Rule of 40</span>' +
+                    '<span class="dash-kpi-value ' + d.rule40Cls + '">' + d.rule40Score + ' <small style="font-size:0.6em;font-weight:500;">/ 40</small></span>' +
+                    '<span class="dash-kpi-sub" style="font-size:0.7rem;color:var(--text-muted);">growth + margin</span>' +
+                '</div>';
+            case 'rule40nb':
+                return '<div class="dash-kpi" data-kpi="rule40nb">' +
+                    '<span class="dash-kpi-label">Rule of 40 <small style="font-size:0.85em;text-transform:none;">(Non-B2B)</small></span>' +
+                    '<span class="dash-kpi-value ' + d.rule40NBCls + '">' + d.rule40NB + ' <small style="font-size:0.6em;font-weight:500;">/ 40</small></span>' +
+                    '<span class="dash-kpi-sub" style="font-size:0.7rem;color:var(--text-muted);">consumer growth + margin</span>' +
+                '</div>';
+            case 'workingcapital':
+                sparklines.push({ id: sid, data: d.monthlyWorkingCap, color: 'rgba(168,85,247,0.8)' });
+                return '<div class="dash-kpi" data-kpi="workingcapital">' +
+                    '<span class="dash-kpi-label">Working Capital</span>' +
+                    '<span class="dash-kpi-value ' + (d.currentWC >= 0 ? 'positive' : 'negative') + '">' + Utils.formatCurrency(d.currentWC) + ' <small style="font-size:0.7em;color:' + (parseFloat(d.wcTrend) >= 0 ? 'var(--color-success,#10b981)' : 'var(--color-danger,#ef4444)') + '">' + (parseFloat(d.wcTrend) >= 0 ? '+' : '') + d.wcTrend + '%</small></span>' +
+                    '<canvas class="dash-sparkline" id="' + sid + '" width="80" height="30"></canvas>' +
+                '</div>';
+            case 'overdue':
+                return '<div class="dash-kpi" data-kpi="overdue">' +
+                    '<span class="dash-kpi-label">Overdue Receivables</span>' +
+                    '<span class="dash-kpi-value ' + (d.overdueAmount > 0 ? 'negative' : 'positive') + '">' + Utils.formatCurrency(d.overdueAmount) + ' <small style="font-size:0.7em;color:var(--text-muted)">(' + d.overdueCount + ')</small></span>' +
+                '</div>';
+            case 'dscr':
+                return '<div class="dash-kpi" data-kpi="dscr">' +
+                    '<span class="dash-kpi-label">DSCR</span>' +
+                    '<span class="dash-kpi-value ' + d.dscrCls + '">' + d.dscrDisplay + '</span>' +
+                    '<span class="dash-kpi-sub" style="font-size:0.7rem;color:var(--text-muted);">debt service coverage</span>' +
+                '</div>';
+            default:
+                return '';
+        }
+    },
+
+    // ==================== KPI DETAIL MODAL ====================
+
+    _kpiMeta: {
+        cashposition: { title: 'Cash Position — Detail', tab: 'cashflow', tabLabel: 'Cash Flow' },
+        grossburn:    { title: 'Gross Burn — Expense Breakdown', tab: 'pnl', tabLabel: 'P&L' },
+        netburn:      { title: 'Net Burn — Revenue vs Expenses', tab: 'pnl', tabLabel: 'P&L' },
+        revtrend:     { title: 'Revenue Trend — Monthly Detail', tab: 'pnl', tabLabel: 'P&L' },
+        cmgr:         { title: 'Growth Rate (CMGR) — Analysis', tab: 'pnl', tabLabel: 'P&L' },
+        cmgrnonb2b:   { title: 'Non-B2B CMGR — Consumer Sales Growth', tab: 'pnl', tabLabel: 'P&L' },
+        ebitda:       { title: 'EBITDA — Breakdown', tab: 'pnl', tabLabel: 'P&L' },
+        overdue:      { title: 'Overdue Receivables — Transactions', tab: 'journal', tabLabel: 'Journal' },
+        workingcapital: { title: 'Working Capital — Trend', tab: 'balancesheet', tabLabel: 'Balance Sheet' },
+        rule40:       { title: 'Rule of 40 — Breakdown', tab: 'pnl', tabLabel: 'P&L' },
+        rule40nb:     { title: 'Rule of 40 (Non-B2B) — Breakdown', tab: 'pnl', tabLabel: 'P&L' },
+        dscr:         { title: 'DSCR — Debt Service Coverage', tab: 'loan', tabLabel: 'Loans' }
+    },
+
+    _openKpiDetail(kpiType) {
+        const meta = this._kpiMeta[kpiType];
+        if (!meta) return;
+
+        document.getElementById('kpiDetailTitle').textContent = meta.title;
+
+        const body = document.getElementById('kpiDetailBody');
+        const renderer = this['_kpiDetail_' + kpiType];
+        body.innerHTML = renderer ? renderer.call(this) : '<p>No detail available.</p>';
+
+        const goBtn = document.getElementById('kpiDetailGoBtn');
+        goBtn.textContent = 'Go to ' + meta.tabLabel;
+        goBtn.onclick = () => {
+            UI.hideModal('kpiDetailModal');
+            UI.hideModal('analyzeKpiModal');
+            this.switchMainTab(meta.tab);
+        };
+
+        UI.showModal('kpiDetailModal');
+    },
+
+    _kpiDetailMonthLabel(m) {
+        const [y, mo] = m.split('-');
+        return ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][parseInt(mo)-1] + ' ' + y;
+    },
+
+    _kpiDetail_cashposition() {
+        const months = this._getTimelineMonths().filter(m => m <= Utils.getCurrentMonth());
+        let html = '<div class="kpi-detail-summary">Month-by-month cash flow breakdown</div>';
+        html += '<table class="kpi-detail-table"><thead><tr><th>Month</th><th>Money In</th><th>Money Out</th><th>Net</th><th>Running Balance</th></tr></thead><tbody>';
+
+        let running = 0;
+        for (const month of months) {
+            const revResult = Database.db.exec("SELECT COALESCE(SUM(amount),0) FROM transactions WHERE transaction_type='receivable' AND status='received' AND month_paid=?", [month]);
+            const expResult = Database.db.exec("SELECT COALESCE(SUM(amount),0) FROM transactions WHERE transaction_type='payable' AND status='paid' AND month_paid=?", [month]);
+            const rev = revResult[0] ? revResult[0].values[0][0] : 0;
+            const exp = expResult[0] ? expResult[0].values[0][0] : 0;
+            const net = rev - exp;
+            running += net;
+            html += '<tr><td class="text-cell">' + this._kpiDetailMonthLabel(month) + '</td>' +
+                '<td class="positive">' + Utils.formatCurrency(rev) + '</td>' +
+                '<td class="negative">' + Utils.formatCurrency(exp) + '</td>' +
+                '<td class="' + (net >= 0 ? 'positive' : 'negative') + '">' + Utils.formatCurrency(net) + '</td>' +
+                '<td class="' + (running >= 0 ? 'positive' : 'negative') + '">' + Utils.formatCurrency(running) + '</td></tr>';
+        }
+        html += '</tbody></table>';
+        return html;
+    },
+
+    _kpiDetail_grossburn() {
+        const currentMonth = Utils.getCurrentMonth();
+        const months = this._getTimelineMonths().filter(m => m <= currentMonth).slice(-6);
+
+        // Get expenses by category for last 6 months (accrual basis, matching P&L)
+        // OpEx: payable, not cogs/depreciation/sales-tax/hidden, not loan payments
+        const result = Database.db.exec(
+            "SELECT c.name, t.month_due, SUM(t.amount) as total " +
+            "FROM transactions t JOIN categories c ON t.category_id = c.id " +
+            "WHERE t.month_due IN (" + months.map(() => '?').join(',') + ") " +
+            "AND t.transaction_type='payable' AND c.is_cogs = 0 AND c.is_depreciation = 0 " +
+            "AND c.is_sales_tax = 0 AND c.show_on_pl != 1 " +
+            "AND COALESCE(t.source_type, '') NOT IN ('loan_payment', 'loan_receivable') " +
+            "GROUP BY c.name, t.month_due ORDER BY total DESC", months);
+        // COGS categories (is_cogs=1, any transaction type)
+        const cogsResult = Database.db.exec(
+            "SELECT c.name, t.month_due, SUM(t.amount) as total " +
+            "FROM transactions t JOIN categories c ON t.category_id = c.id " +
+            "WHERE t.month_due IN (" + months.map(() => '?').join(',') + ") " +
+            "AND c.is_cogs = 1 AND c.show_on_pl != 1 " +
+            "GROUP BY c.name, t.month_due ORDER BY total DESC", months);
+
+        const catMap = {};
+        if (result[0]) {
+            for (const row of result[0].values) {
+                if (!catMap[row[0]]) catMap[row[0]] = {};
+                catMap[row[0]][row[1]] = (catMap[row[0]][row[1]] || 0) + row[2];
+            }
+        }
+        if (cogsResult[0]) {
+            for (const row of cogsResult[0].values) {
+                if (!catMap[row[0]]) catMap[row[0]] = {};
+                catMap[row[0]][row[1]] = (catMap[row[0]][row[1]] || 0) + row[2];
+            }
+        }
+        // Sort categories by total descending
+        const catTotals = Object.entries(catMap).map(([name, mData]) => ({
+            name, total: Object.values(mData).reduce((s, v) => s + v, 0), mData
+        })).sort((a, b) => b.total - a.total);
+
+        let html = '<div class="kpi-detail-summary">Expense breakdown by category — last ' + months.length + ' months</div>';
+        html += '<table class="kpi-detail-table"><thead><tr><th>Category</th>';
+        months.forEach(m => { html += '<th>' + this._kpiDetailMonthLabel(m) + '</th>'; });
+        html += '<th>Total</th></tr></thead><tbody>';
+
+        const monthTotals = {};
+        months.forEach(m => { monthTotals[m] = 0; });
+        let grandTotal = 0;
+
+        catTotals.forEach(cat => {
+            html += '<tr><td class="text-cell">' + Utils.escapeHtml(cat.name) + '</td>';
+            months.forEach(m => {
+                const v = cat.mData[m] || 0;
+                monthTotals[m] += v;
+                html += '<td>' + Utils.formatCurrency(v) + '</td>';
+            });
+            grandTotal += cat.total;
+            html += '<td style="font-weight:600;">' + Utils.formatCurrency(cat.total) + '</td></tr>';
+        });
+
+        html += '<tr class="kpi-row-total"><td class="text-cell">Total</td>';
+        months.forEach(m => { html += '<td>' + Utils.formatCurrency(monthTotals[m]) + '</td>'; });
+        html += '<td>' + Utils.formatCurrency(grandTotal) + '</td></tr>';
+        html += '</tbody></table>';
+        return html;
+    },
+
+    _kpiDetail_netburn() {
+        const currentMonth = Utils.getCurrentMonth();
+        const months = this._getTimelineMonths().filter(m => m <= currentMonth).slice(-6);
+
+        let html = '<div class="kpi-detail-summary">Revenue vs Expenses — last ' + months.length + ' months</div>';
+        html += '<table class="kpi-detail-table"><thead><tr><th>Month</th><th>Revenue</th><th>Expenses</th><th>Net Burn</th></tr></thead><tbody>';
+
+        // Use P&L accrual-basis data (matching gross burn)
+        const plOpex = Database.getMonthlyTotalOpex(months);
+        const plCogsResult = Database.db.exec(
+            "SELECT t.month_due, SUM(t.amount) as total FROM transactions t JOIN categories c ON t.category_id = c.id WHERE t.month_due IN (" + months.map(() => '?').join(',') + ") AND c.is_cogs = 1 AND c.show_on_pl != 1 GROUP BY t.month_due", months);
+        const plCogs = {};
+        if (plCogsResult[0]) { for (const row of plCogsResult[0].values) { plCogs[row[0]] = row[1]; } }
+
+        let totalRev = 0, totalExp = 0;
+        for (const month of months) {
+            const revResult = Database.db.exec(
+                "SELECT COALESCE(SUM(COALESCE(t.pretax_amount, t.amount)),0) FROM transactions t JOIN categories c ON t.category_id = c.id WHERE t.transaction_type='receivable' AND t.month_due=? AND c.is_cogs = 0 AND c.show_on_pl != 1 AND (c.is_b2b = 1 OR c.is_sales = 1) AND COALESCE(t.source_type, '') NOT IN ('loan_receivable', 'loan_payment')", [month]);
+            const rev = revResult[0] ? revResult[0].values[0][0] : 0;
+            const exp = Math.round(((plOpex[month] || 0) + (plCogs[month] || 0)) * 100) / 100;
+            const net = exp - rev;
+            totalRev += rev;
+            totalExp += exp;
+            html += '<tr><td class="text-cell">' + this._kpiDetailMonthLabel(month) + '</td>' +
+                '<td class="positive">' + Utils.formatCurrency(rev) + '</td>' +
+                '<td class="negative">' + Utils.formatCurrency(exp) + '</td>' +
+                '<td class="' + (net > 0 ? 'negative' : 'positive') + '">' + Utils.formatCurrency(Math.abs(net)) + (net <= 0 ? ' (net+)' : '') + '</td></tr>';
+        }
+        html += '<tr class="kpi-row-total"><td class="text-cell">Total</td>' +
+            '<td class="positive">' + Utils.formatCurrency(totalRev) + '</td>' +
+            '<td class="negative">' + Utils.formatCurrency(totalExp) + '</td>' +
+            '<td class="' + ((totalExp - totalRev) > 0 ? 'negative' : 'positive') + '">' + Utils.formatCurrency(Math.abs(totalExp - totalRev)) + '</td></tr>';
+        html += '</tbody></table>';
+        return html;
+    },
+
+    _kpiDetail_revtrend() {
+        const currentMonth = Utils.getCurrentMonth();
+        const months = this._getTimelineMonths().filter(m => m <= currentMonth);
+
+        let html = '<div class="kpi-detail-summary">Monthly revenue with month-over-month change</div>';
+        html += '<table class="kpi-detail-table"><thead><tr><th>Month</th><th>Revenue</th><th>MoM Change</th><th>MoM %</th></tr></thead><tbody>';
+
+        let prevRev = null;
+        for (const month of months) {
+            const revResult = Database.db.exec(
+                "SELECT COALESCE(SUM(COALESCE(t.pretax_amount, t.amount)),0) FROM transactions t JOIN categories c ON t.category_id = c.id WHERE t.transaction_type='receivable' AND t.month_due=? AND c.is_cogs = 0 AND c.show_on_pl != 1 AND (c.is_b2b = 1 OR c.is_sales = 1) AND COALESCE(t.source_type, '') NOT IN ('loan_receivable', 'loan_payment')", [month]);
+            const rev = revResult[0] ? revResult[0].values[0][0] : 0;
+            const change = prevRev !== null ? rev - prevRev : 0;
+            const pct = prevRev && prevRev > 0 ? ((change / prevRev) * 100).toFixed(1) : (prevRev === null ? '—' : '0.0');
+            const pctStr = pct === '—' ? '—' : (parseFloat(pct) >= 0 ? '+' + pct + '%' : pct + '%');
+            const cls = pct === '—' ? '' : (parseFloat(pct) >= 0 ? 'positive' : 'negative');
+            html += '<tr><td class="text-cell">' + this._kpiDetailMonthLabel(month) + '</td>' +
+                '<td>' + Utils.formatCurrency(rev) + '</td>' +
+                '<td class="' + cls + '">' + (prevRev !== null ? Utils.formatCurrency(change) : '—') + '</td>' +
+                '<td class="' + cls + '">' + pctStr + '</td></tr>';
+            prevRev = rev;
+        }
+        html += '</tbody></table>';
+        return html;
+    },
+
+    _kpiDetail_cmgr() {
+        const currentMonth = Utils.getCurrentMonth();
+        const months = this._getTimelineMonths().filter(m => m <= currentMonth);
+
+        // Get monthly revenue
+        const revData = [];
+        for (const month of months) {
+            const revResult = Database.db.exec(
+                "SELECT COALESCE(SUM(COALESCE(t.pretax_amount, t.amount)),0) FROM transactions t JOIN categories c ON t.category_id = c.id WHERE t.transaction_type='receivable' AND t.month_due=? AND c.is_cogs = 0 AND c.show_on_pl != 1 AND (c.is_b2b = 1 OR c.is_sales = 1) AND COALESCE(t.source_type, '') NOT IN ('loan_receivable', 'loan_payment')", [month]);
+            revData.push(revResult[0] ? revResult[0].values[0][0] : 0);
+        }
+
+        // Compute CMGR over different windows
+        const computeCmgr = (data) => {
+            const first = data.find(v => v > 0) || 0;
+            const last = data[data.length - 1] || 0;
+            if (first <= 0 || last <= 0 || data.length < 2) return 0;
+            return (Math.pow(last / first, 1 / (data.length - 1)) - 1) * 100;
+        };
+
+        const cmgr3 = months.length >= 3 ? computeCmgr(revData.slice(-3)) : null;
+        const cmgr6 = months.length >= 6 ? computeCmgr(revData.slice(-6)) : null;
+        const cmgrAll = computeCmgr(revData);
+
+        let html = '<div class="kpi-detail-summary">Compound Monthly Growth Rate across periods</div>';
+
+        // Summary cards
+        html += '<div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;">';
+        if (cmgr3 !== null) {
+            html += '<div style="flex:1;min-width:120px;padding:12px;border-radius:8px;background:var(--c5,var(--border));text-align:center;">' +
+                '<div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:4px;">3-Month CMGR</div>' +
+                '<div style="font-size:1.2rem;font-weight:700;font-family:DM Mono,monospace;color:' + (cmgr3 >= 0 ? 'var(--color-success)' : 'var(--color-danger)') + ';">' + (cmgr3 >= 0 ? '+' : '') + cmgr3.toFixed(1) + '%</div></div>';
+        }
+        if (cmgr6 !== null) {
+            html += '<div style="flex:1;min-width:120px;padding:12px;border-radius:8px;background:var(--c5,var(--border));text-align:center;">' +
+                '<div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:4px;">6-Month CMGR</div>' +
+                '<div style="font-size:1.2rem;font-weight:700;font-family:DM Mono,monospace;color:' + (cmgr6 >= 0 ? 'var(--color-success)' : 'var(--color-danger)') + ';">' + (cmgr6 >= 0 ? '+' : '') + cmgr6.toFixed(1) + '%</div></div>';
+        }
+        html += '<div style="flex:1;min-width:120px;padding:12px;border-radius:8px;background:var(--c5,var(--border));text-align:center;">' +
+            '<div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:4px;">Full Period CMGR</div>' +
+            '<div style="font-size:1.2rem;font-weight:700;font-family:DM Mono,monospace;color:' + (cmgrAll >= 0 ? 'var(--color-success)' : 'var(--color-danger)') + ';">' + (cmgrAll >= 0 ? '+' : '') + cmgrAll.toFixed(1) + '%</div></div>';
+        html += '</div>';
+
+        // Monthly table with MoM growth
+        html += '<table class="kpi-detail-table"><thead><tr><th>Month</th><th>Revenue</th><th>MoM Change</th><th>MoM %</th></tr></thead><tbody>';
+        months.forEach((m, i) => {
+            const prev = i > 0 ? revData[i - 1] : null;
+            const change = prev !== null ? revData[i] - prev : null;
+            const pct = prev && prev > 0 ? ((change / prev) * 100).toFixed(1) : null;
+            const pctStr = pct !== null ? ((parseFloat(pct) >= 0 ? '+' : '') + pct + '%') : '—';
+            const changeStr = change !== null ? Utils.formatCurrency(change) : '—';
+            const cls = pct === null ? '' : (parseFloat(pct) >= 0 ? 'positive' : 'negative');
+            html += '<tr><td class="text-cell">' + this._kpiDetailMonthLabel(m) + '</td>' +
+                '<td>' + Utils.formatCurrency(revData[i]) + '</td>' +
+                '<td class="' + cls + '">' + changeStr + '</td>' +
+                '<td class="' + cls + '">' + pctStr + '</td></tr>';
+        });
+        html += '</tbody></table>';
+        return html;
+    },
+
+    _kpiDetail_cmgrnonb2b() {
+        const currentMonth = Utils.getCurrentMonth();
+        const months = this._getTimelineMonths().filter(m => m <= currentMonth);
+
+        const revData = [];
+        for (const month of months) {
+            const revResult = Database.db.exec(
+                "SELECT COALESCE(SUM(COALESCE(t.pretax_amount, t.amount)),0) FROM transactions t JOIN categories c ON t.category_id = c.id " +
+                "WHERE t.transaction_type='receivable' AND t.month_due=? AND c.is_cogs = 0 AND c.show_on_pl != 1 AND c.is_sales = 1 AND c.is_b2b = 0 " +
+                "AND COALESCE(t.source_type, '') NOT IN ('loan_receivable', 'loan_payment')", [month]);
+            revData.push(revResult[0] ? revResult[0].values[0][0] : 0);
+        }
+
+        const computeCmgr = (data) => {
+            const firstIdx = data.findIndex(v => v > 0);
+            if (firstIdx < 0) return 0;
+            const first = data[firstIdx];
+            const last = data[data.length - 1];
+            const n = data.length - 1 - firstIdx;
+            if (first <= 0 || last <= 0 || n < 1) return 0;
+            return (Math.pow(last / first, 1 / n) - 1) * 100;
+        };
+
+        const cmgr3 = months.length >= 3 ? computeCmgr(revData.slice(-3)) : null;
+        const cmgr6 = months.length >= 6 ? computeCmgr(revData.slice(-6)) : null;
+        const cmgrAll = computeCmgr(revData);
+
+        let html = '<div class="kpi-detail-summary">Compound Monthly Growth Rate — Non-B2B (consumer) sales only</div>';
+
+        html += '<div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;">';
+        if (cmgr3 !== null) {
+            html += '<div style="flex:1;min-width:120px;padding:12px;border-radius:8px;background:var(--c5,var(--border));text-align:center;">' +
+                '<div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:4px;">3-Month CMGR</div>' +
+                '<div style="font-size:1.2rem;font-weight:700;font-family:DM Mono,monospace;color:' + (cmgr3 >= 0 ? 'var(--color-success)' : 'var(--color-danger)') + ';">' + (cmgr3 >= 0 ? '+' : '') + cmgr3.toFixed(1) + '%</div></div>';
+        }
+        if (cmgr6 !== null) {
+            html += '<div style="flex:1;min-width:120px;padding:12px;border-radius:8px;background:var(--c5,var(--border));text-align:center;">' +
+                '<div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:4px;">6-Month CMGR</div>' +
+                '<div style="font-size:1.2rem;font-weight:700;font-family:DM Mono,monospace;color:' + (cmgr6 >= 0 ? 'var(--color-success)' : 'var(--color-danger)') + ';">' + (cmgr6 >= 0 ? '+' : '') + cmgr6.toFixed(1) + '%</div></div>';
+        }
+        html += '<div style="flex:1;min-width:120px;padding:12px;border-radius:8px;background:var(--c5,var(--border));text-align:center;">' +
+            '<div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:4px;">Full Period CMGR</div>' +
+            '<div style="font-size:1.2rem;font-weight:700;font-family:DM Mono,monospace;color:' + (cmgrAll >= 0 ? 'var(--color-success)' : 'var(--color-danger)') + ';">' + (cmgrAll >= 0 ? '+' : '') + cmgrAll.toFixed(1) + '%</div></div>';
+        html += '</div>';
+
+        const catResult = Database.db.exec(
+            "SELECT c.name, t.month_due, SUM(COALESCE(t.pretax_amount, t.amount)) as total " +
+            "FROM transactions t JOIN categories c ON t.category_id = c.id " +
+            "WHERE t.transaction_type='receivable' AND c.is_cogs = 0 AND c.show_on_pl != 1 AND c.is_sales = 1 AND c.is_b2b = 0 " +
+            "AND COALESCE(t.source_type, '') NOT IN ('loan_receivable', 'loan_payment') " +
+            "AND t.month_due IN (" + months.map(() => '?').join(',') + ") " +
+            "GROUP BY c.name, t.month_due ORDER BY total DESC", months);
+
+        const catMap = {};
+        if (catResult[0]) {
+            for (const row of catResult[0].values) {
+                if (!catMap[row[0]]) catMap[row[0]] = {};
+                catMap[row[0]][row[1]] = row[2];
+            }
+        }
+        const catTotals = Object.entries(catMap).map(([name, mData]) => ({
+            name, total: Object.values(mData).reduce((s, v) => s + v, 0), mData
+        })).sort((a, b) => b.total - a.total);
+
+        html += '<table class="kpi-detail-table"><thead><tr><th>Month</th><th>Revenue</th><th>MoM Change</th><th>MoM %</th></tr></thead><tbody>';
+        months.forEach((m, i) => {
+            const prev = i > 0 ? revData[i - 1] : null;
+            const change = prev !== null ? revData[i] - prev : null;
+            const pct = prev && prev > 0 ? ((change / prev) * 100).toFixed(1) : null;
+            const pctStr = pct !== null ? ((parseFloat(pct) >= 0 ? '+' : '') + pct + '%') : '—';
+            const changeStr = change !== null ? Utils.formatCurrency(change) : '—';
+            const cls = pct === null ? '' : (parseFloat(pct) >= 0 ? 'positive' : 'negative');
+            html += '<tr><td class="text-cell">' + this._kpiDetailMonthLabel(m) + '</td>' +
+                '<td>' + Utils.formatCurrency(revData[i]) + '</td>' +
+                '<td class="' + cls + '">' + changeStr + '</td>' +
+                '<td class="' + cls + '">' + pctStr + '</td></tr>';
+        });
+        html += '</tbody></table>';
+
+        if (catTotals.length > 1) {
+            html += '<div style="margin-top:16px;font-weight:600;font-size:0.85rem;margin-bottom:8px;">By Category</div>';
+            html += '<table class="kpi-detail-table"><thead><tr><th>Category</th><th>Total</th><th>Share</th></tr></thead><tbody>';
+            const grandTotal = catTotals.reduce((s, c) => s + c.total, 0);
+            catTotals.forEach(cat => {
+                const share = grandTotal > 0 ? ((cat.total / grandTotal) * 100).toFixed(1) : '0.0';
+                html += '<tr><td class="text-cell">' + Utils.escapeHtml(cat.name) + '</td>' +
+                    '<td>' + Utils.formatCurrency(cat.total) + '</td>' +
+                    '<td>' + share + '%</td></tr>';
+            });
+            html += '</tbody></table>';
+        }
+
+        return html;
+    },
+
+    _kpiDetail_ebitda() {
+        const currentMonth = Utils.getCurrentMonth();
+        const pastMonths = this._getTimelineMonths().filter(m => m <= currentMonth);
+
+        const plData = Database.getPLSpreadsheet();
+        const plOverrides = Database.getAllPLOverrides();
+
+        const getVal = (catId, month, computed) => {
+            const key = `${catId}-${month}`;
+            return (key in plOverrides) ? plOverrides[key] : computed;
+        };
+        const groupByCat = (rows) => {
+            const map = {};
+            (rows || []).forEach(row => {
+                if (!map[row.category_id]) map[row.category_id] = {};
+                map[row.category_id][row.month] = (map[row.category_id][row.month] || 0) + row.total;
+            });
+            return map;
+        };
+
+        let totalRevenue = 0;
+        const revByCat = groupByCat(plData.revenue);
+        Object.entries(revByCat).forEach(([catId, catMonths]) => {
+            pastMonths.forEach(m => { totalRevenue += getVal(catId, m, catMonths[m] || 0); });
+        });
+
+        let totalCogs = 0;
+        const cogsByCat = groupByCat(plData.cogs);
+        Object.entries(cogsByCat).forEach(([catId, catMonths]) => {
+            pastMonths.forEach(m => { totalCogs += getVal(catId, m, catMonths[m] || 0); });
+        });
+
+        let totalOpex = 0;
+        const opexByCat = groupByCat(plData.opex);
+        Object.entries(opexByCat).forEach(([catId, catMonths]) => {
+            pastMonths.forEach(m => { totalOpex += getVal(catId, m, catMonths[m] || 0); });
+        });
+
+        // Items excluded from EBITDA
+        let totalDepr = 0;
+        (plData.depreciation || []).forEach(cat => {
+            pastMonths.forEach(m => { totalDepr += getVal(cat.category_id, m, 0); });
+        });
+        const assetDepr = plData.assetDeprByMonth || {};
+        pastMonths.forEach(m => { totalDepr += (assetDepr[m] || 0); });
+
+        let totalInterest = 0;
+        const loanInt = plData.loanInterestByMonth || {};
+        pastMonths.forEach(m => { totalInterest += (loanInt[m] || 0); });
+
+        const grossProfit = totalRevenue - totalCogs;
+        const ebitda = totalRevenue - totalCogs - totalOpex;
+        const ebitdaMargin = totalRevenue > 0 ? ((ebitda / totalRevenue) * 100).toFixed(1) : '0.0';
+
+        let html = '<div class="kpi-detail-summary">EBITDA computation — cumulative through ' + this._kpiDetailMonthLabel(pastMonths[pastMonths.length - 1] || currentMonth) + '</div>';
+        html += '<table class="kpi-detail-table"><tbody>';
+        html += '<tr><td class="text-cell">Revenue</td><td class="positive">' + Utils.formatCurrency(totalRevenue) + '</td></tr>';
+        html += '<tr><td class="text-cell">Less: Cost of Goods Sold</td><td class="negative">(' + Utils.formatCurrency(totalCogs) + ')</td></tr>';
+        html += '<tr class="kpi-row-total"><td class="text-cell">Gross Profit</td><td>' + Utils.formatCurrency(grossProfit) + '</td></tr>';
+        html += '<tr><td class="text-cell">Less: Operating Expenses</td><td class="negative">(' + Utils.formatCurrency(totalOpex) + ')</td></tr>';
+        html += '<tr class="kpi-row-total"><td class="text-cell" style="font-size:0.95rem;">EBITDA</td><td style="font-size:0.95rem;" class="' + (ebitda >= 0 ? 'positive' : 'negative') + '">' + Utils.formatCurrency(ebitda) + '</td></tr>';
+        html += '<tr><td colspan="2" style="padding:8px;"></td></tr>';
+        html += '<tr style="opacity:0.6;"><td class="text-cell">Excluded: Depreciation & Amortization</td><td>' + Utils.formatCurrency(totalDepr) + '</td></tr>';
+        html += '<tr style="opacity:0.6;"><td class="text-cell">Excluded: Interest</td><td>' + Utils.formatCurrency(totalInterest) + '</td></tr>';
+        html += '<tr><td colspan="2" style="padding:4px;"></td></tr>';
+        html += '<tr><td class="text-cell" style="font-weight:600;">EBITDA Margin</td><td style="font-weight:600;">' + ebitdaMargin + '%</td></tr>';
+        html += '</tbody></table>';
+        return html;
+    },
+
+    _kpiDetail_overdue() {
+        const currentMonth = Utils.getCurrentMonth();
+        const result = Database.db.exec(
+            "SELECT t.item_description, c.name as category_name, t.amount, t.month_due, t.entry_date " +
+            "FROM transactions t JOIN categories c ON t.category_id = c.id " +
+            "WHERE t.transaction_type='receivable' AND t.status='pending' AND t.month_due < ? " +
+            "ORDER BY t.month_due ASC", [currentMonth]);
+
+        if (!result[0] || result[0].values.length === 0) {
+            return '<div class="kpi-detail-summary" style="color:var(--color-success);">No overdue receivables — all caught up!</div>';
+        }
+
+        const rows = result[0].values;
+        let totalAmount = 0;
+        let html = '<div class="kpi-detail-summary">' + rows.length + ' overdue receivable' + (rows.length !== 1 ? 's' : '') + ' — sorted oldest first</div>';
+        html += '<table class="kpi-detail-table"><thead><tr><th>Description</th><th>Category</th><th>Amount</th><th>Due</th><th>Overdue</th></tr></thead><tbody>';
+
+        for (const row of rows) {
+            const desc = row[0] || '(no description)';
+            const catName = row[1];
+            const amount = row[2];
+            const monthDue = row[3];
+            totalAmount += amount;
+
+            // Calculate months overdue
+            const [dueY, dueM] = monthDue.split('-').map(Number);
+            const [curY, curM] = currentMonth.split('-').map(Number);
+            const monthsOverdue = (curY - dueY) * 12 + (curM - dueM);
+            const overdueLabel = monthsOverdue === 1 ? '1 month' : monthsOverdue + ' months';
+            const urgencyCls = monthsOverdue >= 3 ? 'negative' : (monthsOverdue >= 2 ? 'dash-kpi-warning' : '');
+
+            html += '<tr><td class="text-cell">' + Utils.escapeHtml(desc) + '</td>' +
+                '<td class="text-cell">' + Utils.escapeHtml(catName) + '</td>' +
+                '<td class="negative">' + Utils.formatCurrency(amount) + '</td>' +
+                '<td class="text-cell">' + this._kpiDetailMonthLabel(monthDue) + '</td>' +
+                '<td class="text-cell ' + urgencyCls + '" style="font-weight:600;">' + overdueLabel + '</td></tr>';
+        }
+
+        html += '<tr class="kpi-row-total"><td class="text-cell" colspan="2">Total Overdue</td>' +
+            '<td class="negative">' + Utils.formatCurrency(totalAmount) + '</td><td colspan="2"></td></tr>';
+        html += '</tbody></table>';
+        return html;
+    },
+
+    _kpiDetail_workingcapital() {
+        const currentMonth = Utils.getCurrentMonth();
+        const months = this._getTimelineMonths().filter(m => m <= currentMonth);
+
+        let html = '<div class="kpi-detail-summary">Working Capital = Current Assets − Current Liabilities</div>';
+        html += '<table class="kpi-detail-table"><thead><tr><th>Month</th><th>Cash</th><th>AR</th><th>Current Assets</th><th>AP + Tax</th><th>Working Capital</th></tr></thead><tbody>';
+
+        let prevWC = null;
+        for (const month of months) {
+            const cash = Database.getCashAsOf(month);
+            const ar = Database.getAccountsReceivableAsOf ? Database.getAccountsReceivableAsOf(month) : 0;
+            const ap = Database.getAccountsPayableAsOf ? Database.getAccountsPayableAsOf(month) : 0;
+            const stp = Database.getSalesTaxPayableAsOf ? Database.getSalesTaxPayableAsOf(month) : 0;
+            const ca = cash + ar;
+            const cl = ap + stp;
+            const wc = ca - cl;
+            const trend = prevWC !== null && prevWC !== 0 ? ((wc - prevWC) / Math.abs(prevWC) * 100).toFixed(1) : null;
+            const trendStr = trend !== null ? (' <small style="font-size:0.8em;color:' + (parseFloat(trend) >= 0 ? 'var(--color-success)' : 'var(--color-danger)') + '">' + (parseFloat(trend) >= 0 ? '+' : '') + trend + '%</small>') : '';
+
+            html += '<tr><td class="text-cell">' + this._kpiDetailMonthLabel(month) + '</td>' +
+                '<td>' + Utils.formatCurrency(cash) + '</td>' +
+                '<td>' + Utils.formatCurrency(ar) + '</td>' +
+                '<td style="font-weight:500;">' + Utils.formatCurrency(ca) + '</td>' +
+                '<td class="negative">' + Utils.formatCurrency(cl) + '</td>' +
+                '<td class="' + (wc >= 0 ? 'positive' : 'negative') + '" style="font-weight:600;">' + Utils.formatCurrency(wc) + trendStr + '</td></tr>';
+            prevWC = wc;
+        }
+        html += '</tbody></table>';
+        return html;
+    },
+
+    _kpiDetail_rule40() {
+        const currentMonth = Utils.getCurrentMonth();
+        const months = this._getTimelineMonths().filter(m => m <= currentMonth);
+
+        // Compute revenue growth (annualized CMGR)
+        const revData = [];
+        for (const month of months) {
+            const revResult = Database.db.exec(
+                "SELECT COALESCE(SUM(COALESCE(t.pretax_amount, t.amount)),0) FROM transactions t JOIN categories c ON t.category_id = c.id WHERE t.transaction_type='receivable' AND t.month_due=? AND c.is_cogs = 0 AND c.show_on_pl != 1 AND (c.is_b2b = 1 OR c.is_sales = 1) AND COALESCE(t.source_type, '') NOT IN ('loan_receivable', 'loan_payment')", [month]);
+            revData.push(revResult[0] ? revResult[0].values[0][0] : 0);
+        }
+        const firstRev = revData.find(v => v > 0) || 0;
+        const lastRev = revData[revData.length - 1] || 0;
+        let cmgr = 0;
+        if (firstRev > 0 && lastRev > 0 && revData.length > 1) {
+            cmgr = (Math.pow(lastRev / firstRev, 1 / (revData.length - 1)) - 1) * 100;
+        }
+        const annualizedGrowth = cmgr * 12;
+
+        // Compute profit margin (EBITDA margin)
+        const plData = Database.getPLSpreadsheet();
+        const plOverrides = Database.getAllPLOverrides();
+        const getVal = (catId, month, computed) => {
+            const key = `${catId}-${month}`;
+            return (key in plOverrides) ? plOverrides[key] : computed;
+        };
+        const groupByCat = (rows) => {
+            const map = {};
+            (rows || []).forEach(row => {
+                if (!map[row.category_id]) map[row.category_id] = {};
+                map[row.category_id][row.month] = (map[row.category_id][row.month] || 0) + row.total;
+            });
+            return map;
+        };
+
+        let totalRevenue = 0;
+        Object.entries(groupByCat(plData.revenue)).forEach(([catId, catMonths]) => {
+            months.forEach(m => { totalRevenue += getVal(catId, m, catMonths[m] || 0); });
+        });
+        let totalExpenses = 0;
+        Object.entries(groupByCat(plData.cogs)).forEach(([catId, catMonths]) => {
+            months.forEach(m => { totalExpenses += getVal(catId, m, catMonths[m] || 0); });
+        });
+        Object.entries(groupByCat(plData.opex)).forEach(([catId, catMonths]) => {
+            months.forEach(m => { totalExpenses += getVal(catId, m, catMonths[m] || 0); });
+        });
+        const ebitda = totalRevenue - totalExpenses;
+        const profitMargin = totalRevenue > 0 ? (ebitda / totalRevenue) * 100 : 0;
+        const score = Math.round(annualizedGrowth + profitMargin);
+
+        let html = '<div class="kpi-detail-summary">Rule of 40 = Annualized Revenue Growth % + EBITDA Margin %</div>';
+
+        // Visual gauge
+        const barPct = Math.min(100, Math.max(0, (score / 60) * 100));
+        const barColor = score >= 40 ? 'var(--color-success)' : score >= 20 ? 'var(--color-warning)' : 'var(--color-danger)';
+        html += '<div style="margin:16px 0 20px;">' +
+            '<div style="display:flex;justify-content:space-between;margin-bottom:4px;font-size:0.8rem;color:var(--text-muted);"><span>0</span><span style="color:var(--color-success);font-weight:600;">40 (target)</span><span>60</span></div>' +
+            '<div style="height:24px;border-radius:8px;background:var(--c5,var(--border));position:relative;overflow:hidden;">' +
+                '<div style="width:' + barPct + '%;height:100%;border-radius:8px;background:' + barColor + ';transition:width 0.3s;"></div>' +
+                '<div style="position:absolute;left:' + (40/60*100) + '%;top:0;bottom:0;width:2px;background:var(--text-muted);opacity:0.5;"></div>' +
+            '</div>' +
+            '<div style="text-align:center;margin-top:8px;font-size:1.3rem;font-weight:700;font-family:DM Mono,monospace;color:' + barColor + ';">' + score + '</div>' +
+        '</div>';
+
+        html += '<table class="kpi-detail-table"><tbody>';
+        html += '<tr><td class="text-cell">Annualized Revenue Growth (CMGR × 12)</td><td class="' + (annualizedGrowth >= 0 ? 'positive' : 'negative') + '">' + annualizedGrowth.toFixed(1) + '%</td></tr>';
+        html += '<tr><td class="text-cell">EBITDA Margin</td><td class="' + (profitMargin >= 0 ? 'positive' : 'negative') + '">' + profitMargin.toFixed(1) + '%</td></tr>';
+        html += '<tr class="kpi-row-total"><td class="text-cell">Rule of 40 Score</td><td style="font-size:1rem;" class="' + (score >= 40 ? 'positive' : 'negative') + '">' + score + '</td></tr>';
+        html += '</tbody></table>';
+
+        html += '<div style="margin-top:12px;font-size:0.8rem;color:var(--text-muted);">' +
+            (score >= 40 ? 'Score ≥ 40 indicates a healthy balance of growth and profitability.' :
+            'Score < 40 suggests the company needs stronger growth, better margins, or both.') + '</div>';
+        return html;
+    },
+
+    _kpiDetail_rule40nb() {
+        const currentMonth = Utils.getCurrentMonth();
+        const months = this._getTimelineMonths().filter(m => m <= currentMonth);
+
+        // Non-B2B revenue growth (CMGR)
+        const revData = [];
+        for (const month of months) {
+            const revResult = Database.db.exec(
+                "SELECT COALESCE(SUM(COALESCE(t.pretax_amount, t.amount)),0) FROM transactions t JOIN categories c ON t.category_id = c.id " +
+                "WHERE t.transaction_type='receivable' AND t.month_due=? AND c.is_cogs = 0 AND c.show_on_pl != 1 AND c.is_sales = 1 AND c.is_b2b = 0 " +
+                "AND COALESCE(t.source_type, '') NOT IN ('loan_receivable', 'loan_payment')", [month]);
+            revData.push(revResult[0] ? revResult[0].values[0][0] : 0);
+        }
+        const firstRev = revData.find(v => v > 0) || 0;
+        const lastRev = revData[revData.length - 1] || 0;
+        let cmgr = 0;
+        if (firstRev > 0 && lastRev > 0 && revData.length > 1) {
+            cmgr = (Math.pow(lastRev / firstRev, 1 / (revData.length - 1)) - 1) * 100;
+        }
+        const annualizedGrowth = cmgr * 12;
+
+        // Profit margin (EBITDA margin — same as overall, since margin is company-wide)
+        const plData = Database.getPLSpreadsheet();
+        const plOverrides = Database.getAllPLOverrides();
+        const getVal = (catId, month, computed) => {
+            const key = `${catId}-${month}`;
+            return (key in plOverrides) ? plOverrides[key] : computed;
+        };
+        const groupByCat = (rows) => {
+            const map = {};
+            (rows || []).forEach(row => {
+                if (!map[row.category_id]) map[row.category_id] = {};
+                map[row.category_id][row.month] = (map[row.category_id][row.month] || 0) + row.total;
+            });
+            return map;
+        };
+
+        let totalRevenue = 0;
+        Object.entries(groupByCat(plData.revenue)).forEach(([catId, catMonths]) => {
+            months.forEach(m => { totalRevenue += getVal(catId, m, catMonths[m] || 0); });
+        });
+        let totalExpenses = 0;
+        Object.entries(groupByCat(plData.cogs)).forEach(([catId, catMonths]) => {
+            months.forEach(m => { totalExpenses += getVal(catId, m, catMonths[m] || 0); });
+        });
+        Object.entries(groupByCat(plData.opex)).forEach(([catId, catMonths]) => {
+            months.forEach(m => { totalExpenses += getVal(catId, m, catMonths[m] || 0); });
+        });
+        const ebitda = totalRevenue - totalExpenses;
+        const profitMargin = totalRevenue > 0 ? (ebitda / totalRevenue) * 100 : 0;
+        const score = Math.round(annualizedGrowth + profitMargin);
+
+        let html = '<div class="kpi-detail-summary">Rule of 40 (Non-B2B) = Annualized Consumer Sales Growth % + EBITDA Margin %</div>';
+
+        // Visual gauge
+        const barPct = Math.min(100, Math.max(0, (score / 60) * 100));
+        const barColor = score >= 40 ? 'var(--color-success)' : score >= 20 ? 'var(--color-warning)' : 'var(--color-danger)';
+        html += '<div style="margin:16px 0 20px;">' +
+            '<div style="display:flex;justify-content:space-between;margin-bottom:4px;font-size:0.8rem;color:var(--text-muted);"><span>0</span><span style="color:var(--color-success);font-weight:600;">40 (target)</span><span>60</span></div>' +
+            '<div style="height:24px;border-radius:8px;background:var(--c5,var(--border));position:relative;overflow:hidden;">' +
+                '<div style="width:' + barPct + '%;height:100%;border-radius:8px;background:' + barColor + ';transition:width 0.3s;"></div>' +
+                '<div style="position:absolute;left:' + (40/60*100) + '%;top:0;bottom:0;width:2px;background:var(--text-muted);opacity:0.5;"></div>' +
+            '</div>' +
+            '<div style="text-align:center;margin-top:8px;font-size:1.3rem;font-weight:700;font-family:DM Mono,monospace;color:' + barColor + ';">' + score + '</div>' +
+        '</div>';
+
+        html += '<table class="kpi-detail-table"><tbody>';
+        html += '<tr><td class="text-cell">Non-B2B Revenue Growth (CMGR × 12)</td><td class="' + (annualizedGrowth >= 0 ? 'positive' : 'negative') + '">' + annualizedGrowth.toFixed(1) + '%</td></tr>';
+        html += '<tr><td class="text-cell">EBITDA Margin</td><td class="' + (profitMargin >= 0 ? 'positive' : 'negative') + '">' + profitMargin.toFixed(1) + '%</td></tr>';
+        html += '<tr class="kpi-row-total"><td class="text-cell">Rule of 40 Score</td><td style="font-size:1rem;" class="' + (score >= 40 ? 'positive' : 'negative') + '">' + score + '</td></tr>';
+        html += '</tbody></table>';
+
+        html += '<div style="margin-top:12px;font-size:0.8rem;color:var(--text-muted);">' +
+            'Uses non-B2B (consumer) sales CMGR for the growth component. EBITDA margin is company-wide. ' +
+            (score >= 40 ? 'Score ≥ 40 indicates a healthy balance of growth and profitability.' :
+            'Score < 40 suggests the company needs stronger consumer growth, better margins, or both.') + '</div>';
+        return html;
+    },
+
+    _kpiDetail_dscr() {
+        const currentMonth = Utils.getCurrentMonth();
+        const months = this._getTimelineMonths().filter(m => m <= currentMonth);
+
+        const loans = Database.getLoans();
+        if (loans.length === 0) {
+            return '<div class="kpi-detail-summary" style="color:var(--color-success);">No active loans — DSCR is not applicable.</div>';
+        }
+
+        // Compute EBITDA (NOI)
+        const plData = Database.getPLSpreadsheet();
+        const plOverrides = Database.getAllPLOverrides();
+        const getVal = (catId, month, computed) => {
+            const key = `${catId}-${month}`;
+            return (key in plOverrides) ? plOverrides[key] : computed;
+        };
+        const groupByCat = (rows) => {
+            const map = {};
+            (rows || []).forEach(row => {
+                if (!map[row.category_id]) map[row.category_id] = {};
+                map[row.category_id][row.month] = (map[row.category_id][row.month] || 0) + row.total;
+            });
+            return map;
+        };
+
+        let totalRevenue = 0;
+        Object.entries(groupByCat(plData.revenue)).forEach(([catId, catMonths]) => {
+            months.forEach(m => { totalRevenue += getVal(catId, m, catMonths[m] || 0); });
+        });
+        let totalExpenses = 0;
+        Object.entries(groupByCat(plData.cogs)).forEach(([catId, catMonths]) => {
+            months.forEach(m => { totalExpenses += getVal(catId, m, catMonths[m] || 0); });
+        });
+        Object.entries(groupByCat(plData.opex)).forEach(([catId, catMonths]) => {
+            months.forEach(m => { totalExpenses += getVal(catId, m, catMonths[m] || 0); });
+        });
+        const noi = totalRevenue - totalExpenses;
+
+        // Compute debt service per loan
+        let totalDebtService = 0;
+        let html = '<div class="kpi-detail-summary">DSCR = Net Operating Income / Total Debt Service</div>';
+        html += '<table class="kpi-detail-table"><thead><tr><th>Loan</th><th>Principal Paid</th><th>Interest Paid</th><th>Total Service</th></tr></thead><tbody>';
+
+        loans.forEach(loan => {
+            const skipped = Database.getSkippedPayments(loan.id);
+            const overridesLoan = Database.getLoanPaymentOverrides(loan.id);
+            const schedule = Utils.computeAmortizationSchedule({
+                principal: loan.principal, annual_rate: loan.annual_rate,
+                term_months: loan.term_months, payments_per_year: loan.payments_per_year,
+                start_date: loan.start_date, first_payment_date: loan.first_payment_date
+            }, skipped, overridesLoan);
+
+            let loanPrincipal = 0, loanInterest = 0;
+            schedule.forEach(pmt => {
+                if (pmt.month <= currentMonth && months.includes(pmt.month)) {
+                    loanPrincipal += pmt.principal_payment;
+                    loanInterest += pmt.interest_payment;
+                }
+            });
+            const loanTotal = loanPrincipal + loanInterest;
+            totalDebtService += loanTotal;
+
+            html += '<tr><td class="text-cell">' + Utils.escapeHtml(loan.name || 'Loan #' + loan.id) + '</td>' +
+                '<td>' + Utils.formatCurrency(loanPrincipal) + '</td>' +
+                '<td>' + Utils.formatCurrency(loanInterest) + '</td>' +
+                '<td style="font-weight:500;">' + Utils.formatCurrency(loanTotal) + '</td></tr>';
+        });
+
+        html += '<tr class="kpi-row-total"><td class="text-cell">Total</td><td colspan="2"></td>' +
+            '<td>' + Utils.formatCurrency(totalDebtService) + '</td></tr>';
+        html += '</tbody></table>';
+
+        const dscr = totalDebtService > 0 ? noi / totalDebtService : null;
+        const dscrStr = dscr !== null ? dscr.toFixed(2) + 'x' : 'N/A';
+        const dscrCls = dscr === null ? '' : (dscr >= 1.25 ? 'positive' : (dscr >= 1.0 ? 'dash-kpi-warning' : 'negative'));
+
+        html += '<table class="kpi-detail-table" style="margin-top:16px;"><tbody>';
+        html += '<tr><td class="text-cell">Net Operating Income (EBITDA)</td><td class="' + (noi >= 0 ? 'positive' : 'negative') + '">' + Utils.formatCurrency(noi) + '</td></tr>';
+        html += '<tr><td class="text-cell">Total Debt Service</td><td class="negative">' + Utils.formatCurrency(totalDebtService) + '</td></tr>';
+        html += '<tr class="kpi-row-total"><td class="text-cell" style="font-size:0.95rem;">DSCR</td><td style="font-size:0.95rem;" class="' + dscrCls + '">' + dscrStr + '</td></tr>';
+        html += '</tbody></table>';
+
+        html += '<div style="margin-top:12px;font-size:0.8rem;color:var(--text-muted);">' +
+            (dscr === null ? '' : dscr >= 1.25 ? 'DSCR ≥ 1.25x — strong ability to service debt.' :
+            dscr >= 1.0 ? 'DSCR 1.0-1.25x — just covering debt obligations. Lenders prefer ≥ 1.25x.' :
+            'DSCR < 1.0x — not generating enough income to cover debt payments.') + '</div>';
+        return html;
     },
 
     _renderSparkline(canvasId, data, color) {
@@ -1267,55 +2260,45 @@ const App = {
 
         // Only rebuild the HTML structure if it's empty
         if (!container.querySelector('.dash-section')) {
+            const hasKpis = (section) => !!this._sectionKpiMap[section];
+            const kpiHint = '<span class="dash-section-kpi-hint">Click for KPIs</span>';
+
             container.innerHTML =
-                '<div class="dash-section" data-section="cashflow">' +
-                    '<div class="dash-section-header"><span>Cash Flow Overview</span><span class="dash-section-toggle">&#9660;</span></div>' +
+                '<div class="dash-section dash-section-clickable" data-section="cashflow">' +
+                    '<div class="dash-section-header"><span>Cash Flow Overview</span>' + kpiHint + '</div>' +
                     '<div class="dash-section-body"><canvas id="dashChartCashFlow" height="250"></canvas></div>' +
                 '</div>' +
-                '<div class="dash-section" data-section="pnl">' +
-                    '<div class="dash-section-header"><span>P&L Trends</span><span class="dash-section-toggle">&#9660;</span></div>' +
+                '<div class="dash-section dash-section-clickable" data-section="pnl">' +
+                    '<div class="dash-section-header"><span>P&L Trends</span>' + kpiHint + '</div>' +
                     '<div class="dash-section-body"><canvas id="dashChartPnL" height="250"></canvas></div>' +
                 '</div>' +
-                '<div class="dash-section" data-section="mom">' +
-                    '<div class="dash-section-header"><span>Month-over-Month</span><span class="dash-section-toggle">&#9660;</span></div>' +
-                    '<div class="dash-section-body"><canvas id="dashChartMoM" height="250"></canvas></div>' +
-                '</div>' +
-                '<div class="dash-section" data-section="balancesheet">' +
-                    '<div class="dash-section-header"><span>Balance Sheet Snapshot</span><span class="dash-section-toggle">&#9660;</span></div>' +
+                '<div class="dash-section dash-section-clickable" data-section="balancesheet">' +
+                    '<div class="dash-section-header"><span>Balance Sheet Snapshot</span>' + kpiHint + '</div>' +
                     '<div class="dash-section-body"><canvas id="dashChartBS" height="250"></canvas></div>' +
                 '</div>' +
                 '<div class="dash-section" data-section="breakeven">' +
-                    '<div class="dash-section-header"><span>Break-Even Progress</span><span class="dash-section-toggle">&#9660;</span></div>' +
+                    '<div class="dash-section-header"><span>Break-Even Progress</span></div>' +
                     '<div class="dash-section-body"><div id="dashBreakevenBar" class="dash-be-bar-wrapper"></div></div>' +
+                '</div>' +
+                '<div class="dash-section dash-section-clickable" data-section="revconcentration">' +
+                    '<div class="dash-section-header"><span>Revenue Concentration</span>' + kpiHint + '</div>' +
+                    '<div class="dash-section-body"><canvas id="dashChartRevConc" height="250"></canvas></div>' +
                 '</div>';
 
-            // Wire up collapsible sections
-            container.querySelectorAll('.dash-section-header').forEach(header => {
-                header.addEventListener('click', () => {
-                    const section = header.parentElement;
-                    const key = 'dash-collapsed-' + section.dataset.section;
-                    section.classList.toggle('collapsed');
-                    header.querySelector('.dash-section-toggle').textContent = section.classList.contains('collapsed') ? '\u25B6' : '\u25BC';
-                    localStorage.setItem(key, section.classList.contains('collapsed') ? '1' : '0');
+            // Wire up clickable sections to open KPI modals
+            container.querySelectorAll('.dash-section-clickable').forEach(section => {
+                section.addEventListener('click', () => {
+                    this._openSectionAnalysis(section.dataset.section);
                 });
-            });
-
-            // Restore collapsed state
-            container.querySelectorAll('.dash-section').forEach(section => {
-                const key = 'dash-collapsed-' + section.dataset.section;
-                if (localStorage.getItem(key) === '1') {
-                    section.classList.add('collapsed');
-                    section.querySelector('.dash-section-toggle').textContent = '\u25B6';
-                }
             });
         }
 
         // Render charts
         this._renderDashCashFlowChart();
         this._renderDashPnLChart();
-        this._renderDashMoMChart();
         this._renderDashBSChart();
         this._renderDashBreakevenBar();
+        this._renderDashRevConcentrationChart();
     },
 
     _getTimelineMonths() {
@@ -1497,47 +2480,6 @@ const App = {
         });
     },
 
-    _renderDashMoMChart() {
-        const canvas = document.getElementById('dashChartMoM');
-        if (!canvas) return;
-        if (this._dashCharts.mom) this._dashCharts.mom.destroy();
-
-        const tlMonths = this._getTimelineMonths();
-        const currentMonth = tlMonths.length > 0 ? tlMonths[tlMonths.length - 1] : Utils.getCurrentMonth();
-        const prevMonth = tlMonths.length > 1 ? tlMonths[tlMonths.length - 2] : (() => { const [cy, cm] = currentMonth.split('-').map(Number); return (cm === 1) ? (cy - 1) + '-12' : cy + '-' + String(cm - 1).padStart(2, '0'); })();
-
-        // Get category breakdown for both months
-        const getCategoryTotals = (month) => {
-            const result = Database.db.exec(
-                "SELECT c.name, SUM(t.amount) as total FROM transactions t JOIN categories c ON t.category_id = c.id WHERE t.month_paid = ? OR (t.status = 'pending' AND t.month_due = ?) GROUP BY c.name ORDER BY total DESC", [month, month]);
-            if (!result[0]) return {};
-            const obj = {};
-            for (const row of result[0].values) { obj[row[0]] = row[1]; }
-            return obj;
-        };
-
-        const thisData = getCategoryTotals(currentMonth);
-        const prevData = getCategoryTotals(prevMonth);
-        const allCats = [...new Set([...Object.keys(thisData), ...Object.keys(prevData)])].slice(0, 10);
-
-        const labels = months => { const [y, mo] = months.split('-'); return ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][parseInt(mo)-1] + ' ' + y.slice(2); };
-
-        this._dashCharts.mom = new Chart(canvas, {
-            type: 'bar',
-            data: {
-                labels: allCats,
-                datasets: [
-                    { label: labels(prevMonth), data: allCats.map(c => prevData[c] || 0), backgroundColor: 'rgba(148,163,184,0.6)', borderRadius: 4 },
-                    { label: labels(currentMonth), data: allCats.map(c => thisData[c] || 0), backgroundColor: 'rgba(59,130,246,0.7)', borderRadius: 4 }
-                ]
-            },
-            options: {
-                responsive: true, maintainAspectRatio: false,
-                plugins: { legend: { position: 'top' } },
-                scales: { y: { ticks: { callback: v => Utils.formatCurrency(v) } } }
-            }
-        });
-    },
 
     _renderDashBSChart() {
         const canvas = document.getElementById('dashChartBS');
@@ -1867,8 +2809,9 @@ const App = {
 
         // Use the real current month (not timeline end which may be in the future)
         const currentMonth = Utils.getCurrentMonth();
-        const expenses = Database.getActiveBudgetExpensesForMonth(currentMonth);
-        const totalTarget = expenses.reduce((s, e) => s + e.monthly_amount, 0);
+        // Use actual P&L operating expenses (varies by month) instead of flat budget amounts
+        const opexByMonth = Database.getMonthlyTotalOpex([currentMonth]);
+        const totalTarget = opexByMonth[currentMonth] || 0;
 
         // Gross profit directly from P&L (Revenue - COGS, with overrides)
         const gpByMonth = Database.getMonthlyGrossProfit([currentMonth]);
@@ -1898,14 +2841,172 @@ const App = {
             '</div>';
     },
 
+    _renderDashRevConcentrationChart() {
+        const canvas = document.getElementById('dashChartRevConc');
+        if (!canvas) return;
+        if (this._dashCharts.revconc) this._dashCharts.revconc.destroy();
+
+        // Get revenue by category across all time (exclude equity, loans, sales tax, non-revenue)
+        const result = Database.db.exec(
+            "SELECT c.name, SUM(COALESCE(t.pretax_amount, t.amount)) as total " +
+            "FROM transactions t JOIN categories c ON t.category_id = c.id " +
+            "WHERE t.transaction_type = 'receivable' AND c.is_cogs = 0 " +
+            "AND c.show_on_pl != 1 AND c.is_sales_tax = 0 " +
+            "AND (c.is_b2b = 1 OR c.is_sales = 1) " +
+            "AND COALESCE(t.source_type, '') NOT IN ('loan_receivable', 'loan_payment') " +
+            "GROUP BY c.name ORDER BY total DESC");
+
+        if (!result[0] || result[0].values.length === 0) {
+            canvas.parentElement.innerHTML = '<div style="padding:24px;color:var(--text-muted);text-align:center;">No revenue data yet</div>';
+            return;
+        }
+
+        const rows = result[0].values;
+        const totalRevenue = rows.reduce((sum, r) => sum + r[1], 0);
+        if (totalRevenue <= 0) {
+            canvas.parentElement.innerHTML = '<div style="padding:24px;color:var(--text-muted);text-align:center;">No revenue data yet</div>';
+            return;
+        }
+
+        // Show top 5, bundle rest as "Other"
+        const top = rows.slice(0, 5);
+        const otherTotal = rows.slice(5).reduce((sum, r) => sum + r[1], 0);
+        const labels = top.map(r => r[0]);
+        const data = top.map(r => r[1]);
+        if (otherTotal > 0) {
+            labels.push('Other');
+            data.push(otherTotal);
+        }
+        const pcts = data.map(v => ((v / totalRevenue) * 100).toFixed(1));
+
+        // Concentration risk indicator — HHI (Herfindahl-Hirschman Index)
+        const shares = rows.map(r => (r[1] / totalRevenue) * 100);
+        const hhi = Math.round(shares.reduce((sum, s) => sum + s * s, 0));
+        // HHI > 2500 = highly concentrated, 1500-2500 = moderate, < 1500 = diversified
+        const concLabel = hhi > 2500 ? 'High Concentration' : hhi > 1500 ? 'Moderate' : 'Diversified';
+        const concColor = hhi > 2500 ? 'rgba(239,68,68,0.9)' : hhi > 1500 ? 'rgba(251,146,60,0.9)' : 'rgba(16,185,129,0.9)';
+
+        const barColors = [
+            'rgba(59,130,246,0.8)', 'rgba(16,185,129,0.7)', 'rgba(251,146,60,0.7)',
+            'rgba(168,85,247,0.7)', 'rgba(236,72,153,0.7)', 'rgba(148,163,184,0.5)'
+        ];
+
+        this._dashCharts.revconc = new Chart(canvas, {
+            type: 'bar',
+            data: {
+                labels: labels.map((l, i) => l + ' (' + pcts[i] + '%)'),
+                datasets: [{
+                    label: 'Revenue',
+                    data: data,
+                    backgroundColor: barColors.slice(0, data.length),
+                    borderRadius: 4
+                }]
+            },
+            options: {
+                indexAxis: 'y',
+                responsive: true, maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    title: {
+                        display: true,
+                        text: 'Risk: ' + concLabel + ' (HHI: ' + hhi + ')',
+                        color: concColor,
+                        font: { size: 12, weight: '600' },
+                        padding: { bottom: 12 }
+                    }
+                },
+                scales: {
+                    x: { ticks: { callback: v => Utils.formatCurrency(v) } },
+                    y: { ticks: { font: { size: 11 } } }
+                }
+            }
+        });
+    },
+
+    _renderDashARAging() {
+        const container = document.getElementById('dashARAging');
+        if (!container) return;
+
+        const currentMonth = Utils.getCurrentMonth();
+        const [curY, curM] = currentMonth.split('-').map(Number);
+
+        // Get all pending receivables
+        const result = Database.db.exec(
+            "SELECT t.amount, t.month_due FROM transactions t " +
+            "WHERE t.transaction_type = 'receivable' AND t.status = 'pending'");
+
+        const buckets = { current: 0, days30: 0, days60: 0, days90: 0, days90plus: 0 };
+        const bucketCounts = { current: 0, days30: 0, days60: 0, days90: 0, days90plus: 0 };
+
+        if (result[0]) {
+            for (const row of result[0].values) {
+                const amount = row[0];
+                const monthDue = row[1];
+                if (!monthDue) continue;
+                const [dueY, dueM] = monthDue.split('-').map(Number);
+                const monthsOverdue = (curY - dueY) * 12 + (curM - dueM);
+
+                if (monthsOverdue <= 0) { buckets.current += amount; bucketCounts.current++; }
+                else if (monthsOverdue === 1) { buckets.days30 += amount; bucketCounts.days30++; }
+                else if (monthsOverdue === 2) { buckets.days60 += amount; bucketCounts.days60++; }
+                else if (monthsOverdue === 3) { buckets.days90 += amount; bucketCounts.days90++; }
+                else { buckets.days90plus += amount; bucketCounts.days90plus++; }
+            }
+        }
+
+        const total = Object.values(buckets).reduce((s, v) => s + v, 0);
+        const totalCount = Object.values(bucketCounts).reduce((s, v) => s + v, 0);
+
+        if (total <= 0) {
+            container.innerHTML = '<div style="padding:24px;color:var(--text-muted);text-align:center;">No pending receivables</div>';
+            return;
+        }
+
+        const bucketData = [
+            { label: 'Current', amount: buckets.current, count: bucketCounts.current, color: 'var(--color-success, #10b981)' },
+            { label: '1 month', amount: buckets.days30, count: bucketCounts.days30, color: '#60a5fa' },
+            { label: '2 months', amount: buckets.days60, count: bucketCounts.days60, color: 'var(--color-warning, #f59e0b)' },
+            { label: '3 months', amount: buckets.days90, count: bucketCounts.days90, color: '#f97316' },
+            { label: '3+ months', amount: buckets.days90plus, count: bucketCounts.days90plus, color: 'var(--color-danger, #ef4444)' }
+        ];
+
+        let html = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">';
+        bucketData.forEach(b => {
+            const pct = total > 0 ? ((b.amount / total) * 100).toFixed(0) : 0;
+            html += '<div style="flex:1;min-width:100px;padding:10px 12px;border-radius:8px;background:var(--c5,var(--border));text-align:center;">' +
+                '<div style="font-size:0.7rem;color:var(--text-muted);margin-bottom:2px;">' + b.label + '</div>' +
+                '<div style="font-size:1.05rem;font-weight:700;font-family:DM Mono,monospace;">' + Utils.formatCurrency(b.amount) + '</div>' +
+                '<div style="font-size:0.7rem;color:var(--text-muted);">' + b.count + ' item' + (b.count !== 1 ? 's' : '') + ' &middot; ' + pct + '%</div>' +
+            '</div>';
+        });
+        html += '</div>';
+
+        // Stacked progress bar
+        html += '<div style="display:flex;height:20px;border-radius:6px;overflow:hidden;background:var(--c5,var(--border));">';
+        bucketData.forEach(b => {
+            const pct = total > 0 ? (b.amount / total) * 100 : 0;
+            if (pct > 0) {
+                html += '<div style="width:' + pct + '%;background:' + b.color + ';transition:width 0.3s;" title="' + b.label + ': ' + Utils.formatCurrency(b.amount) + '"></div>';
+            }
+        });
+        html += '</div>';
+        html += '<div style="display:flex;justify-content:space-between;margin-top:6px;font-size:0.7rem;color:var(--text-muted);">' +
+            '<span>Total: ' + Utils.formatCurrency(total) + ' (' + totalCount + ' items)</span>' +
+            '<span style="color:' + (buckets.days90plus > 0 ? 'var(--color-danger)' : 'var(--color-success)') + ';font-weight:600;">' + (buckets.days90plus > 0 ? 'Collection risk' : 'Healthy') + '</span>' +
+        '</div>';
+
+        container.innerHTML = html;
+    },
+
     _renderDashBreakevenBar() {
         const container = document.getElementById('dashBreakevenBar');
         if (!container) return;
 
         // Use the real current month (not timeline end which may be in the future)
         const currentMonth = Utils.getCurrentMonth();
-        const expenses = Database.getActiveBudgetExpensesForMonth(currentMonth);
-        const totalMonthlyExpenses = expenses.reduce((s, e) => s + e.monthly_amount, 0);
+        // Use actual P&L operating expenses (varies by month) instead of flat budget amounts
+        const opexByMonth = Database.getMonthlyTotalOpex([currentMonth]);
+        const totalMonthlyExpenses = opexByMonth[currentMonth] || 0;
 
         // Gross profit directly from P&L (Revenue - COGS, with overrides)
         const gpByMonth = Database.getMonthlyGrossProfit([currentMonth]);
@@ -2112,6 +3213,7 @@ const App = {
             const id = Database.addTransaction(data);
             this._manageSalesTaxEntry(id, data);
             this._manageInventoryCostEntry(id, data);
+
             saved++;
         }
 
@@ -2235,6 +3337,17 @@ const App = {
 
         // Load dark mode state
         this.loadDarkMode();
+    },
+
+    /**
+     * Load shipping fee rate from DB and populate the input
+     */
+    loadShippingFeeRate() {
+        const config = Database.getShippingFeeConfig();
+        const input = document.getElementById('shippingFeeRate');
+        if (input) {
+            input.value = Math.round(config.rate * 1e6) / 1e4;
+        }
     },
 
     /**
@@ -3108,6 +4221,17 @@ const App = {
                 const isDark = e.target.checked;
                 localStorage.setItem('darkMode', isDark);
                 this.setDarkMode(isDark);
+            });
+        }
+
+        // Shipping fee rate
+        const shippingRateInput = document.getElementById('shippingFeeRate');
+        if (shippingRateInput) {
+            shippingRateInput.addEventListener('change', () => {
+                const pct = parseFloat(shippingRateInput.value) || 0;
+                Database.setShippingFeeConfig({ rate: Math.round(pct * 1e4) / 1e6 });
+                this.syncAllB2BContractEntries();
+                this.refreshAll();
             });
         }
 
@@ -4174,9 +5298,15 @@ const App = {
         const existingChildId = Database.getLinkedInventoryCostTransaction(parentId);
 
         if (category && category.is_sales) {
-            const costAmount = data.inventory_cost || 0;
+            const baseCost = data.inventory_cost || 0;
+            const shippingRate = (Database.getShippingFeeConfig().rate) || 0;
+            // Include shipping fee in COGS (integer-cent math to avoid rounding errors)
+            const costAmount = Math.round(baseCost * (1 + shippingRate) * 100) / 100;
             const dateLabel = Utils.formatSaleDateRange(data.sale_date_start, data.sale_date_end);
-            const description = dateLabel ? `Inventory Cost ${dateLabel}` : 'Inventory Cost';
+            const desc = dateLabel ? 'Inventory Cost' : 'Inventory Cost';
+            const description = shippingRate > 0
+                ? (dateLabel ? `${desc} ${dateLabel} (incl. shipping)` : `${desc} (incl. shipping)`)
+                : (dateLabel ? `${desc} ${dateLabel}` : desc);
 
             if (costAmount > 0) {
                 if (existingChildId) {
@@ -4198,6 +5328,10 @@ const App = {
             } else if (existingChildId) {
                 Database.deleteTransaction(existingChildId);
             }
+
+            // Clean up any stale separate shipping entries from prior logic
+            const staleShipId = Database.getLinkedShippingTransaction(parentId);
+            if (staleShipId) Database.deleteTransaction(staleShipId);
         } else if (existingChildId) {
             Database.deleteTransaction(existingChildId);
         }
@@ -4980,6 +6114,8 @@ const App = {
                 const deletedChild = childId ? Database.getTransactionById(childId) : null;
                 const invCostChildId = Database.getLinkedInventoryCostTransaction(this.deleteTargetId);
                 const deletedInvCost = invCostChildId ? Database.getTransactionById(invCostChildId) : null;
+                const shippingChildId = Database.getLinkedShippingTransaction(this.deleteTargetId);
+                const deletedShipping = shippingChildId ? Database.getTransactionById(shippingChildId) : null;
 
                 // Cascade-delete linked sales tax entry if present
                 if (childId) {
@@ -4988,6 +6124,10 @@ const App = {
                 // Cascade-delete linked inventory cost entry if present
                 if (invCostChildId) {
                     Database.deleteTransaction(invCostChildId);
+                }
+                // Cascade-delete linked shipping fee entry if present
+                if (shippingChildId) {
+                    Database.deleteTransaction(shippingChildId);
                 }
                 Database.deleteTransaction(this.deleteTargetId);
 
@@ -8080,6 +9220,7 @@ const App = {
         UI.populateYearDropdowns();
         UI.populatePaymentForMonthDropdown();
         this.loadAndApplyTheme();
+        this.loadShippingFeeRate();
         this.restoreTabOrder();
         this.setupTabDragDrop();
         this.applyHiddenTabs();
@@ -8918,6 +10059,7 @@ const App = {
             UI.updateJournalTitle(owner);
 
             this.loadAndApplyTheme();
+            this.loadShippingFeeRate();
             this.restoreTabOrder();
             this.setupTabDragDrop();
             this.applyHiddenTabs();
@@ -9322,22 +10464,17 @@ const App = {
 
         const discountCard = document.getElementById('ve-discountCard');
         const pretaxAfterDiscCard = document.getElementById('ve-pretaxAfterDiscCard');
-        const posttaxAfterDiscCard = document.getElementById('ve-posttaxAfterDiscCard');
         if (discount > 0) {
             discountCard.style.display = '';
             document.getElementById('ve-cardDiscount').textContent = '-' + this.veFmt(discount);
             const dc = this._veFiltered.filter(s => s.discount > 0).length;
             document.getElementById('ve-cardDiscountCount').textContent = `${dc} order${dc !== 1 ? 's' : ''} with discounts`;
             const pretaxAfterDisc = subtotal - discount;
-            const taxAfterDisc = subtotal > 0 ? tax * (pretaxAfterDisc / subtotal) : 0;
             pretaxAfterDiscCard.style.display = '';
             document.getElementById('ve-cardPretaxAfterDisc').textContent = this.veFmt(pretaxAfterDisc);
-            posttaxAfterDiscCard.style.display = '';
-            document.getElementById('ve-cardPosttaxAfterDisc').textContent = this.veFmt(pretaxAfterDisc + taxAfterDisc);
         } else {
             discountCard.style.display = 'none';
             pretaxAfterDiscCard.style.display = 'none';
-            posttaxAfterDiscCard.style.display = 'none';
         }
 
         const shippingCard = document.getElementById('ve-shippingCard');
@@ -10039,6 +11176,8 @@ const App = {
             if (childId) Database.deleteTransaction(childId);
             const invCostId = Database.getLinkedInventoryCostTransaction(txId);
             if (invCostId) Database.deleteTransaction(invCostId);
+            const shipId = Database.getLinkedShippingTransaction(txId);
+            if (shipId) Database.deleteTransaction(shipId);
 
             Database.deleteTransaction(txId);
             Database.markVEEventJournalAdded(eventId, 0);
@@ -10168,6 +11307,8 @@ const App = {
                     if (childId) Database.deleteTransaction(childId);
                     const invCostId = Database.getLinkedInventoryCostTransaction(txId);
                     if (invCostId) Database.deleteTransaction(invCostId);
+                    const shipChildId = Database.getLinkedShippingTransaction(txId);
+                    if (shipChildId) Database.deleteTransaction(shipChildId);
                     Database.deleteTransaction(txId);
                 } catch (error) {
                     console.error(`Error removing journal for event "${evt.name}":`, error);
@@ -10960,21 +12101,27 @@ const App = {
         if (typeof contract === 'number') {
             contract = Database.getB2BContractById(contract);
         }
-        if (!contract || !contract.is_finalized) return;
+        if (!contract || !contract.is_finalized) {
+            console.warn('[B2B Sync] Skipped – contract:', contract?.id, 'is_finalized:', contract?.is_finalized);
+            return;
+        }
 
         const computed = this._computeB2BContract(contract);
         const catId = contract.category_id || this._getOrCreateB2BCategory();
         const cogsCatId = Database.getOrCreateInventoryCostCategory();
+        const shippingRate = (Database.getShippingFeeConfig().rate) || 0;
         const currentMonth = Utils.getCurrentMonth();
         const isDirect = contract.entry_mode === 'direct';
         const monthlyRevenue = isDirect ? Math.round((contract.direct_revenue || 0) * 100) / 100 : computed.monthlyContractedRounded;
-        const monthlyCogs = isDirect ? Math.round((contract.direct_cogs || 0) * 100) / 100 : Math.round(computed.cogsPerUnit * computed.unitsSold * 100) / 100;
+        const baseCogs = isDirect ? Math.round((contract.direct_cogs || 0) * 100) / 100 : Math.round(computed.cogsPerUnit * computed.unitsSold * 100) / 100;
+        // Include shipping fee in COGS (integer-cent math to avoid rounding errors)
+        const monthlyCogs = Math.round(baseCogs * (1 + shippingRate) * 100) / 100;
         const revenueDesc = isDirect
             ? `${contract.company_name} – B2B Contract`
             : `${contract.company_name} – B2B Contract (${computed.unitsSold} units)`;
         const cogsDesc = isDirect
-            ? `${contract.company_name} – B2B COGS`
-            : `${contract.company_name} – B2B COGS (${computed.unitsSold} × ${Utils.formatCurrency(computed.cogsPerUnit)})`;
+            ? `${contract.company_name} – B2B COGS` + (shippingRate > 0 ? ' (incl. shipping)' : '')
+            : `${contract.company_name} – B2B COGS (${computed.unitsSold} × ${Utils.formatCurrency(computed.cogsPerUnit)})` + (shippingRate > 0 ? ' + shipping' : '');
 
         computed.months.forEach(month => {
             // Only create entries up to current month (like budget sync)
@@ -10988,19 +12135,13 @@ const App = {
 
             if (existing.length > 0 && existing[0].values.length > 0) {
                 const [existingId, existingAmount, existingStatus] = existing[0].values[0];
-                if (existingStatus === 'pending' && Math.abs(existingAmount - monthlyRevenue) > 0.01) {
-                    Database.updateTransaction(existingId, {
-                        entry_date: month + '-01',
-                        category_id: catId,
-                        item_description: revenueDesc,
-                        amount: monthlyRevenue,
-                        transaction_type: 'receivable',
-                        status: 'pending',
-                        month_due: month,
-                        payment_for_month: month,
-                        source_type: 'b2b_contract',
-                        source_id: contract.id
-                    });
+                if (Math.abs(existingAmount - monthlyRevenue) > 0.01) {
+                    // Update amount/description but preserve current status and month_paid
+                    Database.db.run(
+                        'UPDATE transactions SET amount = ?, item_description = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+                        [monthlyRevenue, revenueDesc, existingId]
+                    );
+                    Database.autoSave();
                 }
             } else {
                 Database.addTransaction({
@@ -11017,7 +12158,7 @@ const App = {
                 });
             }
 
-            // --- Payable entry (COGS / inventory cost) ---
+            // --- Payable entry (COGS + shipping, combined) ---
             if (monthlyCogs > 0) {
                 const existingCogs = Database.db.exec(
                     "SELECT id, amount, status FROM transactions WHERE source_type = 'b2b_contract_cogs' AND source_id = ? AND payment_for_month = ?",
@@ -11025,20 +12166,14 @@ const App = {
                 );
 
                 if (existingCogs.length > 0 && existingCogs[0].values.length > 0) {
-                    const [cogsId, cogsAmount, cogsStatus] = existingCogs[0].values[0];
-                    if (cogsStatus === 'pending' && Math.abs(cogsAmount - monthlyCogs) > 0.01) {
-                        Database.updateTransaction(cogsId, {
-                            entry_date: month + '-01',
-                            category_id: cogsCatId,
-                            item_description: cogsDesc,
-                            amount: monthlyCogs,
-                            transaction_type: 'payable',
-                            status: 'pending',
-                            month_due: month,
-                            payment_for_month: month,
-                            source_type: 'b2b_contract_cogs',
-                            source_id: contract.id
-                        });
+                    const [cogsId, cogsAmount] = existingCogs[0].values[0];
+                    if (Math.abs(cogsAmount - monthlyCogs) > 0.01) {
+                        // Update amount/description but preserve current status and month_paid
+                        Database.db.run(
+                            'UPDATE transactions SET amount = ?, item_description = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+                            [monthlyCogs, cogsDesc, cogsId]
+                        );
+                        Database.autoSave();
                     }
                 } else {
                     Database.addTransaction({
@@ -11054,6 +12189,15 @@ const App = {
                         source_id: contract.id
                     });
                 }
+            }
+
+            // Clean up any stale separate shipping entries from prior logic
+            const staleShip = Database.db.exec(
+                "SELECT id FROM transactions WHERE source_type = 'b2b_contract_shipping' AND source_id = ? AND payment_for_month = ? AND status = 'pending'",
+                [contract.id, month]
+            );
+            if (staleShip.length > 0) {
+                staleShip[0].values.forEach(row => Database.deleteTransaction(row[0]));
             }
         });
     },
@@ -11077,7 +12221,7 @@ const App = {
     unfinalizeB2BContract(contractId) {
         // Only delete pending entries - preserve received/paid ones
         Database.db.run(
-            "DELETE FROM transactions WHERE source_type IN ('b2b_contract', 'b2b_contract_cogs') AND source_id = ? AND status = 'pending'",
+            "DELETE FROM transactions WHERE source_type IN ('b2b_contract', 'b2b_contract_cogs', 'b2b_contract_shipping') AND source_id = ? AND status = 'pending'",
             [contractId]
         );
         Database.setB2BContractFinalized(contractId, false);
@@ -11529,6 +12673,7 @@ const App = {
     handleFinalizeB2BContract(id) {
         const contract = Database.getB2BContractById(id);
         if (!contract) return;
+        console.log('[B2B Finalize] id:', id, '| contract_start:', contract.contract_start, '| contract_end:', contract.contract_end);
 
         // Ensure category exists
         if (!contract.category_id) {
@@ -11539,6 +12684,14 @@ const App = {
 
         Database.setB2BContractFinalized(id, true);
         this.syncB2BContractJournalEntries(id);
+
+        // Verify entries were created
+        const check = Database.db.exec(
+            "SELECT payment_for_month, status, amount FROM transactions WHERE source_type = 'b2b_contract' AND source_id = ? ORDER BY payment_for_month",
+            [id]
+        );
+        console.log('[B2B Finalize] Entries after sync:', check.length > 0 ? check[0].values : 'NONE');
+
         UI.showNotification('Contract finalized – journal entries created', 'success');
         this.refreshAll();
     },
@@ -11555,7 +12708,22 @@ const App = {
         );
         const receivedCount = (received.length > 0) ? received[0].values[0][0] : 0;
 
+        // Log entries before unfinalize
+        const beforeEntries = Database.db.exec(
+            "SELECT payment_for_month, status, source_type FROM transactions WHERE source_type IN ('b2b_contract', 'b2b_contract_cogs') AND source_id = ? ORDER BY payment_for_month",
+            [id]
+        );
+        console.log('[B2B Unfinalize] id:', id, '| entries before:', beforeEntries.length > 0 ? beforeEntries[0].values : 'NONE');
+
         this.unfinalizeB2BContract(id);
+
+        // Log entries after unfinalize
+        const afterEntries = Database.db.exec(
+            "SELECT payment_for_month, status, source_type FROM transactions WHERE source_type IN ('b2b_contract', 'b2b_contract_cogs') AND source_id = ? ORDER BY payment_for_month",
+            [id]
+        );
+        console.log('[B2B Unfinalize] entries after:', afterEntries.length > 0 ? afterEntries[0].values : 'NONE (all cleared)');
+
         let msg = 'Contract unfinalized – pending entries removed';
         if (receivedCount > 0) {
             msg += ` (${receivedCount} received entries preserved)`;
@@ -11666,6 +12834,24 @@ const App = {
     // ==================== CHANGE LOG ====================
 
     changelogData: [
+        {
+            version: '2.2',
+            date: '2026-03-24',
+            title: 'KPI Dashboard & Financial Metrics',
+            changes: [
+                { type: 'feature', text: 'Interactive KPI dashboard — clickable section headers open analysis modals with grouped financial metrics' },
+                { type: 'feature', text: 'KPI drill-down detail modals — click any KPI card to see monthly breakdowns, trends, and explanatory tables' },
+                { type: 'feature', text: '12 KPI metrics: Cash Position, Gross Burn, Net Burn, Revenue Trend, EBITDA, CMGR, Non-B2B CMGR, Rule of 40, Rule of 40 (Non-B2B), Working Capital, Overdue AR, DSCR' },
+                { type: 'feature', text: 'Revenue Concentration pie chart on dashboard showing B2B vs consumer revenue mix' },
+                { type: 'feature', text: 'AR Aging breakdown with 30/60/90/90+ day overdue buckets' },
+                { type: 'feature', text: 'Shipping Fee auto-entries — configurable rate applied to inventory cost payments, with gear popover setting' },
+                { type: 'feature', text: 'Cash Ratio added to Balance Sheet financial ratios (Cash / Current Liabilities)' },
+                { type: 'improved', text: 'Dashboard KPIs now use accrual-basis P&L data for burn rate and expense metrics instead of cash-basis' },
+                { type: 'improved', text: 'Revenue metrics use pretax amounts for consistent accrual accounting' },
+                { type: 'improved', text: 'Sparklines exclude future months for accurate trailing data' },
+                { type: 'removed', text: 'Removed Post-Tax After Discounts metric from VE analytics (redundant with pretax reporting)' }
+            ]
+        },
         {
             version: '2.1',
             date: '2026-03-15',
