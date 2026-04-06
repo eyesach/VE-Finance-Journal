@@ -811,6 +811,10 @@
                 <div class="be-header">
                     <h3>Break-Even Analysis</h3>
                     <div class="be-controls">
+                        <label class="snapshot-month-label">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                            <select id="beSnapshotMonth" class="snapshot-month-select"></select>
+                        </label>
                         <button id="beConfigBtn" class="btn btn-secondary btn-small">Configure</button>
                     </div>
                 </div>
@@ -1335,6 +1339,13 @@
         <!-- Dashboard Tab (Analyze) -->
         <div id="dashboardTab" style="display: none;">
             <div class="dashboard-content">
+                <div class="snapshot-month-bar" id="dashSnapshotBar">
+                    <span class="snapshot-title">Dashboard</span>
+                    <label class="snapshot-month-label">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                        <select id="dashSnapshotMonth" class="snapshot-month-select"></select>
+                    </label>
+                </div>
                 <div class="dashboard-sections" id="dashboardSections"></div>
             </div>
         </div>

@@ -1169,18 +1169,37 @@ const App = {
 
     _dashCharts: {},
 
+    _dashSnapshotMonth: null,
+
     refreshDashboard() {
-        this._computeKpiData();
-        this._renderDashboardSections();
+        // Populate snapshot month dropdown
+        const select = document.getElementById('dashSnapshotMonth');
+        if (select) {
+            const realCurrent = Utils.getCurrentMonth();
+            const allMonths = this._getTimelineMonths().filter(m => m <= realCurrent);
+            const prevVal = this._dashSnapshotMonth || select.value;
+            select.innerHTML = '<option value="">Current Month</option>' +
+                allMonths.map(m => `<option value="${m}">${Utils.formatMonthShort(m)}</option>`).join('');
+            if (prevVal && allMonths.includes(prevVal)) {
+                select.value = prevVal;
+                this._dashSnapshotMonth = prevVal;
+            } else {
+                select.value = '';
+                this._dashSnapshotMonth = null;
+            }
+        }
+        const snapshotMonth = this._dashSnapshotMonth || null;
+        this._computeKpiData(snapshotMonth);
+        this._renderDashboardSections(snapshotMonth);
     },
 
     // ==================== KPI DATA COMPUTATION (cached for modal use) ====================
 
     _kpiCache: null,
 
-    _computeKpiData() {
+    _computeKpiData(snapshotMonth) {
         const summary = Database.calculateSummary();
-        const currentMonth = Utils.getCurrentMonth();
+        const currentMonth = snapshotMonth || Utils.getCurrentMonth();
 
         // Calculate monthly data for sparklines — only up to current month (exclude future)
         const allMonths = this._getTimelineMonths().filter(m => m <= currentMonth);
@@ -1378,10 +1397,11 @@ const App = {
             return;
         }
 
-        this._computeKpiData();
+        this._computeKpiData(this._dashSnapshotMonth || null);
         const d = this._kpiCache;
 
-        document.getElementById('analyzeKpiTitle').textContent = group.title;
+        const snapshotLabel = this._dashSnapshotMonth ? ' — ' + Utils.formatMonthShort(this._dashSnapshotMonth) : '';
+        document.getElementById('analyzeKpiTitle').textContent = group.title + snapshotLabel;
         const body = document.getElementById('analyzeKpiBody');
 
         let html = '<div class="analyze-kpi-grid">';
@@ -1534,7 +1554,8 @@ const App = {
     },
 
     _kpiDetail_cashposition() {
-        const months = this._getTimelineMonths().filter(m => m <= Utils.getCurrentMonth());
+        const snapshotMonth = this._kpiCache ? this._kpiCache.currentMonth : Utils.getCurrentMonth();
+        const months = this._getTimelineMonths().filter(m => m <= snapshotMonth);
         let html = '<div class="kpi-detail-summary">Month-by-month cash flow breakdown</div>';
         html += '<table class="kpi-detail-table"><thead><tr><th>Month</th><th>Money In</th><th>Money Out</th><th>Net</th><th>Running Balance</th></tr></thead><tbody>';
 
@@ -1557,7 +1578,7 @@ const App = {
     },
 
     _kpiDetail_grossburn() {
-        const currentMonth = Utils.getCurrentMonth();
+        const currentMonth = this._kpiCache ? this._kpiCache.currentMonth : Utils.getCurrentMonth();
         const months = this._getTimelineMonths().filter(m => m <= currentMonth).slice(-6);
 
         // Get expenses by category for last 6 months (accrual basis, matching P&L)
@@ -1624,7 +1645,7 @@ const App = {
     },
 
     _kpiDetail_netburn() {
-        const currentMonth = Utils.getCurrentMonth();
+        const currentMonth = this._kpiCache ? this._kpiCache.currentMonth : Utils.getCurrentMonth();
         const months = this._getTimelineMonths().filter(m => m <= currentMonth).slice(-6);
 
         let html = '<div class="kpi-detail-summary">Revenue vs Expenses — last ' + months.length + ' months</div>';
@@ -1660,7 +1681,7 @@ const App = {
     },
 
     _kpiDetail_revtrend() {
-        const currentMonth = Utils.getCurrentMonth();
+        const currentMonth = this._kpiCache ? this._kpiCache.currentMonth : Utils.getCurrentMonth();
         const months = this._getTimelineMonths().filter(m => m <= currentMonth);
 
         let html = '<div class="kpi-detail-summary">Monthly revenue with month-over-month change</div>';
@@ -1686,7 +1707,7 @@ const App = {
     },
 
     _kpiDetail_cmgr() {
-        const currentMonth = Utils.getCurrentMonth();
+        const currentMonth = this._kpiCache ? this._kpiCache.currentMonth : Utils.getCurrentMonth();
         const months = this._getTimelineMonths().filter(m => m <= currentMonth);
 
         // Get monthly revenue
@@ -1747,7 +1768,7 @@ const App = {
     },
 
     _kpiDetail_cmgrnonb2b() {
-        const currentMonth = Utils.getCurrentMonth();
+        const currentMonth = this._kpiCache ? this._kpiCache.currentMonth : Utils.getCurrentMonth();
         const months = this._getTimelineMonths().filter(m => m <= currentMonth);
 
         const revData = [];
@@ -1842,7 +1863,7 @@ const App = {
     },
 
     _kpiDetail_ebitda() {
-        const currentMonth = Utils.getCurrentMonth();
+        const currentMonth = this._kpiCache ? this._kpiCache.currentMonth : Utils.getCurrentMonth();
         const pastMonths = this._getTimelineMonths().filter(m => m <= currentMonth);
 
         const plData = Database.getPLSpreadsheet();
@@ -1912,7 +1933,7 @@ const App = {
     },
 
     _kpiDetail_overdue() {
-        const currentMonth = Utils.getCurrentMonth();
+        const currentMonth = this._kpiCache ? this._kpiCache.currentMonth : Utils.getCurrentMonth();
         const result = Database.db.exec(
             "SELECT t.item_description, c.name as category_name, t.amount, t.month_due, t.entry_date " +
             "FROM transactions t JOIN categories c ON t.category_id = c.id " +
@@ -1956,7 +1977,7 @@ const App = {
     },
 
     _kpiDetail_workingcapital() {
-        const currentMonth = Utils.getCurrentMonth();
+        const currentMonth = this._kpiCache ? this._kpiCache.currentMonth : Utils.getCurrentMonth();
         const months = this._getTimelineMonths().filter(m => m <= currentMonth);
 
         let html = '<div class="kpi-detail-summary">Working Capital = Current Assets − Current Liabilities</div>';
@@ -1987,7 +2008,7 @@ const App = {
     },
 
     _kpiDetail_rule40() {
-        const currentMonth = Utils.getCurrentMonth();
+        const currentMonth = this._kpiCache ? this._kpiCache.currentMonth : Utils.getCurrentMonth();
         const months = this._getTimelineMonths().filter(m => m <= currentMonth);
 
         // Compute revenue growth (annualized CMGR)
@@ -2063,7 +2084,7 @@ const App = {
     },
 
     _kpiDetail_rule40nb() {
-        const currentMonth = Utils.getCurrentMonth();
+        const currentMonth = this._kpiCache ? this._kpiCache.currentMonth : Utils.getCurrentMonth();
         const months = this._getTimelineMonths().filter(m => m <= currentMonth);
 
         // Non-B2B revenue growth (CMGR)
@@ -2142,7 +2163,7 @@ const App = {
     },
 
     _kpiDetail_dscr() {
-        const currentMonth = Utils.getCurrentMonth();
+        const currentMonth = this._kpiCache ? this._kpiCache.currentMonth : Utils.getCurrentMonth();
         const months = this._getTimelineMonths().filter(m => m <= currentMonth);
 
         const loans = Database.getLoans();
@@ -2263,7 +2284,7 @@ const App = {
         });
     },
 
-    _renderDashboardSections() {
+    _renderDashboardSections(snapshotMonth) {
         const container = document.getElementById('dashboardSections');
         if (!container) return;
 
@@ -2303,11 +2324,11 @@ const App = {
         }
 
         // Render charts
-        this._renderDashCashFlowChart();
-        this._renderDashPnLChart();
-        this._renderDashBSChart();
-        this._renderDashBreakevenBar();
-        this._renderDashRevConcentrationChart();
+        this._renderDashCashFlowChart(snapshotMonth);
+        this._renderDashPnLChart(snapshotMonth);
+        this._renderDashBSChart(snapshotMonth);
+        this._renderDashBreakevenBar(snapshotMonth);
+        this._renderDashRevConcentrationChart(snapshotMonth);
     },
 
     _getTimelineMonths() {
@@ -2352,12 +2373,13 @@ const App = {
         return months;
     },
 
-    _renderDashCashFlowChart() {
+    _renderDashCashFlowChart(snapshotMonth) {
         const canvas = document.getElementById('dashChartCashFlow');
         if (!canvas) return;
         if (this._dashCharts.cashflow) this._dashCharts.cashflow.destroy();
 
-        const months = this._getTimelineMonths();
+        let months = this._getTimelineMonths();
+        if (snapshotMonth) months = months.filter(m => m <= snapshotMonth);
         const netData = [];
         const colors = [];
 
@@ -2387,15 +2409,16 @@ const App = {
         });
     },
 
-    _renderDashPnLChart() {
+    _renderDashPnLChart(snapshotMonth) {
         const canvas = document.getElementById('dashChartPnL');
         if (!canvas) return;
         if (this._dashCharts.pnl) this._dashCharts.pnl.destroy();
 
-        const months = this._getTimelineMonths();
+        let months = this._getTimelineMonths();
+        if (snapshotMonth) months = months.filter(m => m <= snapshotMonth);
         const plData = Database.getPLSpreadsheet();
         const overrides = Database.getAllPLOverrides();
-        const currentMonth = Utils.getCurrentMonth();
+        const currentMonth = snapshotMonth || Utils.getCurrentMonth();
         const isFuture = (m) => m > currentMonth;
 
         const getVal = (catId, month, computed) => {
@@ -2490,16 +2513,22 @@ const App = {
     },
 
 
-    _renderDashBSChart() {
+    _renderDashBSChart(snapshotMonth) {
         const canvas = document.getElementById('dashChartBS');
         if (!canvas) return;
         if (this._dashCharts.bs) this._dashCharts.bs.destroy();
 
-        const summary = Database.calculateSummary();
-        // Simple assets vs liabilities visualization
-        const assets = summary.cashBalance > 0 ? summary.cashBalance : 0;
-        const liabilities = summary.accountsPayable;
-        const receivables = summary.accountsReceivable;
+        let assets, liabilities, receivables;
+        if (snapshotMonth) {
+            assets = Math.max(0, Database.getCashAsOf(snapshotMonth));
+            receivables = Database.getAccountsReceivableAsOf ? Database.getAccountsReceivableAsOf(snapshotMonth) : 0;
+            liabilities = Database.getAccountsPayableAsOf ? Database.getAccountsPayableAsOf(snapshotMonth) : 0;
+        } else {
+            const summary = Database.calculateSummary();
+            assets = summary.cashBalance > 0 ? summary.cashBalance : 0;
+            liabilities = summary.accountsPayable;
+            receivables = summary.accountsReceivable;
+        }
 
         this._dashCharts.bs = new Chart(canvas, {
             type: 'bar',
@@ -2850,20 +2879,23 @@ const App = {
             '</div>';
     },
 
-    _renderDashRevConcentrationChart() {
+    _renderDashRevConcentrationChart(snapshotMonth) {
         const canvas = document.getElementById('dashChartRevConc');
         if (!canvas) return;
         if (this._dashCharts.revconc) this._dashCharts.revconc.destroy();
 
-        // Get revenue by category across all time (exclude equity, loans, sales tax, non-revenue)
+        // Get revenue by category (exclude equity, loans, sales tax, non-revenue)
+        const monthFilter = snapshotMonth ? " AND t.month_due <= ?" : "";
+        const monthParams = snapshotMonth ? [snapshotMonth] : [];
         const result = Database.db.exec(
             "SELECT c.name, SUM(COALESCE(t.pretax_amount, t.amount)) as total " +
             "FROM transactions t JOIN categories c ON t.category_id = c.id " +
             "WHERE t.transaction_type = 'receivable' AND c.is_cogs = 0 " +
             "AND c.show_on_pl != 1 AND c.is_sales_tax = 0 " +
             "AND (c.is_b2b = 1 OR c.is_sales = 1) " +
-            "AND COALESCE(t.source_type, '') NOT IN ('loan_receivable', 'loan_payment') " +
-            "GROUP BY c.name ORDER BY total DESC");
+            "AND COALESCE(t.source_type, '') NOT IN ('loan_receivable', 'loan_payment')" +
+            monthFilter +
+            " GROUP BY c.name ORDER BY total DESC", monthParams);
 
         if (!result[0] || result[0].values.length === 0) {
             canvas.parentElement.innerHTML = '<div style="padding:24px;color:var(--text-muted);text-align:center;">No revenue data yet</div>';
@@ -3007,22 +3039,20 @@ const App = {
         container.innerHTML = html;
     },
 
-    _renderDashBreakevenBar() {
+    _renderDashBreakevenBar(snapshotMonth) {
         const container = document.getElementById('dashBreakevenBar');
         if (!container) return;
 
-        // Use the real current month (not timeline end which may be in the future)
-        const currentMonth = Utils.getCurrentMonth();
-        // Use actual P&L operating expenses (varies by month) instead of flat budget amounts
-        const opexByMonth = Database.getMonthlyTotalOpex([currentMonth]);
-        const totalMonthlyExpenses = opexByMonth[currentMonth] || 0;
+        const targetMonth = snapshotMonth || Utils.getCurrentMonth();
+        const opexByMonth = Database.getMonthlyTotalOpex([targetMonth]);
+        const totalMonthlyExpenses = opexByMonth[targetMonth] || 0;
 
-        // Gross profit directly from P&L (Revenue - COGS, with overrides)
-        const gpByMonth = Database.getMonthlyGrossProfit([currentMonth]);
-        const currentGP = gpByMonth[currentMonth] || 0;
+        const gpByMonth = Database.getMonthlyGrossProfit([targetMonth]);
+        const currentGP = gpByMonth[targetMonth] || 0;
 
         const pct = totalMonthlyExpenses > 0 ? Math.min(100, Math.round(currentGP / totalMonthlyExpenses * 100)) : 0;
         const color = pct >= 100 ? 'var(--color-success, #10b981)' : pct >= 60 ? 'var(--color-warning, #f59e0b)' : 'var(--color-danger, #ef4444)';
+        const monthLabel = snapshotMonth ? Utils.formatMonthShort(targetMonth) : 'this month';
 
         container.innerHTML =
             '<div class="dash-be-info">' +
@@ -3032,7 +3062,7 @@ const App = {
             '<div class="dash-be-track">' +
                 '<div class="dash-be-fill" style="width: ' + pct + '%; background: ' + color + ';"></div>' +
             '</div>' +
-            '<div class="dash-be-pct">' + pct + '% to break-even this month</div>';
+            '<div class="dash-be-pct">' + pct + '% to break-even ' + monthLabel + '</div>';
     },
 
     // ==================== QUICK ENTRY (Multi-Line) ====================
@@ -4979,6 +5009,17 @@ const App = {
                 const asOf = document.getElementById('beProgressMonth').value;
                 this._computeAndRenderProgress(beResult, cfg, months, asOf, timelinePoints);
             }
+        });
+
+        // ==================== DASHBOARD SNAPSHOT ====================
+        document.getElementById('dashSnapshotMonth').addEventListener('change', (e) => {
+            this._dashSnapshotMonth = e.target.value || null;
+            this.refreshDashboard();
+        });
+
+        // ==================== BREAK-EVEN SNAPSHOT ====================
+        document.getElementById('beSnapshotMonth').addEventListener('change', () => {
+            this.refreshBreakeven();
         });
 
         // ==================== PROJECTED SALES ====================
@@ -8709,6 +8750,27 @@ const App = {
         // When projected mode has an as-of month, use it as the cutoff for actual vs projected
         const currentMonth = (useProjected && cfg.asOfMonth) ? cfg.asOfMonth : realCurrentMonth;
 
+        // Populate snapshot month dropdown
+        const beSnapshotSelect = document.getElementById('beSnapshotMonth');
+        if (beSnapshotSelect) {
+            let allTimelineMonths = [];
+            if (timeline.start && timeline.end) {
+                allTimelineMonths = Utils.generateMonthRange(timeline.start, timeline.end);
+            } else {
+                allTimelineMonths = this._getTimelineMonths();
+            }
+            const availableMonths = allTimelineMonths.filter(m => m <= realCurrentMonth);
+            const prevVal = beSnapshotSelect.value;
+            beSnapshotSelect.innerHTML = '<option value="">Current Month</option>' +
+                availableMonths.map(m => `<option value="${m}">${Utils.formatMonthShort(m)}</option>`).join('');
+            if (prevVal && availableMonths.includes(prevVal)) {
+                beSnapshotSelect.value = prevVal;
+            } else {
+                beSnapshotSelect.value = '';
+            }
+        }
+        const beSnapshotMonth = beSnapshotSelect ? beSnapshotSelect.value : '';
+
         // Timeline banner
         const banner = document.getElementById('beTimelineBanner');
         if (timeline.start || timeline.end) {
@@ -8716,10 +8778,16 @@ const App = {
             const endLabel = timeline.end ? Utils.formatMonthShort(timeline.end) : 'Present';
             const isLocal = (cfg.timeline && (cfg.timeline.start || cfg.timeline.end));
             const asOfLabel = (useProjected && cfg.asOfMonth) ? ` as of ${Utils.formatMonthShort(cfg.asOfMonth)}` : '';
-            banner.textContent = `Timeline: ${startLabel} \u2013 ${endLabel}${isLocal ? ' (local override)' : ''} \u2022 ${useProjected ? 'Projected' : 'Actual'}${asOfLabel}`;
+            const snapshotLabel = beSnapshotMonth ? ` • Snapshot: ${Utils.formatMonthShort(beSnapshotMonth)}` : '';
+            banner.textContent = `Timeline: ${startLabel} \u2013 ${endLabel}${isLocal ? ' (local override)' : ''} \u2022 ${useProjected ? 'Projected' : 'Actual'}${asOfLabel}${snapshotLabel}`;
             banner.style.display = 'block';
         } else {
-            banner.style.display = 'none';
+            if (beSnapshotMonth) {
+                banner.textContent = `Snapshot: ${Utils.formatMonthShort(beSnapshotMonth)}`;
+                banner.style.display = 'block';
+            } else {
+                banner.style.display = 'none';
+            }
         }
 
         // Compute monthly fixed costs
@@ -8728,6 +8796,12 @@ const App = {
             months = Utils.generateMonthRange(timeline.start, timeline.end);
         } else {
             months = [currentMonth];
+        }
+
+        // Apply snapshot filter — only include months up to snapshot
+        if (beSnapshotMonth) {
+            months = months.filter(m => m <= beSnapshotMonth);
+            if (months.length === 0) months = [beSnapshotMonth];
         }
 
         // Ensure P&L has been rendered so UI._pnlMonthOpex is available
