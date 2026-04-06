@@ -843,6 +843,102 @@ const Utils = {
         });
 
         return results;
+    },
+
+    /**
+     * Evaluate a math expression string with standard operator precedence.
+     * Supports: +, -, *, ×, /, ÷, parentheses, unary minus, decimals.
+     * Returns { value: number, error: string|null }
+     */
+    evaluateExpression(str) {
+        if (!str || !str.trim()) return { value: 0, error: null };
+
+        // Normalize operator symbols
+        let expr = str.replace(/×/g, '*').replace(/÷/g, '/').replace(/−/g, '-');
+        // Strip currency symbols and commas from numbers
+        expr = expr.replace(/\$\s*/g, '').replace(/,/g, '');
+
+        let pos = 0;
+        const ch = () => expr[pos] || '';
+        const skipSpaces = () => { while (pos < expr.length && expr[pos] === ' ') pos++; };
+
+        const parseNumber = () => {
+            skipSpaces();
+            let start = pos;
+            if (ch() === '-') pos++;
+            if (pos < expr.length && (expr[pos] >= '0' && expr[pos] <= '9' || expr[pos] === '.')) {
+                while (pos < expr.length && ((expr[pos] >= '0' && expr[pos] <= '9') || expr[pos] === '.')) pos++;
+                return parseFloat(expr.slice(start, pos));
+            }
+            pos = start;
+            return null;
+        };
+
+        const parseFactor = () => {
+            skipSpaces();
+            if (ch() === '(') {
+                pos++; // skip '('
+                const val = parseExpression();
+                skipSpaces();
+                if (ch() !== ')') return { value: NaN, error: 'Unmatched parentheses' };
+                pos++; // skip ')'
+                return val;
+            }
+            if (ch() === '-') {
+                pos++;
+                const factor = parseFactor();
+                if (factor.error) return factor;
+                return { value: -factor.value, error: null };
+            }
+            const num = parseNumber();
+            if (num === null || isNaN(num)) return { value: NaN, error: 'Unexpected character: ' + (ch() || 'end of expression') };
+            return { value: num, error: null };
+        };
+
+        const parseTerm = () => {
+            let result = parseFactor();
+            if (result.error) return result;
+            skipSpaces();
+            while (ch() === '*' || ch() === '/') {
+                const op = ch();
+                pos++;
+                const right = parseFactor();
+                if (right.error) return right;
+                if (op === '/') {
+                    if (right.value === 0) return { value: NaN, error: 'Division by zero' };
+                    result.value /= right.value;
+                } else {
+                    result.value *= right.value;
+                }
+                skipSpaces();
+            }
+            return result;
+        };
+
+        const parseExpression = () => {
+            let result = parseTerm();
+            if (result.error) return result;
+            skipSpaces();
+            while (ch() === '+' || ch() === '-') {
+                const op = ch();
+                pos++;
+                const right = parseTerm();
+                if (right.error) return right;
+                result.value = op === '+' ? result.value + right.value : result.value - right.value;
+                skipSpaces();
+            }
+            return result;
+        };
+
+        try {
+            const result = parseExpression();
+            skipSpaces();
+            if (pos < expr.length) return { value: NaN, error: 'Unexpected character: ' + ch() };
+            if (result.error) return result;
+            return { value: Math.round(result.value * 100) / 100, error: null };
+        } catch (e) {
+            return { value: NaN, error: 'Parse error' };
+        }
     }
 };
 

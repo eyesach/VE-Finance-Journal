@@ -469,7 +469,7 @@ const UI = {
                         ${this.capitalizeFirst(t.transaction_type)}
                     </span>
                 </td>
-                <td class="${amountClass}">${Utils.formatCurrency(t.amount)}</td>
+                <td class="${amountClass} txn-amount" data-txn-id="${t.id}">${Utils.formatCurrency(t.amount)}</td>
                 <td>${monthDueDisplay}</td>
                 <td>
                     ${statusDropdown}
@@ -841,10 +841,10 @@ const UI = {
                     const overClass = isCFOverridden(catId, m) ? ' pnl-overridden' : '';
                     const projClass = isFuture(m) && !isCFOverridden(catId, m) ? ' cashflow-projected' : '';
                     const editClass = isFuture(m) ? ' cf-editable' : '';
-                    html += `<td class="amount-receivable${overClass}${projClass}${editClass}" data-cat-id="${catId}" data-month="${m}">${amt ? fmtAmt(amt) : ''}</td>`;
+                    html += `<td class="amount-receivable cf-calc-cell${overClass}${projClass}${editClass}" data-cat-id="${catId}" data-month="${m}">${amt ? fmtAmt(amt) : ''}</td>`;
                 }
             });
-            html += `<td class="amount-receivable">${fmtAmt(rowTotal)}</td></tr>`;
+            html += `<td class="amount-receivable cf-calc-cell" data-cat-id="${catId}" data-month="total">${fmtAmt(rowTotal)}</td></tr>`;
         });
 
         if (receivableEntries.length === 0 && !psActive) {
@@ -858,7 +858,7 @@ const UI = {
         html += '<tr class="cashflow-subtotal"><td>Total Cash Receipts</td>';
         months.forEach(m => {
             totalAllReceipts += monthReceipts[m];
-            html += `<td class="amount-receivable">${fmtAmt(monthReceipts[m])}</td>`;
+            html += `<td class="amount-receivable cf-calc-cell" data-cf-label="Total Receipts" data-month="${m}">${fmtAmt(monthReceipts[m])}</td>`;
         });
         html += `<td class="amount-receivable">${fmtAmt(totalAllReceipts)}</td></tr>`;
 
@@ -918,9 +918,9 @@ const UI = {
                 const overClass = isCFOverridden(catId, m) ? ' pnl-overridden' : '';
                 const projClass = isFuture(m) && !isCFOverridden(catId, m) ? ' cashflow-projected' : '';
                 const editClass = isFuture(m) ? ' cf-editable' : '';
-                html += `<td class="amount-payable${overClass}${projClass}${editClass}" data-cat-id="${catId}" data-month="${m}">${amt ? fmtAmt(amt) : ''}</td>`;
+                html += `<td class="amount-payable cf-calc-cell${overClass}${projClass}${editClass}" data-cat-id="${catId}" data-month="${m}">${amt ? fmtAmt(amt) : ''}</td>`;
             });
-            html += `<td class="amount-payable">${fmtAmt(rowTotal)}</td></tr>`;
+            html += `<td class="amount-payable cf-calc-cell" data-cat-id="${catId}" data-month="total">${fmtAmt(rowTotal)}</td></tr>`;
         });
 
         if (payableEntries.length === 0 && !psActive) {
@@ -934,7 +934,7 @@ const UI = {
         html += '<tr class="cashflow-subtotal"><td>Total Cash Payments</td>';
         months.forEach(m => {
             totalAllPayments += monthPayments[m];
-            html += `<td class="amount-payable">${fmtAmt(monthPayments[m])}</td>`;
+            html += `<td class="amount-payable cf-calc-cell" data-cf-label="Total Payments" data-month="${m}">${fmtAmt(monthPayments[m])}</td>`;
         });
         html += `<td class="amount-payable">${fmtAmt(totalAllPayments)}</td></tr>`;
 
@@ -1188,7 +1188,7 @@ const UI = {
                     rowTotal += val;
                     const overriddenClass = isOverridden(catId, m) ? ' pnl-overridden' : '';
                     const projClass = isFuture(m) && !isOverridden(catId, m) ? ' pnl-projected' : '';
-                    html += `<td class="pnl-editable${overriddenClass}${projClass}" data-cat-id="${catId}" data-month="${m}">${fmtAmt(val)}</td>`;
+                    html += `<td class="pnl-editable pnl-calc-cell${overriddenClass}${projClass}" data-cat-id="${catId}" data-month="${m}">${fmtAmt(val)}</td>`;
                 }
             });
             html += `<td>${fmtAmt(rowTotal)}</td></tr>`;
@@ -1207,7 +1207,7 @@ const UI = {
                 rowTotal += val;
                 const overriddenClass = isOverridden(catId, m) ? ' pnl-overridden' : '';
                 const projClass = isFuture(m) && !isOverridden(catId, m) ? ' pnl-projected' : '';
-                html += `<td class="pnl-editable${overriddenClass}${projClass}" data-cat-id="${catId}" data-month="${m}">${fmtAmt(val)}</td>`;
+                html += `<td class="pnl-editable pnl-calc-cell${overriddenClass}${projClass}" data-cat-id="${catId}" data-month="${m}">${fmtAmt(val)}</td>`;
             });
             html += `<td>${fmtAmt(rowTotal)}</td></tr>`;
         });
@@ -1217,9 +1217,9 @@ const UI = {
         html += '<tr class="pnl-subtotal"><td>Total Revenue</td>';
         months.forEach(m => {
             totalRevenue += monthRevenue[m];
-            html += `<td>${fmtAmt(monthRevenue[m])}</td>`;
+            html += `<td class="pnl-calc-cell" data-pnl-label="Total Revenue" data-month="${m}">${fmtAmt(monthRevenue[m])}</td>`;
         });
-        html += `<td>${fmtAmt(totalRevenue)}</td></tr>`;
+        html += `<td class="pnl-calc-cell" data-pnl-label="Total Revenue" data-month="total">${fmtAmt(totalRevenue)}</td></tr>`;
 
         // ===== COST OF GOODS SOLD =====
         html += `<tr class="pnl-section-header"><td colspan="${colSpan}">Cost of Goods Sold</td></tr>`;
@@ -1262,7 +1262,7 @@ const UI = {
                 rowTotal += val;
                 const overriddenClass = isOverridden(catId, m) ? ' pnl-overridden' : '';
                 const projClass = isFuture(m) && !isOverridden(catId, m) ? ' pnl-projected' : '';
-                html += `<td class="pnl-editable${overriddenClass}${projClass}" data-cat-id="${catId}" data-month="${m}">${fmtAmt(val)}</td>`;
+                html += `<td class="pnl-editable pnl-calc-cell${overriddenClass}${projClass}" data-cat-id="${catId}" data-month="${m}">${fmtAmt(val)}</td>`;
             });
             html += `<td>${fmtAmt(rowTotal)}</td></tr>`;
         });
@@ -1314,7 +1314,7 @@ const UI = {
                 rowTotal += val;
                 const overriddenClass = isOverridden(catId, m) ? ' pnl-overridden' : '';
                 const projClass = isFuture(m) && !isOverridden(catId, m) ? ' pnl-projected' : '';
-                html += `<td class="pnl-editable${overriddenClass}${projClass}" data-cat-id="${catId}" data-month="${m}">${fmtAmt(val)}</td>`;
+                html += `<td class="pnl-editable pnl-calc-cell${overriddenClass}${projClass}" data-cat-id="${catId}" data-month="${m}">${fmtAmt(val)}</td>`;
             });
             html += `<td>${fmtAmt(rowTotal)}</td></tr>`;
         });
@@ -1460,8 +1460,8 @@ const UI = {
 
         // Current Assets
         html += '<tr class="bs-subsection"><td colspan="2">Current Assets</td></tr>';
-        html += `<tr class="bs-indent"><td>Cash</td><td>${fmtAmt(data.cash)}</td></tr>`;
-        html += `<tr class="bs-indent"><td>Accounts Receivable</td><td>${fmtAmt(data.ar)}</td></tr>`;
+        html += `<tr class="bs-indent"><td>Cash</td><td class="bs-value" data-bs-key="cash">${fmtAmt(data.cash)}</td></tr>`;
+        html += `<tr class="bs-indent"><td>Accounts Receivable</td><td class="bs-value" data-bs-key="ar">${fmtAmt(data.ar)}</td></tr>`;
         if (data.arByCategory && data.arByCategory.length > 0) {
             data.arByCategory.forEach(cat => {
                 html += `<tr class="bs-detail-indent"><td>${Utils.escapeHtml(cat.category_name)}</td><td>${fmtAmt(cat.total)}</td></tr>`;
@@ -1469,7 +1469,7 @@ const UI = {
         }
 
         const totalCurrentAssets = data.cash + data.ar;
-        html += `<tr class="bs-subtotal"><td>Total Current Assets</td><td>${fmtAmt(totalCurrentAssets)}</td></tr>`;
+        html += `<tr class="bs-subtotal"><td>Total Current Assets</td><td class="bs-value" data-bs-key="totalCurrentAssets">${fmtAmt(totalCurrentAssets)}</td></tr>`;
 
         // Fixed Assets
         html += '<tr class="bs-subsection"><td colspan="2">Fixed Assets</td></tr>';
@@ -1483,10 +1483,10 @@ const UI = {
 
         html += `<tr class="bs-indent"><td>Total Fixed Assets (Cost)</td><td>${fmtAmt(data.totalFixedAssetCost)}</td></tr>`;
         html += `<tr class="bs-indent"><td>Less: Accumulated Depreciation</td><td>(${fmtAmt(data.totalAccumDepr)})</td></tr>`;
-        html += `<tr class="bs-subtotal"><td>Net Fixed Assets</td><td>${fmtAmt(data.netFixedAssets)}</td></tr>`;
+        html += `<tr class="bs-subtotal"><td>Net Fixed Assets</td><td class="bs-value" data-bs-key="netFixedAssets">${fmtAmt(data.netFixedAssets)}</td></tr>`;
 
         // Total Assets
-        html += `<tr class="bs-total"><td>Total Assets</td><td>${fmtAmt(data.totalAssets)}</td></tr>`;
+        html += `<tr class="bs-total"><td>Total Assets</td><td class="bs-value" data-bs-key="totalAssets">${fmtAmt(data.totalAssets)}</td></tr>`;
 
         // Spacer
         html += '<tr><td colspan="2" style="padding:8px;"></td></tr>';
@@ -1496,16 +1496,16 @@ const UI = {
 
         // Current Liabilities
         html += '<tr class="bs-subsection"><td colspan="2">Current Liabilities</td></tr>';
-        html += `<tr class="bs-indent"><td>Accounts Payable</td><td>${fmtAmt(data.ap)}</td></tr>`;
+        html += `<tr class="bs-indent"><td>Accounts Payable</td><td class="bs-value" data-bs-key="ap">${fmtAmt(data.ap)}</td></tr>`;
         if (data.apByCategory && data.apByCategory.length > 0) {
             data.apByCategory.forEach(cat => {
                 html += `<tr class="bs-detail-indent"><td>${Utils.escapeHtml(cat.category_name)}</td><td>${fmtAmt(cat.total)}</td></tr>`;
             });
         }
-        html += `<tr class="bs-indent"><td>Sales Tax Payable</td><td>${fmtAmt(data.salesTaxPayable)}</td></tr>`;
+        html += `<tr class="bs-indent"><td>Sales Tax Payable</td><td class="bs-value" data-bs-key="salesTaxPayable">${fmtAmt(data.salesTaxPayable)}</td></tr>`;
 
         const totalCurrentLiabilities = data.ap + data.salesTaxPayable;
-        html += `<tr class="bs-subtotal"><td>Total Current Liabilities</td><td>${fmtAmt(totalCurrentLiabilities)}</td></tr>`;
+        html += `<tr class="bs-subtotal"><td>Total Current Liabilities</td><td class="bs-value" data-bs-key="totalCurrentLiabilities">${fmtAmt(totalCurrentLiabilities)}</td></tr>`;
 
         // Long-Term Liabilities
         if (data.totalLoanBalance > 0 && data.loanDetails && data.loanDetails.length > 0) {
@@ -1518,20 +1518,20 @@ const UI = {
             html += `<tr class="bs-indent" style="font-weight:500;"><td>Total Loans Payable</td><td>${fmtAmt(data.totalLoanBalance)}</td></tr>`;
         }
 
-        html += `<tr class="bs-subtotal"><td>Total Liabilities</td><td>${fmtAmt(data.totalLiabilities)}</td></tr>`;
+        html += `<tr class="bs-subtotal"><td>Total Liabilities</td><td class="bs-value" data-bs-key="totalLiabilities">${fmtAmt(data.totalLiabilities)}</td></tr>`;
 
         // Spacer
         html += '<tr><td colspan="2" style="padding:4px;"></td></tr>';
 
         // ===== STOCKHOLDERS' EQUITY =====
         html += '<tr class="bs-section-header"><td colspan="2">Stockholders\' Equity</td></tr>';
-        html += `<tr class="bs-indent"><td>Common Stock</td><td>${fmtAmt(data.commonStock)}</td></tr>`;
-        html += `<tr class="bs-indent"><td>Additional Paid-In Capital</td><td>${fmtAmt(data.apic)}</td></tr>`;
-        html += `<tr class="bs-indent"><td>Retained Earnings</td><td>${fmtAmt(data.retainedEarnings)}</td></tr>`;
-        html += `<tr class="bs-subtotal"><td>Total Stockholders' Equity</td><td>${fmtAmt(data.totalEquity)}</td></tr>`;
+        html += `<tr class="bs-indent"><td>Common Stock</td><td class="bs-value" data-bs-key="commonStock">${fmtAmt(data.commonStock)}</td></tr>`;
+        html += `<tr class="bs-indent"><td>Additional Paid-In Capital</td><td class="bs-value" data-bs-key="apic">${fmtAmt(data.apic)}</td></tr>`;
+        html += `<tr class="bs-indent"><td>Retained Earnings</td><td class="bs-value" data-bs-key="retainedEarnings">${fmtAmt(data.retainedEarnings)}</td></tr>`;
+        html += `<tr class="bs-subtotal"><td>Total Stockholders' Equity</td><td class="bs-value" data-bs-key="totalEquity">${fmtAmt(data.totalEquity)}</td></tr>`;
 
         // Total Liabilities + Equity
-        html += `<tr class="bs-total"><td>Total Liabilities + Equity</td><td>${fmtAmt(data.totalLiabilitiesAndEquity)}</td></tr>`;
+        html += `<tr class="bs-total"><td>Total Liabilities + Equity</td><td class="bs-value" data-bs-key="totalLiabilitiesAndEquity">${fmtAmt(data.totalLiabilitiesAndEquity)}</td></tr>`;
 
         html += '</tbody></table>';
 
@@ -1947,7 +1947,7 @@ const UI = {
             html += `<tr class="${rowClass}">`;
             html += `<td>${p.number}</td>`;
             html += `<td>${Utils.formatMonthShort(p.month)}</td>`;
-            html += `<td class="loan-payment-cell" data-loan-id="${selectedLoan.id}" data-payment="${p.number}">${p.skipped ? '—' : fmtAmt(p.payment)}</td>`;
+            html += `<td class="loan-payment-cell loan-amount" data-loan-id="${selectedLoan.id}" data-payment="${p.number}">${p.skipped ? '—' : fmtAmt(p.payment)}</td>`;
             html += `<td>${p.skipped ? '—' : fmtAmt(p.principal)}</td>`;
             html += `<td class="amount-payable">${fmtAmt(p.interest)}</td>`;
             html += `<td>${fmtAmt(p.ending_balance)}</td>`;
@@ -2122,7 +2122,7 @@ const UI = {
                 const active = isActive(exp);
                 return `<div class="budget-expense-row${!active ? ' budget-expense-inactive' : ''}" data-id="${exp.id}" draggable="true" data-group-id="${exp.group_id || ''}">
                     <span class="budget-expense-name">${Utils.escapeHtml(exp.name)}</span>
-                    <span class="budget-expense-amount">${fmtAmt(exp.monthly_amount)}</span>
+                    <span class="budget-expense-amount budget-amount" data-budget-id="${exp.id}">${fmtAmt(exp.monthly_amount)}</span>
                     <div class="budget-expense-actions">
                         <button class="btn-icon edit-budget-btn" data-id="${exp.id}" title="Edit">&#9998;</button>
                         <button class="btn-icon delete-budget-btn" data-id="${exp.id}" title="Delete">&times;</button>
@@ -3027,9 +3027,9 @@ const UI = {
             months.forEach(m => {
                 const rev = (byMonth[m] && byMonth[m][key + 'Revenue']) || 0;
                 totalRev += rev;
-                html += `<td class="amount-receivable">${rev ? fmtAmt(rev) : ''}</td>`;
+                html += `<td class="amount-receivable ps-amount" data-ps-month="${m}">${rev ? fmtAmt(rev) : ''}</td>`;
             });
-            html += `<td class="amount-receivable">${fmtAmt(totalRev)}</td></tr>`;
+            html += `<td class="amount-receivable ps-amount" data-ps-month="total">${fmtAmt(totalRev)}</td></tr>`;
 
             // COGS row
             let totalCogs = 0;
@@ -3037,7 +3037,7 @@ const UI = {
             months.forEach(m => {
                 const cg = (byMonth[m] && byMonth[m][key + 'Cogs']) || 0;
                 totalCogs += cg;
-                html += `<td class="amount-payable">${cg ? fmtAmt(cg) : ''}</td>`;
+                html += `<td class="amount-payable ps-amount" data-ps-month="${m}">${cg ? fmtAmt(cg) : ''}</td>`;
             });
             html += `<td class="amount-payable">${fmtAmt(totalCogs)}</td></tr>`;
 

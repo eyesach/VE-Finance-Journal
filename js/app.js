@@ -105,6 +105,8 @@ const App = {
     _pvmChartRevenue: null,
     _syncAutoSaveWrapped: false,
     _rollbackTargetVersion: null,
+    calcMode: false,
+    calcRefCounter: 0,
 
     // Theme preset palettes: { c1: sidebar, c2: accent, c3: background, c4: surface, c5: border, c6: text, style?: string }
     themePresets: {
@@ -687,6 +689,7 @@ const App = {
         container.dataset.cfCellSetup = '1';
 
         container.addEventListener('click', (e) => {
+            if (this.calcMode) return;
             const cell = e.target.closest('.cf-editable');
             if (!cell) return;
 
@@ -1004,6 +1007,7 @@ const App = {
         container.dataset.pnlEditing = '1';
 
         container.addEventListener('click', (e) => {
+            if (this.calcMode) return;
             const cell = e.target.closest('.pnl-editable');
             if (!cell || cell.querySelector('.pnl-cell-input')) return;
 
@@ -3353,6 +3357,10 @@ const App = {
         if (input) {
             input.value = Math.round(config.rate * 1e6) / 1e4;
         }
+        const minInput = document.getElementById('shippingFeeMin');
+        if (minInput) {
+            minInput.value = config.minFee || 0;
+        }
     },
 
     /**
@@ -4247,15 +4255,21 @@ const App = {
             });
         }
 
-        // Shipping fee rate
+        // Shipping fee rate + minimum
         const shippingRateInput = document.getElementById('shippingFeeRate');
+        const shippingMinInput = document.getElementById('shippingFeeMin');
+        const saveShippingConfig = () => {
+            const pct = parseFloat(shippingRateInput?.value) || 0;
+            const minFee = parseFloat(shippingMinInput?.value) || 0;
+            Database.setShippingFeeConfig({ rate: Math.round(pct * 1e4) / 1e6, minFee });
+            this.syncAllB2BContractEntries();
+            this.refreshAll();
+        };
         if (shippingRateInput) {
-            shippingRateInput.addEventListener('change', () => {
-                const pct = parseFloat(shippingRateInput.value) || 0;
-                Database.setShippingFeeConfig({ rate: Math.round(pct * 1e4) / 1e6 });
-                this.syncAllB2BContractEntries();
-                this.refreshAll();
-            });
+            shippingRateInput.addEventListener('change', saveShippingConfig);
+        }
+        if (shippingMinInput) {
+            shippingMinInput.addEventListener('change', saveShippingConfig);
         }
 
         // ==================== TIMELINE ====================
@@ -4365,6 +4379,92 @@ const App = {
         document.addEventListener('mouseup', () => {
             if (this._bulkDragState) {
                 this._bulkDragState = null;
+            }
+        });
+
+        // ==================== CALCULATOR SIDEBAR ====================
+
+        document.getElementById('calcToggleBtn').addEventListener('click', () => {
+            this.toggleCalcMode();
+        });
+
+        document.getElementById('calcCloseBtn').addEventListener('click', () => {
+            this.exitCalcMode();
+        });
+
+        document.getElementById('calcClearBtn').addEventListener('click', () => {
+            this.calcClear();
+        });
+
+        document.getElementById('calcCopyResultBtn').addEventListener('click', () => {
+            const text = document.getElementById('calcResult').textContent;
+            navigator.clipboard.writeText(text).then(() => UI.showNotification('Result copied: ' + text, 'success'));
+        });
+
+        document.getElementById('calcCopyFormulaBtn').addEventListener('click', () => {
+            const text = document.getElementById('calcFormulaBar').textContent;
+            navigator.clipboard.writeText(text).then(() => UI.showNotification('Formula copied', 'success'));
+        });
+
+        document.getElementById('calcFormulaBar').addEventListener('input', () => {
+            this.calcRecalculate();
+        });
+
+        // Paste: plain text only
+        document.getElementById('calcFormulaBar').addEventListener('paste', (e) => {
+            e.preventDefault();
+            const text = (e.clipboardData || window.clipboardData).getData('text/plain');
+            document.execCommand('insertText', false, text);
+        });
+
+        // Operator buttons for manual input
+        document.querySelectorAll('.calc-op-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                this.calcInsertManual(btn.dataset.op);
+            });
+        });
+
+        // Manual input: Enter key inserts as addition
+        document.getElementById('calcManualValue').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                this.calcInsertManual('+');
+            }
+        });
+
+        // Delegated click for calc cell selection (capture phase to intercept before edit handlers)
+        document.querySelector('.app-main').addEventListener('click', (e) => {
+            if (!this.calcMode) return;
+            const cell = e.target.closest('.pnl-calc-cell, .cf-calc-cell, .bs-value, .txn-amount, .budget-amount, .loan-amount, .asset-amount, .ps-amount');
+            if (!cell) return;
+            e.preventDefault();
+            e.stopPropagation();
+            this.handleCalcCellClick(cell, e);
+        }, true);
+
+        // Escape to close calc mode
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && this.calcMode) {
+                const formulaBar = document.getElementById('calcFormulaBar');
+                if (document.activeElement === formulaBar) {
+                    formulaBar.blur();
+                } else {
+                    this.exitCalcMode();
+                }
+            }
+        });
+
+        // Reference list click to highlight
+        document.getElementById('calcRefList').addEventListener('click', (e) => {
+            const item = e.target.closest('.calc-ref-item');
+            if (!item) return;
+            const refId = item.dataset.refId;
+            const span = document.querySelector('#calcFormulaBar .calc-cell-ref[data-ref-id="' + refId + '"]');
+            if (span) {
+                span.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                span.classList.remove('calc-ref-flash');
+                void span.offsetWidth; // force reflow
+                span.classList.add('calc-ref-flash');
             }
         });
 
@@ -5322,9 +5422,12 @@ const App = {
 
         if (category && category.is_sales) {
             const baseCost = data.inventory_cost || 0;
-            const shippingRate = (Database.getShippingFeeConfig().rate) || 0;
+            const shippingConfig = Database.getShippingFeeConfig();
+            const shippingRate = shippingConfig.rate || 0;
+            const shippingMinFee = shippingConfig.minFee || 0;
             // Include shipping fee in COGS (integer-cent math to avoid rounding errors)
-            const costAmount = Math.round(baseCost * (1 + shippingRate) * 100) / 100;
+            const shippingFee = baseCost > 0 ? Math.max(Math.round(baseCost * shippingRate * 100) / 100, shippingMinFee) : 0;
+            const costAmount = Math.round((baseCost + shippingFee) * 100) / 100;
             const dateLabel = Utils.formatSaleDateRange(data.sale_date_start, data.sale_date_end);
             const desc = dateLabel ? 'Inventory Cost' : 'Inventory Cost';
             const description = shippingRate > 0
@@ -7692,6 +7795,235 @@ const App = {
             console.error('Error recording budget entries:', error);
             UI.showNotification('Failed to record entries', 'error');
         }
+    },
+
+    // ==================== CALCULATOR SIDEBAR ====================
+
+    toggleCalcMode() {
+        if (this.calcMode) {
+            this.exitCalcMode();
+        } else {
+            this.enterCalcMode();
+        }
+    },
+
+    enterCalcMode() {
+        this.calcMode = true;
+        this.calcRefCounter = 0;
+        const btn = document.getElementById('calcToggleBtn');
+        const sidebar = document.getElementById('calcSidebar');
+        const appMain = document.querySelector('.app-main');
+        const appContainer = document.querySelector('.app-container');
+
+        btn.classList.add('active');
+        appContainer.classList.add('calc-mode');
+        appMain.classList.add('calc-sidebar-active');
+        sidebar.style.display = 'flex';
+        requestAnimationFrame(() => {
+            sidebar.classList.add('calc-open');
+        });
+
+        // Auto-collapse left sidebar on narrow screens
+        if (window.matchMedia('(max-width: 1024px)').matches) {
+            appContainer.classList.remove('sidebar-open');
+        }
+
+        this.calcClear();
+    },
+
+    exitCalcMode() {
+        if (!this.calcMode) return;
+        this.calcMode = false;
+        const btn = document.getElementById('calcToggleBtn');
+        const sidebar = document.getElementById('calcSidebar');
+        const appMain = document.querySelector('.app-main');
+        const appContainer = document.querySelector('.app-container');
+
+        btn.classList.remove('active');
+        appContainer.classList.remove('calc-mode');
+        appMain.classList.remove('calc-sidebar-active');
+        sidebar.classList.remove('calc-open');
+
+        // Remove all cell highlights
+        document.querySelectorAll('.calc-cell-selected').forEach(el => el.classList.remove('calc-cell-selected'));
+
+        setTimeout(() => {
+            sidebar.style.display = '';
+        }, 250);
+    },
+
+    handleCalcCellClick(cell, e) {
+        // Extract numeric value
+        let rawText = cell.textContent.replace(/[^0-9.\-]/g, '');
+        const rawValue = parseFloat(rawText) || 0;
+
+        // Determine label from cell context
+        const label = this._calcCellLabel(cell);
+
+        // Determine operation: Ctrl = subtract, Shift = multiply, Alt = divide
+        let op = '+';
+        if (e.ctrlKey || e.metaKey) op = '-';
+        else if (e.shiftKey) op = '*';
+        else if (e.altKey) op = '/';
+
+        const refId = ++this.calcRefCounter;
+        const formulaBar = document.getElementById('calcFormulaBar');
+
+        // If formula bar already has content, insert operator before new value
+        const existingText = formulaBar.textContent.trim();
+        if (existingText.length > 0) {
+            const opSymbol = { '+': ' + ', '-': ' - ', '*': ' × ', '/': ' ÷ ' }[op];
+            formulaBar.appendChild(document.createTextNode(opSymbol));
+        }
+
+        // Create the cell reference span
+        const span = document.createElement('span');
+        span.className = 'calc-cell-ref';
+        span.contentEditable = 'false';
+        span.dataset.refId = refId;
+        span.dataset.rawValue = rawValue;
+        span.dataset.op = op;
+        span.title = label;
+        span.textContent = Utils.formatCurrency(rawValue);
+        formulaBar.appendChild(span);
+
+        // Highlight the cell on the spreadsheet
+        cell.classList.add('calc-cell-selected');
+        cell.dataset.calcRefId = refId;
+
+        // Add to reference list
+        this._calcAddRefItem(refId, rawValue, label);
+
+        this.calcRecalculate();
+    },
+
+    _calcCellLabel(cell) {
+        // P&L or Cash Flow cells
+        if (cell.classList.contains('pnl-calc-cell') || cell.classList.contains('cf-calc-cell')) {
+            const month = cell.dataset.month || '';
+            // Check for summary labels
+            if (cell.dataset.pnlLabel) return cell.dataset.pnlLabel + (month !== 'total' ? ' · ' + Utils.formatMonthShort(month) : ' · Total');
+            if (cell.dataset.cfLabel) return cell.dataset.cfLabel + (month !== 'total' ? ' · ' + Utils.formatMonthShort(month) : ' · Total');
+            // Category row — get name from first cell in the row
+            const row = cell.closest('tr');
+            const nameCell = row ? row.querySelector('td:first-child') : null;
+            const catName = nameCell ? nameCell.textContent.trim() : 'Cell';
+            const monthLabel = month === 'total' ? 'Total' : Utils.formatMonthShort(month);
+            return catName + ' · ' + monthLabel;
+        }
+        // Balance Sheet
+        if (cell.classList.contains('bs-value')) {
+            const key = cell.dataset.bsKey || '';
+            const row = cell.closest('tr');
+            const nameCell = row ? row.querySelector('td:first-child') : null;
+            return nameCell ? nameCell.textContent.trim() : key;
+        }
+        // Journal transactions
+        if (cell.classList.contains('txn-amount')) {
+            const row = cell.closest('tr');
+            const catCell = row ? row.querySelector('td:nth-child(3)') : null;
+            return catCell ? catCell.textContent.trim() : 'Transaction #' + (cell.dataset.txnId || '');
+        }
+        // Budget
+        if (cell.classList.contains('budget-amount')) {
+            const row = cell.closest('.budget-expense-row');
+            const nameEl = row ? row.querySelector('.budget-expense-name') : null;
+            return nameEl ? nameEl.textContent.trim() : 'Budget item';
+        }
+        // Loan
+        if (cell.classList.contains('loan-amount')) {
+            return 'Loan Payment #' + (cell.dataset.payment || '');
+        }
+        // Projected Sales
+        if (cell.classList.contains('ps-amount')) {
+            const row = cell.closest('tr');
+            const nameCell = row ? row.querySelector('td:first-child') : null;
+            const month = cell.dataset.psMonth || '';
+            const label = nameCell ? nameCell.textContent.trim() : 'Projected';
+            return label + (month !== 'total' ? ' · ' + Utils.formatMonthShort(month) : ' · Total');
+        }
+        return 'Cell';
+    },
+
+    _calcAddRefItem(refId, value, label) {
+        const list = document.getElementById('calcRefList');
+        const item = document.createElement('div');
+        item.className = 'calc-ref-item';
+        item.dataset.refId = refId;
+        item.innerHTML = `<span class="calc-ref-value">${Utils.formatCurrency(value)}</span><span class="calc-ref-label">${Utils.escapeHtml(label)}</span>`;
+        list.appendChild(item);
+
+        // Update count
+        const count = list.children.length;
+        document.getElementById('calcCellCount').textContent = count + ' cell' + (count !== 1 ? 's' : '') + ' selected';
+        document.getElementById('calcReferencesHeader').dataset.count = count;
+    },
+
+    calcRecalculate() {
+        const formulaBar = document.getElementById('calcFormulaBar');
+        const resultEl = document.getElementById('calcResult');
+
+        // Walk DOM to build expression string
+        let expr = '';
+        formulaBar.childNodes.forEach(node => {
+            if (node.nodeType === Node.TEXT_NODE) {
+                expr += node.textContent;
+            } else if (node.classList && node.classList.contains('calc-cell-ref')) {
+                expr += node.dataset.rawValue || '0';
+            } else {
+                expr += node.textContent;
+            }
+        });
+
+        if (!expr.trim()) {
+            resultEl.textContent = '$0.00';
+            resultEl.classList.remove('calc-error');
+            return;
+        }
+
+        const result = Utils.evaluateExpression(expr);
+        if (result.error) {
+            resultEl.textContent = 'Error: ' + result.error;
+            resultEl.classList.add('calc-error');
+        } else {
+            resultEl.textContent = Utils.formatCurrency(result.value);
+            resultEl.classList.remove('calc-error');
+        }
+    },
+
+    calcInsertManual(op) {
+        const input = document.getElementById('calcManualValue');
+        const formulaBar = document.getElementById('calcFormulaBar');
+        const val = input.value.trim();
+
+        if (val) {
+            // If bar has content, insert operator first
+            const existing = formulaBar.textContent.trim();
+            if (existing.length > 0) {
+                const opSymbol = { '+': ' + ', '-': ' - ', '*': ' × ', '/': ' ÷ ' }[op];
+                formulaBar.appendChild(document.createTextNode(opSymbol));
+            }
+            formulaBar.appendChild(document.createTextNode(val));
+            input.value = '';
+        } else if (formulaBar.textContent.trim().length > 0) {
+            // No value, just insert operator
+            const opSymbol = { '+': ' + ', '-': ' - ', '*': ' × ', '/': ' ÷ ' }[op];
+            formulaBar.appendChild(document.createTextNode(opSymbol));
+        }
+
+        this.calcRecalculate();
+        formulaBar.focus();
+    },
+
+    calcClear() {
+        document.getElementById('calcFormulaBar').innerHTML = '';
+        document.getElementById('calcResult').textContent = '$0.00';
+        document.getElementById('calcResult').classList.remove('calc-error');
+        document.getElementById('calcRefList').innerHTML = '';
+        document.getElementById('calcCellCount').textContent = '';
+        document.getElementById('calcReferencesHeader').dataset.count = '0';
+        document.querySelectorAll('.calc-cell-selected').forEach(el => el.classList.remove('calc-cell-selected'));
+        this.calcRefCounter = 0;
     },
 
     // ==================== EXPORT ====================
@@ -12132,13 +12464,16 @@ const App = {
         const computed = this._computeB2BContract(contract);
         const catId = contract.category_id || this._getOrCreateB2BCategory();
         const cogsCatId = Database.getOrCreateInventoryCostCategory();
-        const shippingRate = (Database.getShippingFeeConfig().rate) || 0;
+        const shippingConfig = Database.getShippingFeeConfig();
+        const shippingRate = shippingConfig.rate || 0;
+        const shippingMinFee = shippingConfig.minFee || 0;
         const currentMonth = Utils.getCurrentMonth();
         const isDirect = contract.entry_mode === 'direct';
         const monthlyRevenue = isDirect ? Math.round((contract.direct_revenue || 0) * 100) / 100 : computed.monthlyContractedRounded;
         const baseCogs = isDirect ? Math.round((contract.direct_cogs || 0) * 100) / 100 : Math.round(computed.cogsPerUnit * computed.unitsSold * 100) / 100;
         // Include shipping fee in COGS (integer-cent math to avoid rounding errors)
-        const monthlyCogs = Math.round(baseCogs * (1 + shippingRate) * 100) / 100;
+        const shippingFee = baseCogs > 0 ? Math.max(Math.round(baseCogs * shippingRate * 100) / 100, shippingMinFee) : 0;
+        const monthlyCogs = Math.round((baseCogs + shippingFee) * 100) / 100;
         const revenueDesc = isDirect
             ? `${contract.company_name} – B2B Contract`
             : `${contract.company_name} – B2B Contract (${computed.unitsSold} units)`;

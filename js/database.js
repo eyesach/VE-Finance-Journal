@@ -1098,18 +1098,18 @@ const Database = {
     // ==================== SHIPPING FEE CONFIG ====================
 
     /**
-     * Get shipping fee config (rate as decimal, e.g. 0.01 = 1%)
-     * @returns {Object} { rate: number }
+     * Get shipping fee config (rate as decimal, e.g. 0.01 = 1%, minFee as dollar amount)
+     * @returns {Object} { rate: number, minFee: number }
      */
     getShippingFeeConfig() {
         const result = this.db.exec("SELECT value FROM app_meta WHERE key = 'shipping_fee_config'");
         if (result.length === 0 || result[0].values.length === 0) {
-            return { rate: 0.01 };
+            return { rate: 0.01, minFee: 0 };
         }
         try {
-            return Object.assign({ rate: 0.01 }, JSON.parse(result[0].values[0][0]));
+            return Object.assign({ rate: 0.01, minFee: 0 }, JSON.parse(result[0].values[0][0]));
         } catch (e) {
-            return { rate: 0.01 };
+            return { rate: 0.01, minFee: 0 };
         }
     },
 

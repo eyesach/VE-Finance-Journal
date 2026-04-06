@@ -269,6 +269,10 @@
                                 <input type="number" id="shippingFeeRate" min="0" max="100" step="0.01" value="1" style="width:70px;" title="Shipping fee as % of inventory cost">
                                 <span style="font-size:0.85em;color:var(--text-secondary);">%</span>
                             </div>
+                            <div style="display:flex;align-items:center;gap:6px;margin-top:4px;">
+                                <span style="font-size:0.85em;color:var(--text-secondary);">Min $</span>
+                                <input type="number" id="shippingFeeMin" min="0" step="0.01" value="0" style="width:70px;" title="Minimum shipping fee per entry">
+                            </div>
                             <div style="font-size:0.75em;color:var(--text-secondary);margin-top:2px;">Applied to auto-created inventory payments</div>
                         </div>
                         <div class="gear-reset-section">
@@ -303,6 +307,7 @@
                 <button id="saveAllDbBtn" class="btn btn-secondary">Save All</button>
                 <button id="loadDbBtn" class="btn btn-secondary">Load</button>
                 <input type="file" id="loadDbInput" accept=".db" style="display: none;">
+                <button id="calcToggleBtn" class="btn btn-secondary" title="Calculator sidebar">Calc</button>
             </div>
         </header>
 
@@ -2713,6 +2718,41 @@
                 </div>
             </div>
         </div>
+        <!-- Calculator Sidebar -->
+        <aside id="calcSidebar" class="calc-sidebar">
+            <div class="calc-sidebar-header">
+                <span class="calc-sidebar-title">Calculator</span>
+                <button id="calcCloseBtn" class="calc-close-btn" title="Close calculator">&times;</button>
+            </div>
+            <div class="calc-result-section">
+                <div class="calc-result-label">Result</div>
+                <div class="calc-result" id="calcResult">$0.00</div>
+                <div class="calc-cell-count" id="calcCellCount"></div>
+            </div>
+            <div class="calc-formula-section">
+                <div class="calc-section-label">Formula</div>
+                <div class="calc-formula-bar" id="calcFormulaBar" contenteditable="true" data-placeholder="Click cells or type an expression..." spellcheck="false"></div>
+                <div class="calc-formula-hint">Click cells to add · Ctrl+Click to subtract · Type freely</div>
+            </div>
+            <div class="calc-references">
+                <div class="calc-section-label" id="calcReferencesHeader">Cell References</div>
+                <div class="calc-references-list" id="calcRefList"></div>
+            </div>
+            <div class="calc-manual-input">
+                <input type="number" id="calcManualValue" class="calc-manual-field" placeholder="Enter number..." step="any">
+                <div class="calc-operator-buttons">
+                    <button class="calc-op-btn calc-op-add" data-op="+" title="Add">+</button>
+                    <button class="calc-op-btn calc-op-sub" data-op="-" title="Subtract">&minus;</button>
+                    <button class="calc-op-btn calc-op-mul" data-op="*" title="Multiply">&times;</button>
+                    <button class="calc-op-btn calc-op-div" data-op="/" title="Divide">&divide;</button>
+                </div>
+            </div>
+            <div class="calc-footer">
+                <button id="calcClearBtn" class="btn btn-secondary btn-small">Clear</button>
+                <button id="calcCopyResultBtn" class="btn btn-secondary btn-small">Copy Result</button>
+                <button id="calcCopyFormulaBtn" class="btn btn-secondary btn-small">Copy Formula</button>
+            </div>
+        </aside>
         </div><!-- /.app-main -->
     </div>
 
