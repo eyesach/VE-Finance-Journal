@@ -216,23 +216,34 @@ const App = {
      * Refresh all UI components
      */
     refreshAll() {
-        this._syncAllLoanBudgetExpenses();
-        this.syncAllBudgetJournalEntries();
-        this.syncAllB2BContractEntries();
-        this.refreshCategories();
-        this.refreshTransactions();
-        this.refreshSummary();
-        this.refreshCashFlow();
-        this.refreshPnL();
-        this.refreshBalanceSheet();
-        this.refreshFixedAssets();
-        this.refreshLoans();
-        this.refreshBudget();
-        this.refreshBreakeven();
-        this.refreshProjectedSales();
-        this.refreshProducts();
-        this.refreshVESales();
-        this.refreshB2BContracts();
+        // Skip write-heavy sync operations in view-only mode — they can throw
+        // when the database snapshot is missing expected state
+        if (!this.isViewOnly) {
+            this._syncAllLoanBudgetExpenses();
+            this.syncAllBudgetJournalEntries();
+            this.syncAllB2BContractEntries();
+        }
+
+        // Wrap each refresh in try-catch so one failure doesn't block the rest
+        const refreshCalls = [
+            () => this.refreshCategories(),
+            () => this.refreshTransactions(),
+            () => this.refreshSummary(),
+            () => this.refreshCashFlow(),
+            () => this.refreshPnL(),
+            () => this.refreshBalanceSheet(),
+            () => this.refreshFixedAssets(),
+            () => this.refreshLoans(),
+            () => this.refreshBudget(),
+            () => this.refreshBreakeven(),
+            () => this.refreshProjectedSales(),
+            () => this.refreshProducts(),
+            () => this.refreshVESales(),
+            () => this.refreshB2BContracts(),
+        ];
+        for (const fn of refreshCalls) {
+            try { fn(); } catch (e) { console.error('refreshAll: tab refresh failed:', e); }
+        }
     },
 
     /**
@@ -10494,8 +10505,10 @@ const App = {
             this.applyHiddenTabs();
             this.setupTabScrollFade();
             this.loadAndApplyTimeline();
+            this.initBalanceSheetDate();
             this.refreshAll();
             this.setupEventListeners();
+            this.setupVESalesListeners();
             this.applyViewOnlyRestrictions();
             this.showViewOnlyBanner(shareMeta);
 
@@ -10517,7 +10530,10 @@ const App = {
     applyViewOnlyRestrictions() {
         const hideIds = [
             'newEntryBtn', 'addFolderEntriesBtn', 'manageCategoriesBtn',
-            'saveDbBtn', 'saveAllDbBtn', 'loadDbBtn', 'shareBtn'
+            'saveDbBtn', 'saveAllDbBtn', 'loadDbBtn', 'shareBtn',
+            'veCreateJournalBtn', 'veClearBtn', 'veImportSubmit',
+            'veSyncFromServer', 'veAddEventBtn', 'veAddAllToJournalBtn',
+            'veRemoveAllFromJournalBtn'
         ];
         hideIds.forEach(id => {
             const el = document.getElementById(id);
@@ -10532,6 +10548,10 @@ const App = {
 
         const gearWrapper = document.querySelector('.gear-wrapper');
         if (gearWrapper) gearWrapper.style.display = 'none';
+
+        // Hide VE import panel in view-only mode
+        const veImportPanel = document.getElementById('veImportPanel');
+        if (veImportPanel) veImportPanel.style.display = 'none';
 
         document.body.classList.add('view-only-mode');
     },
