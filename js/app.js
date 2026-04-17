@@ -261,7 +261,14 @@ const App = {
      */
     refreshTransactions() {
         const filters = this.getActiveFilters();
-        const transactions = Database.getTransactions(filters);
+        let transactions = Database.getTransactions(filters);
+
+        // In view-only mode with report month, hide entries dated after the report month
+        if (this._reportMonth) {
+            transactions = transactions.filter(t =>
+                t.entry_date.substring(0, 7) <= this._reportMonth
+            );
+        }
 
         UI.renderTransactions(transactions, this.currentSortMode);
 
@@ -10554,7 +10561,24 @@ const App = {
             this.applyHiddenTabs();
             this.setupTabScrollFade();
             this.loadAndApplyTimeline();
+
+            // Read report month from snapshot and set tab defaults BEFORE refreshAll
+            const reportMonth = Database.getReportMonth();
+            if (reportMonth) {
+                this._reportMonth = reportMonth;
+                this._dashSnapshotMonth = reportMonth;
+                // Balance Sheet defaults will be set after initBalanceSheetDate
+            }
+
             this.initBalanceSheetDate();
+
+            // Override Balance Sheet date if report month is set
+            if (reportMonth) {
+                const [rmYear, rmMonth] = reportMonth.split('-');
+                document.getElementById('bsMonthMonth').value = rmMonth;
+                document.getElementById('bsMonthYear').value = rmYear;
+            }
+
             this.refreshAll();
             this.setupEventListeners();
             this.setupVESalesListeners();
@@ -10613,11 +10637,19 @@ const App = {
         const createdBy = shareMeta.created_by || 'Unknown';
         const journalName = shareMeta.journal_name || 'Journal';
 
+        let reportPill = '';
+        if (this._reportMonth) {
+            reportPill = '<span class="view-only-report-pill">Report: ' +
+                Utils.formatMonthShort(this._reportMonth) + '</span>';
+        }
+
         banner.innerHTML =
             '<div class="view-only-banner-content">' +
             '<span>&#128274;</span> ' +
             '<span><strong>View-Only Snapshot</strong> &mdash; ' +
-            this._escapeHtml(journalName) + ' &middot; Shared by ' +
+            this._escapeHtml(journalName) + '</span>' +
+            reportPill +
+            '<span class="view-only-banner-meta">Shared by ' +
             this._escapeHtml(createdBy) + ' on ' + createdDate + '</span>' +
             '</div>';
 

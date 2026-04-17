@@ -3163,6 +3163,8 @@ body {
 /* ========== SHARE & VIEW-ONLY ========== */
 .view-only-banner { background: var(--color-accent-bg); color: var(--c2, var(--primary)); padding: 8px 18px; text-align: center; font-size: var(--font-sm); border-bottom: 2px solid rgba(var(--color-primary-rgb), 0.15); position: sticky; top: 0; z-index: 1000; font-weight: 500; }
 .view-only-banner-content { display: flex; align-items: center; justify-content: center; gap: 8px; }
+.view-only-report-pill { background: rgba(var(--color-primary-rgb), 0.15); color: var(--c2, var(--primary)); padding: 2px 10px; border-radius: 12px; font-weight: 600; font-size: var(--font-xs); }
+.view-only-banner-meta { color: var(--text-muted); font-size: var(--font-xs); }
 body.view-only-mode .header-actions .btn-primary, body.view-only-mode .header-actions .btn-secondary, body.view-only-mode .sync-wrapper, body.view-only-mode .gear-wrapper, body.view-only-mode .company-switcher-wrapper, body.view-only-mode .share-btn, body.view-only-mode .transaction-actions, body.view-only-mode .inline-status-select { display: none !important; }
 body.view-only-mode .journal-owner-input { pointer-events: none; opacity: 0.7; }
 body.view-only-mode .pnl-editable, body.view-only-mode .cf-editable { cursor: default; pointer-events: none; }
