@@ -281,7 +281,7 @@ const App = {
      * Refresh summary calculations
      */
     refreshSummary() {
-        const summary = Database.calculateSummary();
+        const summary = Database.calculateSummary(this._reportMonth || null);
         UI.updateSummary(summary);
     },
 
@@ -1216,7 +1216,7 @@ const App = {
     _kpiCache: null,
 
     _computeKpiData(snapshotMonth) {
-        const summary = Database.calculateSummary();
+        const summary = Database.calculateSummary(this._reportMonth || snapshotMonth || null);
         const currentMonth = snapshotMonth || Utils.getCurrentMonth();
 
         // Calculate monthly data for sparklines — only up to current month (exclude future)
@@ -2542,7 +2542,7 @@ const App = {
             receivables = Database.getAccountsReceivableAsOf ? Database.getAccountsReceivableAsOf(snapshotMonth) : 0;
             liabilities = Database.getAccountsPayableAsOf ? Database.getAccountsPayableAsOf(snapshotMonth) : 0;
         } else {
-            const summary = Database.calculateSummary();
+            const summary = Database.calculateSummary(this._reportMonth || null);
             assets = summary.cashBalance > 0 ? summary.cashBalance : 0;
             liabilities = summary.accountsPayable;
             receivables = summary.accountsReceivable;

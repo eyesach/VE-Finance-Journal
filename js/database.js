@@ -1518,7 +1518,49 @@ const Database = {
      * Calculate summary totals
      * @returns {Object} Summary object with cashBalance, receivables, payables
      */
-    calculateSummary() {
+    calculateSummary(reportMonth = null) {
+        // When reportMonth is set, treat transactions with month_paid > reportMonth as pending
+        // (their payment hadn't happened yet as of the report month)
+        if (reportMonth) {
+            const receivedResult = this.db.exec(`
+                SELECT COALESCE(SUM(amount), 0) as total
+                FROM transactions
+                WHERE transaction_type = 'receivable' AND status = 'received'
+                AND (month_paid IS NULL OR month_paid <= ?)
+            `, [reportMonth]);
+            const totalReceived = receivedResult[0].values[0][0];
+
+            const paidResult = this.db.exec(`
+                SELECT COALESCE(SUM(amount), 0) as total
+                FROM transactions
+                WHERE transaction_type = 'payable' AND status = 'paid'
+                AND (month_paid IS NULL OR month_paid <= ?)
+            `, [reportMonth]);
+            const totalPaid = paidResult[0].values[0][0];
+
+            const receivablesResult = this.db.exec(`
+                SELECT COALESCE(SUM(amount), 0) as total
+                FROM transactions
+                WHERE transaction_type = 'receivable'
+                AND (status = 'pending' OR (status = 'received' AND month_paid > ?))
+            `, [reportMonth]);
+            const pendingReceivables = receivablesResult[0].values[0][0];
+
+            const payablesResult = this.db.exec(`
+                SELECT COALESCE(SUM(amount), 0) as total
+                FROM transactions
+                WHERE transaction_type = 'payable'
+                AND (status = 'pending' OR (status = 'paid' AND month_paid > ?))
+            `, [reportMonth]);
+            const pendingPayables = payablesResult[0].values[0][0];
+
+            return {
+                cashBalance: totalReceived - totalPaid,
+                accountsReceivable: pendingReceivables,
+                accountsPayable: pendingPayables
+            };
+        }
+
         const receivedResult = this.db.exec(`
             SELECT COALESCE(SUM(amount), 0) as total
             FROM transactions
