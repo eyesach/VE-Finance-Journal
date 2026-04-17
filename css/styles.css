@@ -3169,31 +3169,6 @@ body.view-only-mode .header-actions .btn-primary, body.view-only-mode .header-ac
 body.view-only-mode .journal-owner-input { pointer-events: none; opacity: 0.7; }
 body.view-only-mode .pnl-editable, body.view-only-mode .cf-editable { cursor: default; pointer-events: none; }
 body.view-only-mode .pnl-editable-cell, body.view-only-mode .cf-editable-cell { cursor: default; }
-body.view-only-mode .app-main { overflow-x: auto; }
-body.view-only-mode .tab-content-area { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-body.view-only-mode .cashflow-spreadsheet-wrapper,
-body.view-only-mode .pnl-spreadsheet-wrapper,
-body.view-only-mode .ps-spreadsheet-wrapper,
-body.view-only-mode .transactions-section,
-body.view-only-mode .ve-table-wrapper,
-body.view-only-mode .be-data-table-wrapper,
-body.view-only-mode .be-summary-cards,
-body.view-only-mode .be-charts-row,
-body.view-only-mode .be-channel-breakdown,
-body.view-only-mode .be-progress-section,
-body.view-only-mode .bs-section,
-body.view-only-mode .bs-ratios-section,
-body.view-only-mode .assets-section,
-body.view-only-mode .loan-section,
-body.view-only-mode .budget-section,
-body.view-only-mode .b2b-section,
-body.view-only-mode .pc-section,
-body.view-only-mode .dashboard-content,
-body.view-only-mode .summary-section { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-@media (max-width: 768px) {
-    body.view-only-mode, body.view-only-mode html { overflow-x: auto; max-width: none; }
-    body.view-only-mode .app-main { overflow-x: auto; max-width: none; }
-}
 .share-status { margin-bottom: 10px; color: var(--text-muted); font-size: var(--font-sm); }
 .share-url-row { display: flex; align-items: center; gap: 8px; }
 .share-url-input { flex: 1; font-family: var(--mono); font-size: var(--font-xs); }
@@ -3446,6 +3421,30 @@ body.view-only-mode .summary-section { overflow-x: auto; -webkit-overflow-scroll
     .assets-section, .loan-section, .budget-section, .b2b-section, .pc-section,
     .bs-ratios-section { overflow: visible; }
     .modal-content { max-width: calc(100vw - 20px); }
+}
+
+/* ========== VIEW-ONLY MOBILE SCROLLING ========== */
+/* Remove overflow-x:hidden clipping so all tabs can scroll horizontally on mobile */
+@media (max-width: 768px) {
+    body.view-only-mode { overflow-x: auto !important; max-width: none !important; }
+    body.view-only-mode .app-main { overflow-x: auto !important; max-width: none !important; }
+    body.view-only-mode .transactions-section { overflow-x: auto !important; -webkit-overflow-scrolling: touch; }
+    body.view-only-mode .transaction-table { min-width: 600px; }
+    body.view-only-mode .cashflow-spreadsheet-wrapper,
+    body.view-only-mode .pnl-spreadsheet-wrapper,
+    body.view-only-mode .ps-spreadsheet-wrapper,
+    body.view-only-mode .ve-table-wrapper,
+    body.view-only-mode .be-data-table-wrapper,
+    body.view-only-mode .dashboard-content,
+    body.view-only-mode .summary-section,
+    body.view-only-mode .bs-section,
+    body.view-only-mode .bs-ratios-section,
+    body.view-only-mode .be-section,
+    body.view-only-mode .assets-section,
+    body.view-only-mode .loan-section,
+    body.view-only-mode .budget-section,
+    body.view-only-mode .b2b-section,
+    body.view-only-mode .pc-section { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 }
 
 /* ========== MISSING NOTIFICATION TYPE ========== */
