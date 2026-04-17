@@ -289,9 +289,9 @@ const App = {
      * Refresh cash flow spreadsheet tab
      */
     refreshCashFlow() {
-        const data = Database.getCashFlowSpreadsheet();
+        const data = Database.getCashFlowSpreadsheet(this._reportMonth || null);
         const timeline = this.getTimeline();
-        const currentMonth = Utils.getCurrentMonth();
+        const currentMonth = this._reportMonth || Utils.getCurrentMonth();
         const cfOverrides = Database.getAllCashFlowOverrides();
 
         // Filter months by timeline
@@ -888,7 +888,7 @@ const App = {
         const overrides = Database.getAllPLOverrides();
         const taxMode = Database.getPLTaxMode();
         const timeline = this.getTimeline();
-        const currentMonth = Utils.getCurrentMonth();
+        const currentMonth = this._reportMonth || Utils.getCurrentMonth();
 
         // Filter months by timeline
         if (timeline.start || timeline.end) {
@@ -8789,6 +8789,8 @@ const App = {
                 availableMonths.map(m => `<option value="${m}">${Utils.formatMonthShort(m)}</option>`).join('');
             if (prevVal && availableMonths.includes(prevVal)) {
                 beSnapshotSelect.value = prevVal;
+            } else if (this._reportMonth && availableMonths.includes(this._reportMonth)) {
+                beSnapshotSelect.value = this._reportMonth;
             } else {
                 beSnapshotSelect.value = '';
             }
