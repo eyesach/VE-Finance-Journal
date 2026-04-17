@@ -1519,39 +1519,45 @@ const Database = {
      * @returns {Object} Summary object with cashBalance, receivables, payables
      */
     calculateSummary(reportMonth = null) {
-        // When reportMonth is set, treat transactions with month_paid > reportMonth as pending
-        // (their payment hadn't happened yet as of the report month)
+        // When reportMonth is set, exclude entries dated after the report month
+        // and treat transactions with month_paid > reportMonth as pending
         if (reportMonth) {
+            const dateFilter = "AND substr(t.entry_date, 1, 7) <= ?";
+
             const receivedResult = this.db.exec(`
-                SELECT COALESCE(SUM(amount), 0) as total
-                FROM transactions
-                WHERE transaction_type = 'receivable' AND status = 'received'
-                AND (month_paid IS NULL OR month_paid <= ?)
-            `, [reportMonth]);
+                SELECT COALESCE(SUM(t.amount), 0) as total
+                FROM transactions t
+                WHERE t.transaction_type = 'receivable' AND t.status = 'received'
+                AND (t.month_paid IS NULL OR t.month_paid <= ?)
+                ${dateFilter}
+            `, [reportMonth, reportMonth]);
             const totalReceived = receivedResult[0].values[0][0];
 
             const paidResult = this.db.exec(`
-                SELECT COALESCE(SUM(amount), 0) as total
-                FROM transactions
-                WHERE transaction_type = 'payable' AND status = 'paid'
-                AND (month_paid IS NULL OR month_paid <= ?)
-            `, [reportMonth]);
+                SELECT COALESCE(SUM(t.amount), 0) as total
+                FROM transactions t
+                WHERE t.transaction_type = 'payable' AND t.status = 'paid'
+                AND (t.month_paid IS NULL OR t.month_paid <= ?)
+                ${dateFilter}
+            `, [reportMonth, reportMonth]);
             const totalPaid = paidResult[0].values[0][0];
 
             const receivablesResult = this.db.exec(`
-                SELECT COALESCE(SUM(amount), 0) as total
-                FROM transactions
-                WHERE transaction_type = 'receivable'
-                AND (status = 'pending' OR (status = 'received' AND month_paid > ?))
-            `, [reportMonth]);
+                SELECT COALESCE(SUM(t.amount), 0) as total
+                FROM transactions t
+                WHERE t.transaction_type = 'receivable'
+                AND (t.status = 'pending' OR (t.status = 'received' AND t.month_paid > ?))
+                ${dateFilter}
+            `, [reportMonth, reportMonth]);
             const pendingReceivables = receivablesResult[0].values[0][0];
 
             const payablesResult = this.db.exec(`
-                SELECT COALESCE(SUM(amount), 0) as total
-                FROM transactions
-                WHERE transaction_type = 'payable'
-                AND (status = 'pending' OR (status = 'paid' AND month_paid > ?))
-            `, [reportMonth]);
+                SELECT COALESCE(SUM(t.amount), 0) as total
+                FROM transactions t
+                WHERE t.transaction_type = 'payable'
+                AND (t.status = 'pending' OR (t.status = 'paid' AND t.month_paid > ?))
+                ${dateFilter}
+            `, [reportMonth, reportMonth]);
             const pendingPayables = payablesResult[0].values[0][0];
 
             return {

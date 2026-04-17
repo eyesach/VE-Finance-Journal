@@ -261,13 +261,31 @@ const App = {
      */
     refreshTransactions() {
         const filters = this.getActiveFilters();
+
+        // When report month is active, pull status filter out of DB query
+        // and apply it in JS after rolling back payment statuses
+        let statusFilter = null;
+        if (this._reportMonth && filters.status) {
+            statusFilter = filters.status;
+            delete filters.status;
+        }
+
         let transactions = Database.getTransactions(filters);
 
         // In view-only mode with report month, hide entries dated after the report month
+        // and apply payment status rollback + status filter
         if (this._reportMonth) {
             transactions = transactions.filter(t =>
                 t.entry_date.substring(0, 7) <= this._reportMonth
             );
+
+            if (statusFilter) {
+                transactions = transactions.filter(t => {
+                    const effectiveStatus = (t.month_paid && t.month_paid > this._reportMonth)
+                        ? 'pending' : t.status;
+                    return effectiveStatus === statusFilter;
+                });
+            }
         }
 
         UI.renderTransactions(transactions, this.currentSortMode);
