@@ -9112,7 +9112,7 @@ const App = {
 
         // Populate month dropdown
         const monthSelect = document.getElementById('beProgressMonth');
-        const currentMonth = Utils.getCurrentMonth();
+        const currentMonth = this._reportMonth || Utils.getCurrentMonth();
         const prevValue = monthSelect.value;
 
         // Only months up to current month (can't track future progress)
@@ -9126,8 +9126,12 @@ const App = {
             `<option value="${m}">${Utils.formatMonthShort(m)}</option>`
         ).join('');
 
-        // Restore previous selection or default to latest available month
-        const defaultMonth = prevValue && availableMonths.includes(prevValue) ? prevValue : availableMonths[availableMonths.length - 1];
+        // Restore previous selection or default to report month or latest available
+        const defaultMonth = prevValue && availableMonths.includes(prevValue)
+            ? prevValue
+            : (this._reportMonth && availableMonths.includes(this._reportMonth))
+                ? this._reportMonth
+                : availableMonths[availableMonths.length - 1];
         monthSelect.value = defaultMonth;
 
         this._computeAndRenderProgress(beResult, cfg, months, monthSelect.value, this._beProgressState.timelinePoints);
