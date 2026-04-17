@@ -5257,9 +5257,15 @@ const App = {
 
         // Share view-only link
         document.getElementById('shareBtn').addEventListener('click', () => {
-            this.shareJournal();
+            this.openShareModal();
+        });
+        document.getElementById('generateShareBtn').addEventListener('click', () => {
+            this.generateShare();
         });
         document.getElementById('closeShareBtn').addEventListener('click', () => {
+            UI.hideModal('shareModal');
+        });
+        document.getElementById('closeShareResultBtn').addEventListener('click', () => {
             UI.hideModal('shareModal');
         });
         document.getElementById('copyShareUrlBtn').addEventListener('click', () => {
@@ -10380,24 +10386,57 @@ const App = {
 
     // ==================== SHARE VIEW-ONLY LINK ====================
 
-    async shareJournal() {
+    openShareModal() {
         const supaConfig = Database.getSupabaseConfig();
         if (!supaConfig || !supaConfig.url || !supaConfig.anonKey) {
             UI.showNotification('Sharing requires Supabase. Set up Group Sync first.', 'error');
             return;
         }
 
+        // Reset to phase 1
+        document.getElementById('shareConfigSection').style.display = '';
+        document.getElementById('shareResultSection').style.display = 'none';
+        document.getElementById('shareUrlSection').style.display = 'none';
+        document.getElementById('shareStatus').textContent = '';
+
+        // Populate report month dropdown
+        const select = document.getElementById('shareReportMonth');
+        const realCurrent = Utils.getCurrentMonth();
+        const allMonths = this._getTimelineMonths().filter(m => m <= realCurrent);
+        select.innerHTML = '<option value="">Current (no filter)</option>' +
+            allMonths.map(m => `<option value="${m}">${Utils.formatMonthShort(m)}</option>`).join('');
+        select.value = '';
+
+        UI.showModal('shareModal');
+    },
+
+    async generateShare() {
+        const supaConfig = Database.getSupabaseConfig();
         if (!SupabaseAdapter.isInitialized()) {
             SupabaseAdapter.init(supaConfig.url, supaConfig.anonKey);
         }
 
-        // Show modal with loading state
+        const reportMonth = document.getElementById('shareReportMonth').value || null;
+
+        // Switch to phase 2 with loading state
+        document.getElementById('shareConfigSection').style.display = 'none';
+        document.getElementById('shareResultSection').style.display = '';
         document.getElementById('shareStatus').textContent = 'Uploading snapshot...';
         document.getElementById('shareUrlSection').style.display = 'none';
-        UI.showModal('shareModal');
 
         try {
-            const blob = new Uint8Array(Database.db.export());
+            // Clone DB and inject report_month if set
+            let blob;
+            if (reportMonth) {
+                const bytes = Database.db.export();
+                const clone = new Database.SQL.Database(new Uint8Array(bytes));
+                clone.run("INSERT OR REPLACE INTO app_meta (key, value) VALUES ('report_month', ?)", [reportMonth]);
+                blob = new Uint8Array(clone.export());
+                clone.close();
+            } else {
+                blob = new Uint8Array(Database.db.export());
+            }
+
             const journalName = Database.getJournalOwner() || 'Accounting Journal';
             const syncConfig = Database.getSyncConfig();
             const createdBy = (syncConfig && syncConfig.userName) || journalName;
@@ -10412,10 +10451,20 @@ const App = {
             }));
             const shareUrl = window.location.origin + window.location.pathname + '#share=' + shareToken;
 
-            // Display
+            // Display results
             document.getElementById('shareUrlDisplay').value = shareUrl;
             document.getElementById('shareStatus').textContent = '';
             document.getElementById('shareUrlSection').style.display = '';
+
+            // Show report month badge if set
+            const badge = document.getElementById('shareReportBadge');
+            if (reportMonth) {
+                badge.textContent = 'Report: ' + Utils.formatMonthShort(reportMonth);
+                badge.style.display = '';
+            } else {
+                badge.style.display = 'none';
+            }
+
             document.getElementById('shareExpiry').textContent =
                 'Expires: ' + new Date(result.expiresAt).toLocaleDateString();
 
