@@ -2881,8 +2881,8 @@ const App = {
         const container = document.getElementById('analyzeBEProgress');
         if (!container) return;
 
-        // Use the real current month (not timeline end which may be in the future)
-        const currentMonth = Utils.getCurrentMonth();
+        // Use report month if set, otherwise real current month
+        const currentMonth = this._reportMonth || Utils.getCurrentMonth();
         // Use actual P&L operating expenses (varies by month) instead of flat budget amounts
         const opexByMonth = Database.getMonthlyTotalOpex([currentMonth]);
         const totalTarget = opexByMonth[currentMonth] || 0;
