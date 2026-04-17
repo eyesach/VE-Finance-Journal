@@ -1636,16 +1636,27 @@ const Database = {
      * Get cash flow data broken down by category and month for spreadsheet view
      * @returns {Object} { months: string[], data: Object[] }
      */
-    getCashFlowSpreadsheet() {
+    getCashFlowSpreadsheet(reportMonth = null) {
         // Get all distinct months from month_paid (sorted ASC)
-        const monthsResult = this.db.exec(`
-            SELECT DISTINCT month_paid as month FROM transactions
-            WHERE month_paid IS NOT NULL AND status != 'pending'
-            ORDER BY month ASC
-        `);
+        const monthsParams = [];
+        let monthsFilter = 'WHERE month_paid IS NOT NULL AND status != \'pending\'';
+        if (reportMonth) {
+            monthsFilter += ' AND month_paid <= ?';
+            monthsParams.push(reportMonth);
+        }
+        const monthsResult = this.db.exec(
+            `SELECT DISTINCT month_paid as month FROM transactions ${monthsFilter} ORDER BY month ASC`,
+            monthsParams
+        );
         const months = monthsResult.length > 0 ? monthsResult[0].values.map(r => r[0]) : [];
 
         // Get per-category, per-month totals for completed transactions
+        const dataParams = [];
+        let dataFilter = 'WHERE t.status != \'pending\' AND t.month_paid IS NOT NULL';
+        if (reportMonth) {
+            dataFilter += ' AND t.month_paid <= ?';
+            dataParams.push(reportMonth);
+        }
         const dataResult = this.db.exec(`
             SELECT c.name as category_name, c.id as category_id,
                    c.is_b2b, c.is_cogs,
@@ -1653,10 +1664,10 @@ const Database = {
                    SUM(t.amount) as total
             FROM transactions t
             JOIN categories c ON t.category_id = c.id
-            WHERE t.status != 'pending' AND t.month_paid IS NOT NULL
+            ${dataFilter}
             GROUP BY c.id, t.month_paid, t.transaction_type
             ORDER BY c.cashflow_sort_order ASC, c.name ASC
-        `);
+        `, dataParams);
         const data = dataResult.length > 0 ? this.rowsToObjects(dataResult[0]) : [];
 
         return { months, data };
