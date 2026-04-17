@@ -2712,20 +2712,38 @@
         <div id="shareModal" class="modal">
             <div class="modal-content">
                 <h3>Share View-Only Link</h3>
-                <p id="shareStatus" class="share-status"></p>
-                <div id="shareUrlSection" style="display:none;">
+                <!-- Phase 1: Configuration -->
+                <div id="shareConfigSection">
                     <div class="form-group">
-                        <label>Share URL</label>
-                        <div class="share-url-row">
-                            <input type="text" id="shareUrlDisplay" class="form-control share-url-input" readonly>
-                            <button type="button" id="copyShareUrlBtn" class="btn btn-small">Copy</button>
-                        </div>
+                        <label for="shareReportMonth">Report As Of</label>
+                        <select id="shareReportMonth" class="form-control">
+                            <option value="">Current (no filter)</option>
+                        </select>
+                        <p class="share-report-hint">Transactions paid after this month appear as pending.</p>
                     </div>
-                    <div id="shareQrCode" class="share-qr-container"></div>
-                    <p id="shareExpiry" class="share-expiry"></p>
+                    <div class="form-actions">
+                        <button type="button" id="closeShareBtn" class="btn btn-secondary">Cancel</button>
+                        <button type="button" id="generateShareBtn" class="btn btn-primary">Generate Share Link</button>
+                    </div>
                 </div>
-                <div class="form-actions">
-                    <button type="button" id="closeShareBtn" class="btn btn-secondary">Close</button>
+                <!-- Phase 2: Result -->
+                <div id="shareResultSection" style="display:none;">
+                    <p id="shareStatus" class="share-status"></p>
+                    <div id="shareUrlSection" style="display:none;">
+                        <div id="shareReportBadge" class="share-report-badge" style="display:none;"></div>
+                        <div class="form-group">
+                            <label>Share URL</label>
+                            <div class="share-url-row">
+                                <input type="text" id="shareUrlDisplay" class="form-control share-url-input" readonly>
+                                <button type="button" id="copyShareUrlBtn" class="btn btn-small">Copy</button>
+                            </div>
+                        </div>
+                        <div id="shareQrCode" class="share-qr-container"></div>
+                        <p id="shareExpiry" class="share-expiry"></p>
+                    </div>
+                    <div class="form-actions">
+                        <button type="button" id="closeShareResultBtn" class="btn btn-secondary">Close</button>
+                    </div>
                 </div>
             </div>
         </div>

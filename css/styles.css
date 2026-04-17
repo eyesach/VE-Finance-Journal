@@ -3173,6 +3173,8 @@ body.view-only-mode .pnl-editable-cell, body.view-only-mode .cf-editable-cell { 
 .share-qr-container { display: flex; justify-content: center; padding: 16px 0 8px; }
 .share-qr-container svg { border: 8px solid var(--c4, var(--surface)); border-radius: var(--radius-sm); box-shadow: var(--shadow-sm); }
 .share-expiry { font-size: var(--font-sm); color: var(--text-muted); text-align: center; margin-top: 4px; }
+.share-report-hint { font-size: var(--font-xs); color: var(--text-muted); margin-top: 2px; }
+.share-report-badge { text-align: center; margin-bottom: 12px; font-size: var(--font-sm); font-weight: 600; color: var(--c2, var(--primary)); background: var(--color-accent-bg); padding: 6px 14px; border-radius: var(--radius); }
 
 /* ========== NOTIFICATIONS ========== */
 .notification { position: fixed; top: 16px; right: 16px; padding: 12px 20px; border-radius: var(--radius); font-size: var(--font-sm); font-weight: 500; z-index: 2000; opacity: 0; transform: translateX(120%); transition: opacity var(--transition), transform var(--transition); box-shadow: var(--shadow-md); display: flex; align-items: center; gap: 8px; overflow: hidden; }
