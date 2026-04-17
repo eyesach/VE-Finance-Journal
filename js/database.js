@@ -3223,6 +3223,29 @@ const Database = {
         this.autoSave();
     },
 
+    /**
+     * Get the report month for view-only snapshots
+     * @returns {string|null} 'YYYY-MM' or null
+     */
+    getReportMonth() {
+        const result = this.db.exec("SELECT value FROM app_meta WHERE key = 'report_month'");
+        if (result.length > 0 && result[0].values.length > 0) return result[0].values[0][0];
+        return null;
+    },
+
+    /**
+     * Set the report month for view-only snapshots
+     * @param {string|null} month - 'YYYY-MM' or null to clear
+     */
+    setReportMonth(month) {
+        if (month) {
+            this.db.run("INSERT OR REPLACE INTO app_meta (key, value) VALUES ('report_month', ?)", [month]);
+        } else {
+            this.db.run("DELETE FROM app_meta WHERE key = 'report_month'");
+        }
+        this.autoSave();
+    },
+
     // ==================== CASH FLOW OVERRIDES ====================
 
     /**
