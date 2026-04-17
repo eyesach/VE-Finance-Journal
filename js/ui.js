@@ -383,8 +383,14 @@ const UI = {
      * @returns {string} HTML string
      */
     renderTransactionRow(t) {
-        const isOverdue = Utils.isOverdue(t.month_due, t.status);
-        const statusClass = isOverdue ? 'status-overdue' : `status-${t.status}`;
+        // Report month rollback: treat payments after report month as pending
+        let effectiveStatus = t.status;
+        if (App._reportMonth && t.month_paid && t.month_paid > App._reportMonth) {
+            effectiveStatus = 'pending';
+        }
+
+        const isOverdue = Utils.isOverdue(t.month_due, effectiveStatus);
+        const statusClass = isOverdue ? 'status-overdue' : `status-${effectiveStatus}`;
         const amountClass = t.transaction_type === 'receivable' ? 'amount-receivable' : 'amount-payable';
         const typeClass = `type-${t.transaction_type}`;
 
@@ -396,7 +402,7 @@ const UI = {
         const statusDropdown = `
             <select class="status-select ${statusClass}" data-id="${t.id}">
                 ${statusOptions.map(s => `
-                    <option value="${s}" ${t.status === s ? 'selected' : ''}>
+                    <option value="${s}" ${effectiveStatus === s ? 'selected' : ''}>
                         ${this.capitalizeFirst(s)}
                     </option>
                 `).join('')}
@@ -404,7 +410,7 @@ const UI = {
         `;
 
         // Late payment info
-        const isPaidLate = Utils.isPaidLate(t.month_due, t.month_paid);
+        const isPaidLate = (effectiveStatus !== 'pending') && Utils.isPaidLate(t.month_due, t.month_paid);
         const lateInfo = isPaidLate
             ? `<span class="late-info">in ${Utils.formatMonthShort(t.month_paid)}</span>`
             : '';
