@@ -861,6 +861,24 @@ const Database = {
         // === Add is_shipping flag to categories ===
         try { this.db.exec('SELECT is_shipping FROM categories LIMIT 1'); }
         catch (e) { this.db.run('ALTER TABLE categories ADD COLUMN is_shipping INTEGER DEFAULT 0'); }
+
+        // === Notes & Analysis Layer (2026-04-28) ===
+        this.db.run(`
+            CREATE TABLE IF NOT EXISTS notes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                target_type TEXT NOT NULL,
+                target_key TEXT NOT NULL,
+                body TEXT NOT NULL,
+                pinned_to_share INTEGER NOT NULL DEFAULT 0,
+                metadata TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(target_type, target_key)
+            )
+        `);
+        try { this.db.exec('SELECT metadata FROM notes LIMIT 1'); }
+        catch (e) { this.db.run('ALTER TABLE notes ADD COLUMN metadata TEXT'); }
+        this.db.run('CREATE INDEX IF NOT EXISTS idx_notes_target ON notes(target_type, target_key)');
     },
 
     // ==================== FOLDER OPERATIONS ====================
