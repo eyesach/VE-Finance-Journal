@@ -3357,6 +3357,96 @@ const Database = {
         this.autoSave();
     },
 
+    // ============== NOTES & ANALYSIS LAYER ==============
+
+    /**
+     * Get a single note by composite key.
+     * @returns {Object|null} { id, target_type, target_key, body, pinned_to_share, metadata, created_at, updated_at }
+     */
+    getNote(targetType, targetKey) {
+        const result = this.db.exec(
+            'SELECT id, target_type, target_key, body, pinned_to_share, metadata, created_at, updated_at ' +
+            'FROM notes WHERE target_type = ? AND target_key = ?',
+            [targetType, targetKey]
+        );
+        if (!result.length || !result[0].values.length) return null;
+        const r = result[0].values[0];
+        return {
+            id: r[0], target_type: r[1], target_key: r[2], body: r[3],
+            pinned_to_share: r[4], metadata: r[5], created_at: r[6], updated_at: r[7]
+        };
+    },
+
+    /**
+     * Upsert a note. Empty body deletes the row.
+     */
+    setNote(targetType, targetKey, body, metadata = null) {
+        const trimmed = (body || '').trim();
+        if (!trimmed) {
+            this.deleteNote(targetType, targetKey);
+            return;
+        }
+        const existing = this.getNote(targetType, targetKey);
+        if (existing) {
+            this.db.run(
+                'UPDATE notes SET body = ?, metadata = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+                [trimmed, metadata, existing.id]
+            );
+        } else {
+            this.db.run(
+                'INSERT INTO notes (target_type, target_key, body, metadata) VALUES (?, ?, ?, ?)',
+                [targetType, targetKey, trimmed, metadata]
+            );
+        }
+        this.autoSave();
+    },
+
+    deleteNote(targetType, targetKey) {
+        this.db.run(
+            'DELETE FROM notes WHERE target_type = ? AND target_key = ?',
+            [targetType, targetKey]
+        );
+        this.autoSave();
+    },
+
+    setNotePinned(targetType, targetKey, pinned) {
+        this.db.run(
+            'UPDATE notes SET pinned_to_share = ?, updated_at = CURRENT_TIMESTAMP WHERE target_type = ? AND target_key = ?',
+            [pinned ? 1 : 0, targetType, targetKey]
+        );
+        this.autoSave();
+    },
+
+    /**
+     * Convenience: get the period note for a given (tab, month).
+     * @param {string} tab 'pnl' | 'cashflow' | 'balancesheet'
+     * @param {string} month 'YYYY-MM'
+     * @returns {Object|null}
+     */
+    getPeriodNote(tab, month) {
+        return this.getNote('period', `${tab}:${month}`);
+    },
+
+    /**
+     * Get pinned period notes for a view-only share, capped and sorted by recency.
+     * Sort: updated_at DESC, then created_at DESC, then id DESC (deterministic tiebreaker).
+     * @param {number} cap Max count (default 5)
+     * @returns {Array<Object>} note objects with parsed tab/month from target_key
+     */
+    getPinnedShareNotes(cap = 5) {
+        const result = this.db.exec(
+            "SELECT id, target_key, body, updated_at, created_at " +
+            "FROM notes WHERE target_type = 'period' AND pinned_to_share = 1 " +
+            "ORDER BY updated_at DESC, created_at DESC, id DESC LIMIT ?",
+            [cap]
+        );
+        if (!result.length) return [];
+        return result[0].values.map(r => {
+            const [tab, month] = r[1].split(':');
+            return { id: r[0], target_key: r[1], body: r[2], updated_at: r[3], created_at: r[4], tab, month };
+        });
+    },
+
     // ==================== BALANCE SHEET QUERIES ====================
 
     /**
