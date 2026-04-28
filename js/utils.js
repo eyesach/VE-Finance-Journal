@@ -939,6 +939,42 @@ const Utils = {
         } catch (e) {
             return { value: NaN, error: 'Parse error' };
         }
+    },
+
+    /**
+     * Render minimal markdown (bold, italic, bullets) safely.
+     * Order: escape HTML first, THEN transform. Prevents <script> injection.
+     * @param {string} body Raw user input
+     * @returns {string} HTML string safe for innerHTML
+     */
+    renderMarkdownSafe(body) {
+        if (!body) return '';
+        // 1. Escape HTML
+        let s = String(body)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+        // 2. Bold (must run before italic since ** contains *)
+        s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+        // 3. Italic
+        s = s.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+        // 4. Lists: contiguous lines starting with "- " become a <ul>
+        const lines = s.split('\n');
+        const out = [];
+        let inList = false;
+        for (const line of lines) {
+            if (line.startsWith('- ')) {
+                if (!inList) { out.push('<ul>'); inList = true; }
+                out.push('<li>' + line.slice(2) + '</li>');
+            } else {
+                if (inList) { out.push('</ul>'); inList = false; }
+                out.push(line);
+            }
+        }
+        if (inList) out.push('</ul>');
+        return out.join('\n');
     }
 };
 

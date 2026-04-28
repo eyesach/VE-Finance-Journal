@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Notes & Analysis — Unit Tests</title>
+<style>
+  body { font-family: 'DM Sans', system-ui, sans-serif; padding: 24px; background: #f3f4f6; }
+  h1 { font-size: 1.4rem; margin-bottom: 16px; }
+  .suite { margin-bottom: 20px; }
+  .suite h2 { font-size: 1rem; margin-bottom: 8px; border-bottom: 2px solid #3b82f6; padding-bottom: 4px; }
+  .test { padding: 6px 12px; margin: 2px 0; border-radius: 4px; font-size: 0.85rem; }
+  .test.pass { background: #d1fae5; color: #065f46; }
+  .test.fail { background: #fee2e2; color: #991b1b; }
+  .summary { margin-top: 20px; padding: 16px; background: #fff; border-radius: 8px; font-weight: 600; }
+  .error-detail { font-size: 0.78rem; color: #991b1b; margin-top: 2px; font-family: monospace; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<h1>Notes & Analysis — Unit Tests</h1>
+<div id="results"></div>
+<div id="summary" class="summary"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/sql-wasm.js"></script>
+<script src="../js/utils.js"></script>
+
+<script>
+let passed = 0, failed = 0;
+const resultsEl = document.getElementById('results');
+
+function suite(name) {
+  const div = document.createElement('div');
+  div.className = 'suite';
+  div.innerHTML = `<h2>${name}</h2>`;
+  resultsEl.appendChild(div);
+  return div;
+}
+function test(suiteEl, name, fn) {
+  const div = document.createElement('div');
+  div.className = 'test';
+  try { fn(); div.className = 'test pass'; div.textContent = '✔ ' + name; passed++; }
+  catch (e) { div.className = 'test fail'; div.innerHTML = '✘ ' + name + `<div class="error-detail">${e.message || e}</div>`; failed++; }
+  suiteEl.appendChild(div);
+}
+function assert(cond, msg) { if (!cond) throw new Error(msg || 'Assertion failed'); }
+function assertEq(a, b, msg) { if (a !== b) throw new Error((msg || 'Not equal') + `: got ${JSON.stringify(a)}, expected ${JSON.stringify(b)}`); }
+
+// === Markdown parser tests ===
+const s1 = suite('renderMarkdownSafe');
+test(s1, 'escapes < > & " before transforms', () => {
+  const out = Utils.renderMarkdownSafe('<script>alert(1)</script>');
+  assert(!out.includes('<script>'), 'must not contain raw <script>');
+  assert(out.includes('&lt;script&gt;'), 'must contain escaped tag');
+});
+test(s1, 'bold transform applies after escaping', () => {
+  assertEq(Utils.renderMarkdownSafe('**hello**'), '<strong>hello</strong>');
+});
+test(s1, 'italic transform applies', () => {
+  assertEq(Utils.renderMarkdownSafe('*hi*'), '<em>hi</em>');
+});
+test(s1, 'list lines transform', () => {
+  const out = Utils.renderMarkdownSafe('- one\n- two');
+  assert(out.includes('<ul>'), 'has ul');
+  assert(out.includes('<li>one</li>'), 'has first li');
+  assert(out.includes('<li>two</li>'), 'has second li');
+});
+test(s1, 'mixed: escape + bold + list', () => {
+  const out = Utils.renderMarkdownSafe('**bold** with <b>raw</b>\n- item');
+  assert(out.includes('<strong>bold</strong>'), 'bold transformed');
+  assert(out.includes('&lt;b&gt;raw&lt;/b&gt;'), 'raw HTML escaped');
+  assert(out.includes('<li>item</li>'), 'list rendered');
+});
+test(s1, 'plain text passes through unchanged', () => {
+  assertEq(Utils.renderMarkdownSafe('hello world'), 'hello world');
+});
+
+// Display summary
+document.getElementById('summary').textContent = `${passed} passed, ${failed} failed`;
+document.getElementById('summary').style.background = failed === 0 ? '#d1fae5' : '#fee2e2';
+</script>
+</body>
+</html>
