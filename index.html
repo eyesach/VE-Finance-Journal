@@ -2747,6 +2747,35 @@
                 </div>
             </div>
         </div>
+
+        <!-- Period Note Popover (Notes & Analysis Layer 2026-04-28) -->
+        <div id="periodNotePopover" class="period-note-popover" hidden>
+            <div class="pn-pop-header" data-drag-handle>
+                <div class="pn-pop-titles">
+                    <div class="pn-pop-eyebrow" id="periodNotePopEyebrow">P&amp;L Note</div>
+                    <div class="pn-pop-month" id="periodNotePopMonth">March 2026</div>
+                </div>
+                <div class="pn-pop-actions-top">
+                    <button type="button" class="pn-pop-pin" id="periodNotePopPin" title="Pin to shared report">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M12 2v6M5 8l7-6 7 6M19 14H5a2 2 0 0 0-2 2v4h18v-4a2 2 0 0 0-2-2z"/>
+                        </svg>
+                    </button>
+                    <button type="button" class="pn-pop-close" id="periodNotePopClose" aria-label="Close">×</button>
+                </div>
+            </div>
+            <textarea
+                id="periodNotePopTextarea"
+                class="pn-pop-textarea"
+                placeholder="What's worth noting about this month? Supports **bold**, *italic*, and - bullet lists."
+            ></textarea>
+            <div class="pn-pop-footer">
+                <span class="pn-pop-meta" id="periodNotePopMeta">Auto-saves on close</span>
+                <button type="button" class="btn btn-primary btn-sm" id="periodNotePopDone">Done</button>
+            </div>
+            <div class="pn-pop-resize-grip" data-resize-handle></div>
+        </div>
+
         <!-- Calculator Sidebar -->
         <aside id="calcSidebar" class="calc-sidebar">
             <div class="calc-sidebar-header">

@@ -4276,3 +4276,115 @@ button:focus-visible {
 
 /* Notification warning type */
 .notification-warning { background: var(--color-notification-warning-bg); color: var(--color-notification-warning-text); }
+
+/* ================================================================
+   NOTES & ANALYSIS LAYER (2026-04-28)
+   ================================================================ */
+
+/* === Period Note icon in column headers === */
+.pn-icon-wrap {
+    display: inline-flex;
+    align-items: center;
+    margin-left: 6px;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 150ms ease, color 150ms ease;
+    color: var(--text-secondary);
+    vertical-align: middle;
+}
+th:hover .pn-icon-wrap,
+.pn-icon-wrap.has-note,
+.pn-icon-wrap:focus-visible { opacity: 1; }
+.pn-icon-wrap.has-note { color: var(--amber); }
+.pn-icon-wrap:hover { color: var(--primary); }
+.pn-icon-wrap svg { width: 14px; height: 14px; }
+
+/* === Period Note popover === */
+.period-note-popover {
+    position: fixed;
+    width: 360px;
+    min-width: 280px;
+    min-height: 200px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+    z-index: 9000;
+    padding: 14px 16px 12px;
+    display: flex;
+    flex-direction: column;
+    resize: none;
+}
+.period-note-popover[hidden] { display: none; }
+.pn-pop-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 8px;
+    cursor: move;
+    user-select: none;
+}
+.pn-pop-titles { line-height: 1.2; }
+.pn-pop-eyebrow {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-secondary);
+    font-weight: 600;
+}
+.pn-pop-month { font-size: 14px; font-weight: 600; color: var(--text); }
+.pn-pop-actions-top { display: flex; gap: 4px; align-items: center; }
+.pn-pop-pin, .pn-pop-close {
+    background: transparent; border: none; cursor: pointer;
+    color: var(--text-secondary); padding: 4px;
+    border-radius: 4px;
+}
+.pn-pop-pin:hover, .pn-pop-close:hover { background: var(--surface-alt); color: var(--text); }
+.pn-pop-pin.active { color: var(--amber); }
+.pn-pop-close { font-size: 18px; line-height: 1; padding: 0 6px; }
+.pn-pop-textarea {
+    flex: 1;
+    width: 100%;
+    min-height: 90px;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-family: inherit;
+    font-size: 13px;
+    resize: none;
+    box-sizing: border-box;
+}
+.pn-pop-textarea:focus { outline: none; box-shadow: var(--shadow-focus); }
+.pn-pop-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 10px;
+}
+.pn-pop-meta { font-size: 11px; color: var(--text-muted); }
+.pn-pop-resize-grip {
+    position: absolute;
+    bottom: 0; right: 0;
+    width: 14px; height: 14px;
+    cursor: nwse-resize;
+    background: linear-gradient(135deg, transparent 50%, var(--border) 50%, var(--border) 60%, transparent 60%, transparent 70%, var(--border) 70%, var(--border) 80%, transparent 80%);
+}
+
+/* === Period Note footnote in view-only === */
+.pn-footnote {
+    background: var(--amber-bg);
+    border-left: 3px solid var(--amber);
+    padding: 10px 14px;
+    margin: 8px 16px;
+    font-size: 12px;
+    color: #92400e;
+    border-radius: 0 6px 6px 0;
+    line-height: 1.5;
+}
+[data-theme="dark"] .pn-footnote { color: #fde68a; background: rgba(217,119,6,0.12); }
+.pn-footnote strong { color: #78350f; font-weight: 600; }
+[data-theme="dark"] .pn-footnote strong { color: #fef3c7; }
+.pn-footnote ul { margin: 4px 0 0 0; padding-left: 18px; }
+.pn-footnote em { font-style: italic; }
+
+.btn-sm { padding: 4px 10px !important; font-size: 12px !important; }
