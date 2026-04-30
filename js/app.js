@@ -172,6 +172,34 @@ const App = {
             // Load shipping fee rate
             this.loadShippingFeeRate();
 
+            // Notes & analysis settings
+            try {
+                const pinnedCapInput = document.getElementById('settingPinnedCap');
+                const varInput = document.getElementById('settingVarianceThreshold');
+                if (pinnedCapInput) {
+                    const pinnedCap = parseInt(Database.getMetaValue('pinned_notes_share_cap'), 10) || 5;
+                    pinnedCapInput.value = Math.max(1, Math.min(50, pinnedCap));
+                    pinnedCapInput.addEventListener('change', (e) => {
+                        const v = Math.max(1, Math.min(50, parseInt(e.target.value, 10) || 5));
+                        e.target.value = v;
+                        Database.setMetaValue('pinned_notes_share_cap', v);
+                    });
+                }
+                if (varInput) {
+                    const varThreshold = parseInt(Database.getMetaValue('variance_threshold_pct'), 10) || 20;
+                    varInput.value = Math.max(5, Math.min(200, varThreshold));
+                    varInput.addEventListener('change', (e) => {
+                        const v = Math.max(5, Math.min(200, parseInt(e.target.value, 10) || 20));
+                        e.target.value = v;
+                        Database.setMetaValue('variance_threshold_pct', v);
+                        // Re-render flagged tabs if open (variance flagging lands in Phase 2 — safe no-op now)
+                        const activeTab = document.querySelector('.main-tab.active')?.dataset.tab;
+                        if (activeTab === 'pnl' && App.refreshPnL) App.refreshPnL();
+                        else if (activeTab === 'cashflow' && App.refreshCashFlow) App.refreshCashFlow();
+                    });
+                }
+            } catch (e) { console.warn('Notes settings init failed', e); }
+
             // Restore tab order, hidden tabs, and set up tab drag-drop
             this.restoreTabOrder();
             this.setupTabDragDrop();

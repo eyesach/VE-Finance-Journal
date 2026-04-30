@@ -4400,3 +4400,12 @@ th:hover .pn-icon-wrap,
     margin: 8px 0;
 }
 [data-theme="dark"] .share-notes-warning { color: #fde68a; background: rgba(217,119,6,0.12); }
+
+/* === Notes & analysis settings inputs (gear popover) === */
+.settings-input {
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 13px;
+    max-width: 100px;
+}
