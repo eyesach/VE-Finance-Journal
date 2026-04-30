@@ -10,6 +10,30 @@
 
 **Spec reference:** `docs/superpowers/specs/2026-04-28-notes-and-analysis-design.md`
 
+> **⚠ Plan naming corrections (2026-04-29):** During Task 1.5 implementation, two
+> naming conventions were discovered to be incorrect throughout this plan. **All
+> downstream tasks must apply these substitutions when reading the code blocks
+> below:**
+>
+> 1. **`DB.method(...)` → `Database.method(...)`** — The global DB object is named
+>    `Database` (declared `const Database = { ... }` in `js/database.js:6`,
+>    exposed as `window.Database`). There are ~526 references to `Database.` and
+>    zero to `DB.` in the existing codebase. **Inside method definitions inside
+>    the `Database` object literal itself, use `this.` (not `Database.`) for
+>    self-references** — the established pattern.
+>
+> 2. **`this.currentTab` → query the DOM** — The `App` object has no
+>    `currentTab` property. The established codebase pattern is:
+>    ```javascript
+>    const activeTab = document.querySelector('.main-tab.active');
+>    const tabKey = activeTab ? activeTab.dataset.tab : null;
+>    ```
+>    See `app.js:602, 893, 1185, 4220` for the canonical usage. Substitute this
+>    pattern wherever the plan says `this.currentTab` or `App.currentTab`.
+>
+> Tasks 1.1–1.4 were unaffected (no caller references). Task 1.5 onward applies
+> the corrections directly.
+
 **Testing approach:** This codebase has no automated test runner; the only existing test file is `tests/ve-sales.test.html` (browser-loaded). For this work:
 - **Pure logic** (markdown parser, variance math, anomaly rule functions, dismissal matching) → a new `tests/notes-analysis.test.html` with the same suite/test/assert pattern as `ve-sales.test.html`. Engineer opens it in browser, expects all green.
 - **UI behavior** → smoke-tested manually (open `index.html`, do X, verify Y). Each task lists exact click steps and expected state.
