@@ -10635,6 +10635,20 @@ const App = {
             allMonths.map(m => `<option value="${m}">${Utils.formatMonthShort(m)}</option>`).join('');
         select.value = '';
 
+        // Pinned-notes cap warning
+        const cap = Math.max(1, Math.min(50, parseInt(Database.getMetaValue('pinned_notes_share_cap')) || 5));
+        const r = Database.db.exec("SELECT COUNT(*) FROM notes WHERE target_type='period' AND pinned_to_share=1");
+        const pinnedCount = (r.length && r[0].values.length) ? r[0].values[0][0] : 0;
+        const warn = document.getElementById('shareNotesWarning');
+        if (warn) {
+            if (pinnedCount > cap) {
+                warn.textContent = `You have ${pinnedCount} pinned notes — only the most recent ${cap} will appear in this share. Adjust the cap in Settings or unpin notes before generating.`;
+                warn.removeAttribute('hidden');
+            } else {
+                warn.setAttribute('hidden', '');
+            }
+        }
+
         UI.showModal('shareModal');
     },
 

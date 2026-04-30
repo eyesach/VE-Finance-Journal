@@ -4389,3 +4389,14 @@ th:hover .pn-icon-wrap,
 
 /* Scoped Done-button sizing for the popover footer; do NOT touch global .btn-sm */
 #periodNotePopDone { padding: 4px 10px; font-size: 12px; }
+
+.share-notes-warning {
+    background: var(--amber-bg);
+    border: 1px solid var(--amber);
+    color: #92400e;
+    padding: 8px 12px;
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    margin: 8px 0;
+}
+[data-theme="dark"] .share-notes-warning { color: #fde68a; background: rgba(217,119,6,0.12); }
