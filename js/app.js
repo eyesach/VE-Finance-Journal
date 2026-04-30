@@ -5300,6 +5300,16 @@ const App = {
 
         // B2B Contract events
         this.initB2BContractEvents();
+
+        // Period Note popover
+        document.getElementById('periodNotePopClose').addEventListener('click', () => this.closePeriodNote());
+        document.getElementById('periodNotePopDone').addEventListener('click', () => this.closePeriodNote());
+        document.getElementById('periodNotePopPin').addEventListener('click', () => this.togglePeriodNotePin());
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && !document.getElementById('periodNotePopover').hidden) {
+                this.closePeriodNote();
+            }
+        });
     },
 
     // ==================== FORM HANDLERS ====================
@@ -5544,6 +5554,106 @@ const App = {
         } else if (existingChildId) {
             Database.deleteTransaction(existingChildId);
         }
+    },
+
+    // ============== PERIOD NOTES (Notes & Analysis Layer) ==============
+
+    _periodNoteState: {
+        tab: null,
+        month: null,
+        currentBody: '',
+        anchorEl: null
+    },
+
+    /**
+     * Open the period note popover anchored under a column header.
+     * @param {string} tab 'pnl' | 'cashflow' | 'balancesheet'
+     * @param {string} month 'YYYY-MM'
+     * @param {HTMLElement} anchorEl The column header element to anchor to (or null for centered)
+     */
+    openPeriodNote(tab, month, anchorEl) {
+        const pop = document.getElementById('periodNotePopover');
+        const eyebrow = document.getElementById('periodNotePopEyebrow');
+        const monthEl = document.getElementById('periodNotePopMonth');
+        const textarea = document.getElementById('periodNotePopTextarea');
+        const pin = document.getElementById('periodNotePopPin');
+        const meta = document.getElementById('periodNotePopMeta');
+
+        const tabLabels = { pnl: 'P&L Note', cashflow: 'Cash Flow Note', balancesheet: 'Balance Sheet Note' };
+        eyebrow.textContent = tabLabels[tab] || 'Note';
+        monthEl.textContent = Utils.formatMonthDisplay(month);
+
+        const existing = Database.getPeriodNote(tab, month);
+        textarea.value = existing ? existing.body : '';
+        const isPinned = !!(existing && existing.pinned_to_share);
+        pin.classList.toggle('active', isPinned);
+        pin.setAttribute('aria-pressed', isPinned ? 'true' : 'false');
+        meta.textContent = existing
+            ? `Last edited ${Utils.formatDate(existing.updated_at)} · auto-saves on close`
+            : 'New note — auto-saves on close';
+
+        this._periodNoteState = { tab, month, currentBody: textarea.value, anchorEl };
+
+        // Reset prior drag/resize state — let CSS defaults apply
+        pop.removeAttribute('hidden');
+        pop.style.width = '';
+        pop.style.height = '';
+
+        // Position: below anchor if provided, else centered top
+        if (anchorEl) {
+            const rect = anchorEl.getBoundingClientRect();
+            const popW = 360;
+            let left = rect.left + (rect.width / 2) - (popW / 2);
+            const top = rect.bottom + 8;
+            // Clamp to viewport
+            left = Math.max(8, Math.min(left, window.innerWidth - popW - 8));
+            pop.style.left = left + 'px';
+            pop.style.top = top + 'px';
+        } else {
+            pop.style.left = (window.innerWidth / 2 - 180) + 'px';
+            pop.style.top = '120px';
+        }
+        textarea.focus();
+    },
+
+    closePeriodNote() {
+        const pop = document.getElementById('periodNotePopover');
+        const textarea = document.getElementById('periodNotePopTextarea');
+        const { tab, month, currentBody, anchorEl } = this._periodNoteState;
+        if (tab && month) {
+            const newBody = textarea.value;
+            if (newBody !== currentBody) {
+                Database.setNote('period', `${tab}:${month}`, newBody);
+                // Refresh whichever spreadsheet is showing so icon flips state
+                const activeTabEl = document.querySelector('.main-tab.active');
+                const activeTab = activeTabEl ? activeTabEl.dataset.tab : null;
+                if (activeTab === 'pnl') this.refreshPnL();
+                else if (activeTab === 'cashflow') this.refreshCashFlow();
+                else if (activeTab === 'balancesheet') this.refreshBalanceSheet();
+            }
+        }
+        pop.setAttribute('hidden', '');
+        // Return focus to the trigger that opened the popover, if still in DOM
+        if (anchorEl && document.body.contains(anchorEl)) {
+            anchorEl.focus();
+        }
+        this._periodNoteState = { tab: null, month: null, currentBody: '', anchorEl: null };
+    },
+
+    togglePeriodNotePin() {
+        const { tab, month } = this._periodNoteState;
+        if (!tab || !month) return;
+        const textarea = document.getElementById('periodNotePopTextarea');
+        const pin = document.getElementById('periodNotePopPin');
+        // Save body first if non-empty so the row exists for pinning
+        Database.setNote('period', `${tab}:${month}`, textarea.value);
+        const existing = Database.getPeriodNote(tab, month);
+        if (!existing) return; // empty body → nothing to pin
+        const newPinned = !existing.pinned_to_share;
+        Database.setNotePinned('period', `${tab}:${month}`, newPinned);
+        pin.classList.toggle('active', newPinned);
+        pin.setAttribute('aria-pressed', newPinned ? 'true' : 'false');
+        this._periodNoteState.currentBody = textarea.value;  // prevent re-save on close
     },
 
     // ==================== CATEGORY HANDLERS ====================
