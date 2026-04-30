@@ -5661,19 +5661,26 @@ const App = {
         this._periodNoteState.currentBody = textarea.value;  // prevent re-save on close
     },
 
+    /**
+     * Wire drag (header) and resize (bottom-right grip) for the period note popover.
+     * Idempotent — safe if init() ever runs twice; only first call binds listeners.
+     */
     _setupPeriodNoteDragResize() {
+        if (this._periodNoteDragSetup) return;
         const pop = document.getElementById('periodNotePopover');
         if (!pop) return;
         const handle = pop.querySelector('[data-drag-handle]');
         const grip = pop.querySelector('[data-resize-handle]');
+        if (!handle || !grip) return;
+        this._periodNoteDragSetup = true;
 
         // === Drag ===
         let dragStart = null;
         handle.addEventListener('mousedown', (e) => {
-            // Don't start drag if clicking buttons inside header
             if (e.target.closest('button')) return;
             const rect = pop.getBoundingClientRect();
             dragStart = { x: e.clientX, y: e.clientY, left: rect.left, top: rect.top };
+            document.body.style.cursor = 'grabbing';
             e.preventDefault();
         });
         document.addEventListener('mousemove', (e) => {
@@ -5687,13 +5694,17 @@ const App = {
             pop.style.left = newLeft + 'px';
             pop.style.top = newTop + 'px';
         });
-        document.addEventListener('mouseup', () => { dragStart = null; });
+        document.addEventListener('mouseup', () => {
+            if (dragStart) document.body.style.cursor = '';
+            dragStart = null;
+        });
 
         // === Resize ===
         let resizeStart = null;
         grip.addEventListener('mousedown', (e) => {
             const rect = pop.getBoundingClientRect();
-            resizeStart = { x: e.clientX, y: e.clientY, w: rect.width, h: rect.height };
+            resizeStart = { x: e.clientX, y: e.clientY, w: rect.width, h: rect.height, left: rect.left, top: rect.top };
+            document.body.style.cursor = 'nwse-resize';
             e.preventDefault();
             e.stopPropagation();
         });
@@ -5701,10 +5712,16 @@ const App = {
             if (!resizeStart) return;
             const dw = e.clientX - resizeStart.x;
             const dh = e.clientY - resizeStart.y;
-            pop.style.width = Math.max(280, resizeStart.w + dw) + 'px';
-            pop.style.height = Math.max(200, resizeStart.h + dh) + 'px';
+            // Cap so the popover can't grow past the viewport edges (8px right/bottom margin).
+            const maxW = window.innerWidth - resizeStart.left - 8;
+            const maxH = window.innerHeight - resizeStart.top - 8;
+            pop.style.width = Math.max(280, Math.min(maxW, resizeStart.w + dw)) + 'px';
+            pop.style.height = Math.max(200, Math.min(maxH, resizeStart.h + dh)) + 'px';
         });
-        document.addEventListener('mouseup', () => { resizeStart = null; });
+        document.addEventListener('mouseup', () => {
+            if (resizeStart) document.body.style.cursor = '';
+            resizeStart = null;
+        });
     },
 
     // ==================== CATEGORY HANDLERS ====================
