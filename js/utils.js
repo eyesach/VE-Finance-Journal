@@ -975,6 +975,49 @@ const Utils = {
         }
         if (inList) out.push('</ul>');
         return out.join('\n');
+    },
+
+    /**
+     * Compute variance flag for a value at index in a series of monthly values.
+     * Flag is set if |delta vs prior month| OR |delta vs 3-mo avg| meets/exceeds the threshold.
+     * @param {Array<number>} values Monthly values in order
+     * @param {number} idx Current index in the series
+     * @param {number} thresholdPct Threshold percentage (e.g. 20 for 20%)
+     * @returns {Object} { flagged, deltaPrior, deltaAvg3, current }
+     *   - deltaPrior: fractional change vs values[idx-1] (null if no prior, Infinity if prior was 0 and current isn't)
+     *   - deltaAvg3: fractional change vs avg of values[idx-3..idx-1] (null if <3 priors, Infinity if avg was 0)
+     *   - flagged: true if either |delta| >= threshold/100
+     */
+    computeVariance(values, idx, thresholdPct) {
+        const out = { flagged: false, deltaPrior: null, deltaAvg3: null, current: values[idx] };
+        if (idx < 1) return out;
+        const cur = Number(values[idx]) || 0;
+        const prior = Number(values[idx - 1]) || 0;
+
+        // delta vs prior
+        if (prior !== 0) {
+            out.deltaPrior = (cur - prior) / Math.abs(prior);
+        } else if (cur !== 0) {
+            out.deltaPrior = Infinity;
+        }
+
+        // delta vs 3-mo avg (uses prior 3 months — excludes current)
+        if (idx >= 3) {
+            const slice = values.slice(idx - 3, idx).map(Number);
+            const avg = slice.reduce((a, b) => a + b, 0) / 3;
+            if (avg !== 0) {
+                out.deltaAvg3 = (cur - avg) / Math.abs(avg);
+            } else if (cur !== 0) {
+                out.deltaAvg3 = Infinity;
+            }
+        }
+
+        const t = thresholdPct / 100;
+        if ((out.deltaPrior !== null && Math.abs(out.deltaPrior) >= t) ||
+            (out.deltaAvg3 !== null && Math.abs(out.deltaAvg3) >= t)) {
+            out.flagged = true;
+        }
+        return out;
     }
 };
 

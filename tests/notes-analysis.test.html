@@ -73,6 +73,34 @@ test(s1, 'plain text passes through unchanged', () => {
   assertEq(Utils.renderMarkdownSafe('hello world'), 'hello world');
 });
 
+const s2 = suite('computeVariance');
+test(s2, '142% jump vs prior month flags', () => {
+  const v = Utils.computeVariance([2100, 2400, 5800], 2, 20);
+  assert(v.flagged, 'should flag');
+  assert(Math.abs(v.deltaPrior - 1.4166666) < 0.01, 'deltaPrior ≈ 142%');
+});
+test(s2, '5% change does not flag at 20% threshold', () => {
+  const v = Utils.computeVariance([1000, 1050], 1, 20);
+  assert(!v.flagged, 'should not flag');
+});
+test(s2, 'first month never flags (no prior)', () => {
+  const v = Utils.computeVariance([5000], 0, 20);
+  assert(!v.flagged, 'first month no flag');
+  assertEq(v.deltaPrior, null);
+});
+test(s2, 'flags when 3-mo avg delta exceeds even if prior is close', () => {
+  const v = Utils.computeVariance([100, 100, 100, 130], 3, 20);
+  assert(v.flagged, '+30% vs avg flags');
+});
+test(s2, 'zero prior month with non-zero current flags', () => {
+  const v = Utils.computeVariance([0, 500], 1, 20);
+  assert(v.flagged, 'going from 0 to 500 should flag');
+});
+test(s2, 'all zero values do not flag', () => {
+  const v = Utils.computeVariance([0, 0, 0], 2, 20);
+  assert(!v.flagged, 'no flag for all zero');
+});
+
 // Display summary
 document.getElementById('summary').textContent = `${passed} passed, ${failed} failed`;
 document.getElementById('summary').style.background = failed === 0 ? '#d1fae5' : '#fee2e2';
