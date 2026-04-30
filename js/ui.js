@@ -826,7 +826,7 @@ const UI = {
         months.forEach(m => {
             const futureClass = isFuture(m) ? ' cashflow-future-header' : '';
             const badge = isFuture(m) ? ' <span class="projected-badge">P</span>' : '';
-            html += `<th class="${futureClass}">${fmtMonth(m)}${badge}</th>`;
+            html += `<th class="${futureClass}">${fmtMonth(m)}${badge} ${this.renderNoteIcon('cashflow', m)}</th>`;
         });
         html += '<th>Total</th>';
         html += '</tr></thead><tbody>';
@@ -1479,7 +1479,7 @@ const UI = {
 
         const isProjected = Utils.isFutureMonth(data.asOfMonth);
         const projLabel = isProjected ? ' <span class="bs-projected-label">Projected</span>' : '';
-        let html = `<div class="bs-date-label" style="font-size:0.8rem;color:var(--color-text-muted);margin-bottom:12px;">As of ${monthLabel}${projLabel}</div>`;
+        let html = `<div class="bs-date-label" style="font-size:0.8rem;color:var(--color-text-muted);margin-bottom:12px;">As of ${monthLabel}${projLabel} ${this.renderNoteIcon('balancesheet', data.asOfMonth)}</div>`;
 
         html += '<table class="bs-table"><tbody>';
 
