@@ -1001,9 +1001,11 @@ const Utils = {
             out.deltaPrior = Infinity;
         }
 
-        // delta vs 3-mo avg (uses prior 3 months — excludes current)
+        // delta vs 3-mo avg (uses prior 3 months — excludes current).
+        // Coerce each value the same way as `prior` above: non-finite/missing → 0.
+        // Otherwise a single bad cell would NaN-poison the average and silently disable the flag.
         if (idx >= 3) {
-            const slice = values.slice(idx - 3, idx).map(Number);
+            const slice = values.slice(idx - 3, idx).map(v => Number(v) || 0);
             const avg = slice.reduce((a, b) => a + b, 0) / 3;
             if (avg !== 0) {
                 out.deltaAvg3 = (cur - avg) / Math.abs(avg);

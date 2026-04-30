@@ -100,6 +100,26 @@ test(s2, 'all zero values do not flag', () => {
   const v = Utils.computeVariance([0, 0, 0], 2, 20);
   assert(!v.flagged, 'no flag for all zero');
 });
+test(s2, '25% drop also flags (negative direction)', () => {
+  const v = Utils.computeVariance([1000, 750], 1, 20);
+  assert(v.flagged, '-25% should flag at 20% threshold');
+  assert(v.deltaPrior < 0, 'deltaPrior is negative for a drop');
+});
+test(s2, 'sign flip from positive to negative flags', () => {
+  const v = Utils.computeVariance([100, -100], 1, 20);
+  assert(v.flagged, '+100 to -100 should flag');
+});
+test(s2, 'increasingly negative series flags on absolute basis', () => {
+  // -100 to -150 = 50% worse, abs delta is 0.5
+  const v = Utils.computeVariance([-100, -150], 1, 20);
+  assert(v.flagged, '-100 to -150 should flag');
+});
+test(s2, 'NaN in 3-mo window does not poison the avg flag', () => {
+  // One bad cell becomes 0 in the avg, so [NaN, 100, 100, 130] avg = (0+100+100)/3 ≈ 66.67,
+  // delta = (130 - 66.67) / 66.67 ≈ 0.95 → flagged at 20%
+  const v = Utils.computeVariance([NaN, 100, 100, 130], 3, 20);
+  assert(v.flagged, 'NaN should be coerced to 0 in slice, not poison the avg');
+});
 
 // Display summary
 document.getElementById('summary').textContent = `${passed} passed, ${failed} failed`;
