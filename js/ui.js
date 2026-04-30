@@ -768,6 +768,25 @@ const UI = {
         const receivableEntries = Array.from(receivableCatMap.entries());
         const payableEntries = Array.from(payableCatMap.entries());
 
+        // ===== Variance flag setup (read once per render) =====
+        const varThreshold = parseInt(Database.getMetaValue('variance_threshold_pct'), 10) || 20;
+        let dismissedVariances = [];
+        try { dismissedVariances = JSON.parse(Database.getMetaValue('dismissed_variances') || '[]'); } catch (e) { dismissedVariances = []; }
+        const showFlags = (typeof App !== 'undefined') && !App.isViewOnly;
+        // Build attrs for a CF cell. Returns { extraClass, extraAttrs } to merge into <td>.
+        const buildCFFlag = (catId, monthlyValues, idx, month) => {
+            if (!showFlags) return { extraClass: '', extraAttrs: '' };
+            const variance = Utils.computeVariance(monthlyValues, idx, varThreshold);
+            if (!variance.flagged) return { extraClass: '', extraAttrs: '' };
+            const targetKey = `cashflow:${catId}:${month}`;
+            const cur = monthlyValues[idx];
+            const isDismissed = dismissedVariances.some(d => d.target_key === targetKey && d.value === cur);
+            if (isDismissed) return { extraClass: '', extraAttrs: '' };
+            const tooltip = formatVarianceTooltip(variance);
+            const extraAttrs = ` data-vr-tab="cashflow" data-vr-cat="${catId}" data-vr-month="${month}" data-vr-value="${cur}" title="${Utils.escapeHtml(tooltip)}"`;
+            return { extraClass: ' cell-flagged', extraAttrs };
+        };
+
         // Helpers (defined before totals so projections are reflected in subtotals)
         const fmtMonth = (m) => Utils.formatMonthShort(m);
         const fmtAmt = (amt) => Utils.formatCurrency(amt);
@@ -887,18 +906,21 @@ const UI = {
         // Individual receivable category rows
         receivableEntries.forEach(([catId, catData]) => {
             let rowTotal = 0;
+            // Pre-compute monthly values for variance check (effective values as displayed)
+            const monthlyValues = months.map(mo => getEffectiveVal(catId, catData, mo));
             html += `<tr draggable="true" data-category-id="${catId}" data-section="receivable">`;
             html += '<td class="cashflow-indent cashflow-drag-handle">' + Utils.escapeHtml(catData.name) + '</td>';
-            months.forEach(m => {
+            months.forEach((m, i) => {
                 if (psActive && !catData.is_b2b && useProjectedView(m)) {
                     html += '<td class="ps-replaced">-</td>';
                 } else {
-                    const amt = getEffectiveVal(catId, catData, m);
+                    const amt = monthlyValues[i];
                     rowTotal += amt;
                     const overClass = isCFOverridden(catId, m) ? ' pnl-overridden' : '';
                     const projClass = isFuture(m) && !isCFOverridden(catId, m) ? ' cashflow-projected' : '';
                     const editClass = isFuture(m) ? ' cf-editable' : '';
-                    html += `<td class="amount-receivable cf-calc-cell${overClass}${projClass}${editClass}" data-cat-id="${catId}" data-month="${m}">${amt ? fmtAmt(amt) : ''}</td>`;
+                    const { extraClass, extraAttrs } = buildCFFlag(catId, monthlyValues, i, m);
+                    html += `<td class="amount-receivable cf-calc-cell${overClass}${projClass}${editClass}${extraClass}" data-cat-id="${catId}" data-month="${m}"${extraAttrs}>${amt ? fmtAmt(amt) : ''}</td>`;
                 }
             });
             html += `<td class="amount-receivable cf-calc-cell" data-cat-id="${catId}" data-month="total">${fmtAmt(rowTotal)}</td></tr>`;
@@ -967,15 +989,18 @@ const UI = {
         // Individual payable category rows — all remain visible and editable
         payableEntries.forEach(([catId, catData]) => {
             let rowTotal = 0;
+            // Pre-compute monthly values for variance check (effective values as displayed)
+            const monthlyValues = months.map(mo => getEffectiveVal(catId, catData, mo));
             html += `<tr draggable="true" data-category-id="${catId}" data-section="payable">`;
             html += '<td class="cashflow-indent cashflow-drag-handle">' + Utils.escapeHtml(catData.name) + '</td>';
-            months.forEach(m => {
-                const amt = getEffectiveVal(catId, catData, m);
+            months.forEach((m, i) => {
+                const amt = monthlyValues[i];
                 rowTotal += amt;
                 const overClass = isCFOverridden(catId, m) ? ' pnl-overridden' : '';
                 const projClass = isFuture(m) && !isCFOverridden(catId, m) ? ' cashflow-projected' : '';
                 const editClass = isFuture(m) ? ' cf-editable' : '';
-                html += `<td class="amount-payable cf-calc-cell${overClass}${projClass}${editClass}" data-cat-id="${catId}" data-month="${m}">${amt ? fmtAmt(amt) : ''}</td>`;
+                const { extraClass, extraAttrs } = buildCFFlag(catId, monthlyValues, i, m);
+                html += `<td class="amount-payable cf-calc-cell${overClass}${projClass}${editClass}${extraClass}" data-cat-id="${catId}" data-month="${m}"${extraAttrs}>${amt ? fmtAmt(amt) : ''}</td>`;
             });
             html += `<td class="amount-payable cf-calc-cell" data-cat-id="${catId}" data-month="total">${fmtAmt(rowTotal)}</td></tr>`;
         });
@@ -1188,6 +1213,25 @@ const UI = {
             return pastValues.length > 0 ? pastValues.reduce((a, b) => a + b, 0) / pastValues.length : 0;
         };
 
+        // ===== Variance flag setup (read once per render) =====
+        const varThreshold = parseInt(Database.getMetaValue('variance_threshold_pct'), 10) || 20;
+        let dismissedVariances = [];
+        try { dismissedVariances = JSON.parse(Database.getMetaValue('dismissed_variances') || '[]'); } catch (e) { dismissedVariances = []; }
+        const showFlags = (typeof App !== 'undefined') && !App.isViewOnly;
+        // Build attrs for a P&L cell. Returns { extraClass, extraAttrs } to merge into <td>.
+        const buildPnLFlag = (catId, monthlyValues, idx, month) => {
+            if (!showFlags) return { extraClass: '', extraAttrs: '' };
+            const variance = Utils.computeVariance(monthlyValues, idx, varThreshold);
+            if (!variance.flagged) return { extraClass: '', extraAttrs: '' };
+            const targetKey = `pnl:${catId}:${month}`;
+            const cur = monthlyValues[idx];
+            const isDismissed = dismissedVariances.some(d => d.target_key === targetKey && d.value === cur);
+            if (isDismissed) return { extraClass: '', extraAttrs: '' };
+            const tooltip = formatVarianceTooltip(variance);
+            const extraAttrs = ` data-vr-tab="pnl" data-vr-cat="${catId}" data-vr-month="${month}" data-vr-value="${cur}" title="${Utils.escapeHtml(tooltip)}"`;
+            return { extraClass: ' cell-flagged', extraAttrs };
+        };
+
         // Start building table
         let html = '<table class="pnl-table"><thead><tr>';
         html += '<th></th>';
@@ -1235,20 +1279,25 @@ const UI = {
         nonB2bRevenueEntries.forEach(([catId, catData]) => {
             let rowTotal = 0;
             const projAvg = computeProjectedAvg(catData.months);
+            // Pre-compute monthly values for variance check (effective values as displayed)
+            const monthlyValues = months.map(mo => {
+                const computed = catData.months[mo] || 0;
+                const fallback = isFuture(mo) && computed === 0 ? projAvg : computed;
+                return getVal(catId, mo, fallback);
+            });
             html += `<tr class="pnl-indent" draggable="true" data-category-id="${catId}" data-section="revenue"><td class="pnl-drag-handle">${Utils.escapeHtml(catData.name)}</td>`;
-            months.forEach(m => {
+            months.forEach((m, i) => {
                 if (psActive && useProjectedView(m)) {
                     // Projected sales covers this month for non-B2B
                     html += '<td class="ps-replaced">-</td>';
                 } else {
-                    const computed = catData.months[m] || 0;
-                    const fallback = isFuture(m) && computed === 0 ? projAvg : computed;
-                    const val = getVal(catId, m, fallback);
+                    const val = monthlyValues[i];
                     monthRevenue[m] += val;
                     rowTotal += val;
                     const overriddenClass = isOverridden(catId, m) ? ' pnl-overridden' : '';
                     const projClass = isFuture(m) && !isOverridden(catId, m) ? ' pnl-projected' : '';
-                    html += `<td class="pnl-editable pnl-calc-cell${overriddenClass}${projClass}" data-cat-id="${catId}" data-month="${m}">${fmtAmt(val)}</td>`;
+                    const { extraClass, extraAttrs } = buildPnLFlag(catId, monthlyValues, i, m);
+                    html += `<td class="pnl-editable pnl-calc-cell${overriddenClass}${projClass}${extraClass}" data-cat-id="${catId}" data-month="${m}"${extraAttrs}>${fmtAmt(val)}</td>`;
                 }
             });
             html += `<td>${fmtAmt(rowTotal)}</td></tr>`;
@@ -1258,16 +1307,21 @@ const UI = {
         b2bRevenueEntries.forEach(([catId, catData]) => {
             let rowTotal = 0;
             const projAvg = computeProjectedAvg(catData.months);
+            // Pre-compute monthly values for variance check
+            const monthlyValues = months.map(mo => {
+                const computed = catData.months[mo] || 0;
+                const fallback = isFuture(mo) && computed === 0 ? projAvg : computed;
+                return getVal(catId, mo, fallback);
+            });
             html += `<tr class="pnl-indent" draggable="true" data-category-id="${catId}" data-section="revenue"><td class="pnl-drag-handle">${Utils.escapeHtml(catData.name)}</td>`;
-            months.forEach(m => {
-                const computed = catData.months[m] || 0;
-                const fallback = isFuture(m) && computed === 0 ? projAvg : computed;
-                const val = getVal(catId, m, fallback);
+            months.forEach((m, i) => {
+                const val = monthlyValues[i];
                 monthRevenue[m] += val;
                 rowTotal += val;
                 const overriddenClass = isOverridden(catId, m) ? ' pnl-overridden' : '';
                 const projClass = isFuture(m) && !isOverridden(catId, m) ? ' pnl-projected' : '';
-                html += `<td class="pnl-editable pnl-calc-cell${overriddenClass}${projClass}" data-cat-id="${catId}" data-month="${m}">${fmtAmt(val)}</td>`;
+                const { extraClass, extraAttrs } = buildPnLFlag(catId, monthlyValues, i, m);
+                html += `<td class="pnl-editable pnl-calc-cell${overriddenClass}${projClass}${extraClass}" data-cat-id="${catId}" data-month="${m}"${extraAttrs}>${fmtAmt(val)}</td>`;
             });
             html += `<td>${fmtAmt(rowTotal)}</td></tr>`;
         });
@@ -1313,16 +1367,21 @@ const UI = {
         cogsEntries.forEach(([catId, catData]) => {
             let rowTotal = 0;
             const projAvg = computeProjectedAvg(catData.months);
+            // Pre-compute monthly values for variance check
+            const monthlyValues = months.map(mo => {
+                const computed = catData.months[mo] || 0;
+                const fallback = isFuture(mo) && computed === 0 ? projAvg : computed;
+                return getVal(catId, mo, fallback);
+            });
             html += `<tr class="pnl-indent" draggable="true" data-category-id="${catId}" data-section="cogs"><td class="pnl-drag-handle">${Utils.escapeHtml(catData.name)}</td>`;
-            months.forEach(m => {
-                const computed = catData.months[m] || 0;
-                const fallback = isFuture(m) && computed === 0 ? projAvg : computed;
-                const val = getVal(catId, m, fallback);
+            months.forEach((m, i) => {
+                const val = monthlyValues[i];
                 monthCogs[m] += val;
                 rowTotal += val;
                 const overriddenClass = isOverridden(catId, m) ? ' pnl-overridden' : '';
                 const projClass = isFuture(m) && !isOverridden(catId, m) ? ' pnl-projected' : '';
-                html += `<td class="pnl-editable pnl-calc-cell${overriddenClass}${projClass}" data-cat-id="${catId}" data-month="${m}">${fmtAmt(val)}</td>`;
+                const { extraClass, extraAttrs } = buildPnLFlag(catId, monthlyValues, i, m);
+                html += `<td class="pnl-editable pnl-calc-cell${overriddenClass}${projClass}${extraClass}" data-cat-id="${catId}" data-month="${m}"${extraAttrs}>${fmtAmt(val)}</td>`;
             });
             html += `<td>${fmtAmt(rowTotal)}</td></tr>`;
         });
@@ -1365,16 +1424,21 @@ const UI = {
         opexEntries.forEach(([catId, catData]) => {
             let rowTotal = 0;
             const projAvg = computeProjectedAvg(catData.months);
+            // Pre-compute monthly values for variance check
+            const monthlyValues = months.map(mo => {
+                const computed = catData.months[mo] || 0;
+                const fallback = isFuture(mo) && computed === 0 ? projAvg : computed;
+                return getVal(catId, mo, fallback);
+            });
             html += `<tr class="pnl-indent" draggable="true" data-category-id="${catId}" data-section="opex"><td class="pnl-drag-handle">${Utils.escapeHtml(catData.name)}</td>`;
-            months.forEach(m => {
-                const computed = catData.months[m] || 0;
-                const fallback = isFuture(m) && computed === 0 ? projAvg : computed;
-                const val = getVal(catId, m, fallback);
+            months.forEach((m, i) => {
+                const val = monthlyValues[i];
                 monthOpex[m] += val;
                 rowTotal += val;
                 const overriddenClass = isOverridden(catId, m) ? ' pnl-overridden' : '';
                 const projClass = isFuture(m) && !isOverridden(catId, m) ? ' pnl-projected' : '';
-                html += `<td class="pnl-editable pnl-calc-cell${overriddenClass}${projClass}" data-cat-id="${catId}" data-month="${m}">${fmtAmt(val)}</td>`;
+                const { extraClass, extraAttrs } = buildPnLFlag(catId, monthlyValues, i, m);
+                html += `<td class="pnl-editable pnl-calc-cell${overriddenClass}${projClass}${extraClass}" data-cat-id="${catId}" data-month="${m}"${extraAttrs}>${fmtAmt(val)}</td>`;
             });
             html += `<td>${fmtAmt(rowTotal)}</td></tr>`;
         });
@@ -3482,6 +3546,24 @@ const UI = {
     },
 
 };
+
+// Format a variance tooltip from a computeVariance result.
+// Used by both spreadsheet renderers when applying cell-flagged class.
+function formatVarianceTooltip(v) {
+    if (!v.flagged) return '';
+    const pieces = [];
+    if (v.deltaPrior !== null && isFinite(v.deltaPrior)) {
+        pieces.push(`${v.deltaPrior >= 0 ? '+' : ''}${(v.deltaPrior * 100).toFixed(0)}% vs prior`);
+    } else if (v.deltaPrior === Infinity) {
+        pieces.push('+∞% vs prior');
+    }
+    if (v.deltaAvg3 !== null && isFinite(v.deltaAvg3)) {
+        pieces.push(`${v.deltaAvg3 >= 0 ? '+' : ''}${(v.deltaAvg3 * 100).toFixed(0)}% vs 3-mo avg`);
+    } else if (v.deltaAvg3 === Infinity) {
+        pieces.push('+∞% vs 3-mo avg');
+    }
+    return pieces.join(' · ');
+}
 
 // Export for use in other modules
 window.UI = UI;
