@@ -4387,4 +4387,5 @@ th:hover .pn-icon-wrap,
 .pn-footnote ul { margin: 4px 0 0 0; padding-left: 18px; }
 .pn-footnote em { font-style: italic; }
 
-.btn-sm { padding: 4px 10px !important; font-size: 12px !important; }
+/* Scoped Done-button sizing for the popover footer; do NOT touch global .btn-sm */
+#periodNotePopDone { padding: 4px 10px; font-size: 12px; }

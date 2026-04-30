@@ -528,8 +528,21 @@ th:hover .pn-icon-wrap,
 .pn-footnote ul { margin: 4px 0 0 0; padding-left: 18px; }
 .pn-footnote em { font-style: italic; }
 
-.btn-sm { padding: 4px 10px !important; font-size: 12px !important; }
+/* Scoped Done-button sizing for the popover footer; do NOT touch global .btn-sm */
+#periodNotePopDone { padding: 4px 10px; font-size: 12px; }
 ```
+
+> **Plan correction (2026-04-29):** An earlier draft of this task included a global
+> `.btn-sm { padding: 4px 10px !important; font-size: 12px !important; }` rule which
+> would have silently restyled every existing `.btn-sm` button in the app (32+ usages).
+> The replacement above scopes the override to the popover's Done button by id, leaving
+> the global `.btn-sm` definition (`css/styles.css:941-952`) untouched.
+>
+> The HTML for this task should also include accessibility attributes on the popover
+> root and pin button:
+> - `<div id="periodNotePopover" ... role="dialog" aria-labelledby="periodNotePopEyebrow periodNotePopMonth" hidden>`
+> - `<button class="pn-pop-pin" ... aria-label="Pin to shared report" aria-pressed="false">`
+> - `<svg ... aria-hidden="true">` inside the pin button
 
 - [ ] **Step 3: Smoke-test the popover renders**
 
