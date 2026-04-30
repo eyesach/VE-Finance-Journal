@@ -204,6 +204,9 @@ const App = {
             // Initialize tutorial system
             if (typeof Tutorial !== 'undefined') Tutorial.init();
 
+            // Wire up drag/resize handlers for the period note popover
+            this._setupPeriodNoteDragResize();
+
             console.log('Application initialized successfully');
         } catch (error) {
             console.error('Failed to initialize application:', error);
@@ -5656,6 +5659,52 @@ const App = {
         pin.classList.toggle('active', newPinned);
         pin.setAttribute('aria-pressed', newPinned ? 'true' : 'false');
         this._periodNoteState.currentBody = textarea.value;  // prevent re-save on close
+    },
+
+    _setupPeriodNoteDragResize() {
+        const pop = document.getElementById('periodNotePopover');
+        if (!pop) return;
+        const handle = pop.querySelector('[data-drag-handle]');
+        const grip = pop.querySelector('[data-resize-handle]');
+
+        // === Drag ===
+        let dragStart = null;
+        handle.addEventListener('mousedown', (e) => {
+            // Don't start drag if clicking buttons inside header
+            if (e.target.closest('button')) return;
+            const rect = pop.getBoundingClientRect();
+            dragStart = { x: e.clientX, y: e.clientY, left: rect.left, top: rect.top };
+            e.preventDefault();
+        });
+        document.addEventListener('mousemove', (e) => {
+            if (!dragStart) return;
+            const dx = e.clientX - dragStart.x;
+            const dy = e.clientY - dragStart.y;
+            const popW = pop.offsetWidth;
+            const popH = pop.offsetHeight;
+            const newLeft = Math.max(0, Math.min(window.innerWidth - popW, dragStart.left + dx));
+            const newTop = Math.max(0, Math.min(window.innerHeight - popH, dragStart.top + dy));
+            pop.style.left = newLeft + 'px';
+            pop.style.top = newTop + 'px';
+        });
+        document.addEventListener('mouseup', () => { dragStart = null; });
+
+        // === Resize ===
+        let resizeStart = null;
+        grip.addEventListener('mousedown', (e) => {
+            const rect = pop.getBoundingClientRect();
+            resizeStart = { x: e.clientX, y: e.clientY, w: rect.width, h: rect.height };
+            e.preventDefault();
+            e.stopPropagation();
+        });
+        document.addEventListener('mousemove', (e) => {
+            if (!resizeStart) return;
+            const dw = e.clientX - resizeStart.x;
+            const dh = e.clientY - resizeStart.y;
+            pop.style.width = Math.max(280, resizeStart.w + dw) + 'px';
+            pop.style.height = Math.max(200, resizeStart.h + dh) + 'px';
+        });
+        document.addEventListener('mouseup', () => { resizeStart = null; });
     },
 
     // ==================== CATEGORY HANDLERS ====================
