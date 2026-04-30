@@ -2785,6 +2785,22 @@
             <div class="pn-pop-resize-grip" data-resize-handle></div>
         </div>
 
+        <!-- Variance Popover (Notes & Analysis Layer 2026-04-28) -->
+        <div id="variancePopover" class="variance-popover" role="dialog" aria-labelledby="variancePopTarget" hidden>
+            <div class="vr-pop-header">
+                <div class="vr-pop-titles">
+                    <div class="vr-pop-eyebrow">⚡ Variance Flag</div>
+                    <div class="vr-pop-target" id="variancePopTarget">—</div>
+                </div>
+                <button type="button" class="pn-pop-close" id="variancePopClose" aria-label="Close">×</button>
+            </div>
+            <div class="vr-pop-stats" id="variancePopStats"></div>
+            <div class="vr-pop-actions">
+                <button type="button" class="btn btn-text" id="variancePopDismiss">Dismiss flag</button>
+                <button type="button" class="btn btn-primary btn-sm" id="variancePopExplain">Explain this →</button>
+            </div>
+        </div>
+
         <!-- Calculator Sidebar -->
         <aside id="calcSidebar" class="calc-sidebar">
             <div class="calc-sidebar-header">

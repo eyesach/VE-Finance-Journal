@@ -4409,3 +4409,52 @@ th:hover .pn-icon-wrap,
     font-size: 13px;
     max-width: 100px;
 }
+
+/* === Variance flag (Phase 2) === */
+.cell-flagged {
+    background: var(--amber-bg) !important;
+    position: relative;
+}
+[data-theme="dark"] .cell-flagged { background: rgba(217,119,6,0.12) !important; }
+.cell-flagged::after {
+    content: ""; position: absolute; top: 4px; right: 4px;
+    width: 6px; height: 6px; border-radius: 50%; background: var(--amber);
+    pointer-events: none;
+}
+.cell-flagged { cursor: pointer; }
+
+/* === Variance popover === */
+.variance-popover {
+    position: fixed;
+    width: 360px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+    z-index: 9000;
+    padding: 14px 16px 12px;
+}
+.variance-popover[hidden] { display: none; }
+.vr-pop-header {
+    display: flex; justify-content: space-between; align-items: flex-start;
+    margin-bottom: 8px;
+}
+.vr-pop-eyebrow {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px;
+    color: var(--text-secondary); font-weight: 600;
+}
+.vr-pop-target { font-size: 13px; font-weight: 600; color: var(--text); }
+.vr-pop-stats > div {
+    display: flex; justify-content: space-between;
+    padding: 6px 0; border-bottom: 1px solid var(--border-light);
+    font-size: 12px;
+}
+.vr-pop-stats > div:last-child { border: none; }
+.vr-delta-up { color: var(--amber); font-weight: 600; }
+.vr-delta-down { color: var(--green); font-weight: 600; }
+.vr-pop-actions {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-top: 10px;
+}
+/* Scope #variancePopExplain padding/font like the period note Done button */
+#variancePopExplain { padding: 4px 10px; font-size: 12px; }
