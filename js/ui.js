@@ -73,6 +73,29 @@ const UI = {
     },
 
     /**
+     * Build footnote HTML for pinned period notes (view-only display).
+     * Reads cap from app_meta.pinned_notes_share_cap (default 5).
+     * @param {string|null} tab If provided, filter footnotes to that tab; null = all
+     * @returns {string} HTML block (empty string if no notes)
+     */
+    renderPeriodNoteFootnotes(tab = null) {
+        const capRaw = Database.getMetaValue && Database.getMetaValue('pinned_notes_share_cap');
+        const cap = parseInt(capRaw) || 5;
+        let notes = Database.getPinnedShareNotes(cap);
+        if (tab) notes = notes.filter(n => n.tab === tab);
+        if (!notes.length) return '';
+        const items = notes.map(n => {
+            const tabLabel = { pnl: 'P&L', cashflow: 'Cash Flow', balancesheet: 'Balance Sheet' }[n.tab] || n.tab;
+            const monthLabel = Utils.formatMonthDisplay(n.month);
+            const bodyHtml = Utils.renderMarkdownSafe(n.body);
+            return `<div class="pn-footnote">
+                <strong>📝 ${tabLabel} · ${monthLabel}:</strong> ${bodyHtml}
+            </div>`;
+        });
+        return `<div class="pn-footnotes-block">${items.join('')}</div>`;
+    },
+
+    /**
      * Populate all year dropdown selects
      * @param {Object} [timeline] - Optional {start, end} to constrain years
      */
@@ -987,6 +1010,9 @@ const UI = {
         html += `<td class="${totalNetClass}">${fmtAmt(totalNetCash)}</td></tr>`;
 
         html += '</tbody></table>';
+        if (typeof App !== 'undefined' && App.isViewOnly) {
+            html += this.renderPeriodNoteFootnotes('cashflow');
+        }
         container.innerHTML = html;
 
         // ==================== CASHFLOW SUMMARY ====================
@@ -1461,6 +1487,9 @@ const UI = {
         html += `<td>${fmtAmt(cumulative)}</td></tr>`;
 
         html += '</tbody></table>';
+        if (typeof App !== 'undefined' && App.isViewOnly) {
+            html += this.renderPeriodNoteFootnotes('pnl');
+        }
         container.innerHTML = html;
 
         // Expose computed per-month operating expenses for break-even to use
@@ -1569,6 +1598,10 @@ const UI = {
         } else {
             const diff = data.totalAssets - data.totalLiabilitiesAndEquity;
             html += `<div class="bs-validation unbalanced">Unbalanced &mdash; Difference: ${fmtAmt(Math.abs(diff))}</div>`;
+        }
+
+        if (typeof App !== 'undefined' && App.isViewOnly) {
+            html += this.renderPeriodNoteFootnotes('balancesheet');
         }
 
         container.innerHTML = html;

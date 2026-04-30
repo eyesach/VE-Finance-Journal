@@ -3428,6 +3428,22 @@ const Database = {
     },
 
     /**
+     * Get a single value from app_meta by key.
+     * @returns {string|null}
+     */
+    getMetaValue(key) {
+        const r = this.db.exec('SELECT value FROM app_meta WHERE key = ?', [key]);
+        if (!r.length || !r[0].values.length) return null;
+        return r[0].values[0][0];
+    },
+
+    setMetaValue(key, value) {
+        this.db.run('INSERT OR REPLACE INTO app_meta (key, value) VALUES (?, ?)',
+            [key, String(value)]);
+        this.autoSave();
+    },
+
+    /**
      * Get pinned period notes for a view-only share, capped and sorted by recency.
      * Sort: updated_at DESC, then created_at DESC, then id DESC (deterministic tiebreaker).
      * @param {number} cap Max count (default 5)
