@@ -80,16 +80,22 @@ const UI = {
      */
     renderPeriodNoteFootnotes(tab = null) {
         const capRaw = Database.getMetaValue && Database.getMetaValue('pinned_notes_share_cap');
-        const cap = parseInt(capRaw) || 5;
+        // Clamp cap to sane range [1, 50] — protects against malformed/negative meta values
+        // (SQLite treats LIMIT -1 as unbounded, so we must not pass a negative cap through).
+        const cap = Math.max(1, Math.min(50, parseInt(capRaw) || 5));
         let notes = Database.getPinnedShareNotes(cap);
         if (tab) notes = notes.filter(n => n.tab === tab);
         if (!notes.length) return '';
         const items = notes.map(n => {
             const tabLabel = { pnl: 'P&L', cashflow: 'Cash Flow', balancesheet: 'Balance Sheet' }[n.tab] || n.tab;
             const monthLabel = Utils.formatMonthDisplay(n.month);
+            // Escape labels at the rendering boundary even though they come from controlled
+            // sources today — keeps the helper safe if a future caller stores arbitrary tab keys.
+            const tabHtml = Utils.escapeHtml(tabLabel);
+            const monthHtml = Utils.escapeHtml(monthLabel);
             const bodyHtml = Utils.renderMarkdownSafe(n.body);
             return `<div class="pn-footnote">
-                <strong>📝 ${tabLabel} · ${monthLabel}:</strong> ${bodyHtml}
+                <strong>📝 ${tabHtml} · ${monthHtml}:</strong> ${bodyHtml}
             </div>`;
         });
         return `<div class="pn-footnotes-block">${items.join('')}</div>`;
