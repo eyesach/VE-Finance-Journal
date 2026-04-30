@@ -5313,6 +5313,25 @@ const App = {
                 this.closePeriodNote();
             }
         });
+        // Period note icon clicks (delegated; works for any rendered icon across all tabs)
+        document.addEventListener('click', (e) => {
+            const wrap = e.target.closest('.pn-icon-wrap');
+            if (!wrap) return;
+            e.stopPropagation();
+            const tab = wrap.getAttribute('data-pn-tab');
+            const month = wrap.getAttribute('data-pn-month');
+            if (tab && month) this.openPeriodNote(tab, month, wrap);
+        });
+        // Keyboard support: Enter / Space on focused icon opens the popover
+        document.addEventListener('keydown', (e) => {
+            if (e.key !== 'Enter' && e.key !== ' ') return;
+            const wrap = e.target.closest && e.target.closest('.pn-icon-wrap');
+            if (!wrap) return;
+            e.preventDefault();
+            const tab = wrap.getAttribute('data-pn-tab');
+            const month = wrap.getAttribute('data-pn-month');
+            if (tab && month) this.openPeriodNote(tab, month, wrap);
+        });
     },
 
     // ==================== FORM HANDLERS ====================

@@ -51,6 +51,28 @@ const UI = {
     },
 
     /**
+     * Render the period-note icon HTML for a spreadsheet column header.
+     * Hover-only by default; filled (amber) when a note exists for (tab, month).
+     * @param {string} tab 'pnl' | 'cashflow' | 'balancesheet'
+     * @param {string} month 'YYYY-MM'
+     * @returns {string} HTML
+     */
+    renderNoteIcon(tab, month) {
+        const note = Database.getPeriodNote(tab, month);
+        const has = note && note.body ? 'has-note' : '';
+        const filled = has
+            ? '<line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="13" y2="17"/>'
+            : '';
+        return `<span class="pn-icon-wrap ${has}" data-pn-tab="${tab}" data-pn-month="${month}" tabindex="0" role="button" aria-label="${has ? 'Edit note for this month' : 'Add note for this month'}" title="${has ? 'Edit note' : 'Add note for this month'}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                <polyline points="14 2 14 8 20 8"/>
+                ${filled}
+            </svg>
+        </span>`;
+    },
+
+    /**
      * Populate all year dropdown selects
      * @param {Object} [timeline] - Optional {start, end} to constrain years
      */
@@ -1140,7 +1162,7 @@ const UI = {
         months.forEach(m => {
             const futureClass = isFuture(m) ? ' pnl-future-header' : '';
             const badge = isFuture(m) ? ' <span class="projected-badge">P</span>' : '';
-            html += `<th class="${futureClass}">${fmtMonth(m)}${badge}</th>`;
+            html += `<th class="${futureClass}">${fmtMonth(m)}${badge} ${this.renderNoteIcon('pnl', m)}</th>`;
         });
         html += '<th>Total</th>';
         html += '</tr></thead><tbody>';
