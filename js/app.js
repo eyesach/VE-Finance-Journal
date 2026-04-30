@@ -5306,7 +5306,7 @@ const App = {
         document.getElementById('periodNotePopDone').addEventListener('click', () => this.closePeriodNote());
         document.getElementById('periodNotePopPin').addEventListener('click', () => this.togglePeriodNotePin());
         document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape' && !document.getElementById('periodNotePopover').hidden) {
+            if (e.key === 'Escape' && !e.isComposing && !document.getElementById('periodNotePopover').hidden) {
                 this.closePeriodNote();
             }
         });
@@ -5622,7 +5622,9 @@ const App = {
         const { tab, month, currentBody, anchorEl } = this._periodNoteState;
         if (tab && month) {
             const newBody = textarea.value;
-            if (newBody !== currentBody) {
+            // Whitespace-normalized dirty check: Database.setNote trims before
+            // persisting, so trim both sides to avoid spurious updated_at bumps.
+            if (newBody.trim() !== (currentBody || '').trim()) {
                 Database.setNote('period', `${tab}:${month}`, newBody);
                 // Refresh whichever spreadsheet is showing so icon flips state
                 const activeTabEl = document.querySelector('.main-tab.active');
