@@ -234,6 +234,7 @@ const App = {
 
             // Wire up drag/resize handlers for the period note popover
             this._setupPeriodNoteDragResize();
+            this._setupVariancePopover();
 
             console.log('Application initialized successfully');
         } catch (error) {
@@ -5768,6 +5769,202 @@ const App = {
         document.addEventListener('mouseup', () => {
             if (resizeStart) document.body.style.cursor = '';
             resizeStart = null;
+        });
+    },
+
+    // ==================== VARIANCE POPOVER (Phase 2) ====================
+
+    /**
+     * Open the variance popover for a flagged cell. Reads attributes from the
+     * <td> and recomputes variance fresh against the current row's monthlyValues
+     * (which we reconstruct from the rendered DOM siblings on the same row).
+     */
+    openVariancePopover(td) {
+        const pop = document.getElementById('variancePopover');
+        if (!pop) return;
+
+        const tab = td.dataset.vrTab;
+        const catId = td.dataset.vrCat;
+        const month = td.dataset.vrMonth;
+        const value = parseFloat(td.dataset.vrValue);
+
+        // Recompute variance from sibling cells in the same row to get fresh deltas.
+        const cells = Array.from(td.parentElement.querySelectorAll(`td[data-vr-tab="${tab}"][data-cat-id="${catId}"]`));
+        // The flagged-cell renderer puts data-vr-tab only on flagged cells, but data-cat-id
+        // is on every monthly cell. Use data-cat-id to gather the full month series.
+        const monthCells = Array.from(td.parentElement.querySelectorAll(`td[data-cat-id="${catId}"][data-month]`))
+            .filter(c => c.dataset.month && c.dataset.month !== 'total');
+        const monthValues = monthCells.map(c => {
+            // Extract numeric value from formatted text — values look like "$1,234" or "1,234" or "—"
+            const txt = c.textContent.replace(/[^\d.\-]/g, '');
+            return txt ? parseFloat(txt) : 0;
+        });
+        const idx = monthCells.findIndex(c => c.dataset.month === month);
+        const threshold = parseInt(Database.getMetaValue('variance_threshold_pct'), 10) || 20;
+        const variance = (idx >= 0) ? Utils.computeVariance(monthValues, idx, threshold) : { deltaPrior: null, deltaAvg3: null };
+
+        // Resolve category name for the title
+        const cats = Database.getCategories();
+        const cat = cats.find(c => String(c.id) === String(catId));
+        const catName = cat ? cat.name : `Category ${catId}`;
+        const targetEl = document.getElementById('variancePopTarget');
+        if (targetEl) targetEl.textContent = `${catName} · ${Utils.formatMonthShort(month)}`;
+
+        // Build stats rows
+        const fmt = (n) => Utils.formatCurrency(n);
+        const fmtDelta = (d) => {
+            if (d === null) return '<span style="color:var(--text-muted)">no data</span>';
+            if (d === Infinity) return '<span class="vr-delta-up">+∞%</span>';
+            const pct = (d * 100).toFixed(0);
+            const sign = d >= 0 ? '+' : '';
+            const cls = d >= 0 ? 'vr-delta-up' : 'vr-delta-down';
+            return `<span class="${cls}">${sign}${pct}%</span>`;
+        };
+
+        let priorVal = null;
+        let avg3Val = null;
+        if (idx >= 1) priorVal = monthValues[idx - 1];
+        if (idx >= 3) avg3Val = (monthValues[idx-3] + monthValues[idx-2] + monthValues[idx-1]) / 3;
+
+        const statsEl = document.getElementById('variancePopStats');
+        if (statsEl) {
+            statsEl.innerHTML =
+                `<div><span>This month</span><strong>${fmt(value)}</strong></div>` +
+                (priorVal !== null
+                    ? `<div><span>vs prior month</span>${fmtDelta(variance.deltaPrior)}</div>`
+                    : '') +
+                (avg3Val !== null
+                    ? `<div><span>vs 3-mo avg</span>${fmtDelta(variance.deltaAvg3)}</div>`
+                    : '');
+        }
+
+        // Stash context on the popover for action buttons to read
+        pop.dataset.tab = tab;
+        pop.dataset.catId = catId;
+        pop.dataset.month = month;
+        pop.dataset.value = String(value);
+
+        // Position next to the clicked cell — fixed at the cell's right edge,
+        // clamped to viewport so it never spills off-screen.
+        const rect = td.getBoundingClientRect();
+        const popW = 360; // matches CSS
+        let left = rect.left + rect.width + 8;
+        let top = rect.top;
+        if (left + popW > window.innerWidth - 8) left = Math.max(8, rect.left - popW - 8);
+        if (top + 200 > window.innerHeight - 8) top = Math.max(8, window.innerHeight - 200 - 8);
+        pop.style.left = left + 'px';
+        pop.style.top = top + 'px';
+        pop.hidden = false;
+    },
+
+    closeVariancePopover() {
+        const pop = document.getElementById('variancePopover');
+        if (pop) pop.hidden = true;
+    },
+
+    /**
+     * Persist the dismissal and re-render the source spreadsheet so the flag drops away.
+     */
+    dismissVariance() {
+        const pop = document.getElementById('variancePopover');
+        if (!pop || pop.hidden) return;
+        const tab = pop.dataset.tab;
+        const catId = pop.dataset.catId;
+        const month = pop.dataset.month;
+        const value = parseFloat(pop.dataset.value);
+        const targetKey = `${tab}:${catId}:${month}`;
+
+        let dismissed = [];
+        try { dismissed = JSON.parse(Database.getMetaValue('dismissed_variances') || '[]'); } catch (e) { dismissed = []; }
+        // Avoid duplicates (same target_key + value already dismissed)
+        const round2 = (n) => Math.round(Number(n) * 100) / 100;
+        const exists = dismissed.some(d => d.target_key === targetKey && round2(d.value) === round2(value));
+        if (!exists) {
+            dismissed.push({ target_key: targetKey, value });
+            Database.setMetaValue('dismissed_variances', JSON.stringify(dismissed));
+            Database.autoSave();
+        }
+        this.closeVariancePopover();
+
+        // Re-render the source spreadsheet so the flag disappears.
+        if (tab === 'pnl') this.refreshPnL();
+        else if (tab === 'cashflow') this.refreshCashFlow();
+
+        UI.showNotification('Variance flag dismissed', 'info');
+    },
+
+    /**
+     * Close the variance popover and open the Period Note popover for the
+     * same (tab, month). Pre-fills the textarea with a starter prompt the user can replace.
+     */
+    explainVariance() {
+        const pop = document.getElementById('variancePopover');
+        if (!pop || pop.hidden) return;
+        const tab = pop.dataset.tab;
+        const catId = pop.dataset.catId;
+        const month = pop.dataset.month;
+
+        // Resolve a friendly category name for the prompt.
+        const cats = Database.getCategories();
+        const cat = cats.find(c => String(c.id) === String(catId));
+        const catName = cat ? cat.name : 'this line';
+
+        this.closeVariancePopover();
+
+        // Open the Period Note popover for this (tab, month). If a note already
+        // exists, leave the body alone; otherwise pre-fill a prompt.
+        const existing = Database.getPeriodNote(tab, month);
+        if (!existing) {
+            // Set a temporary draft body so the popover opens with this text.
+            // openPeriodNote should pick up the existing note (none) and we'll
+            // prefill the textarea after open via the placeholder route.
+            Database.setNote('period', `${tab}:${month}`, `Why was ${catName} flagged in ${Utils.formatMonthShort(month)}? `, null);
+        }
+
+        // Anchor the popover to the column header that matches this month, falling back
+        // to the body if the header isn't visible (e.g., scrolled off).
+        const header = document.querySelector(`.note-icon[data-tab="${tab}"][data-month="${month}"]`);
+        if (header && this.openPeriodNote) {
+            this.openPeriodNote(tab, month, header.closest('th') || header);
+        } else if (this.openPeriodNote) {
+            this.openPeriodNote(tab, month, null);
+        }
+    },
+
+    _setupVariancePopover() {
+        if (this._variancePopoverSetup) return;
+        const pop = document.getElementById('variancePopover');
+        if (!pop) return;
+        this._variancePopoverSetup = true;
+
+        // Delegated click handler on document for any flagged cell.
+        document.addEventListener('click', (e) => {
+            const td = e.target.closest('td.cell-flagged');
+            if (td) {
+                e.preventDefault();
+                e.stopPropagation();
+                this.openVariancePopover(td);
+                return;
+            }
+            // Click outside the popover closes it (but ignore clicks inside it).
+            if (!pop.hidden && !pop.contains(e.target)) {
+                this.closeVariancePopover();
+            }
+        });
+
+        // Action buttons
+        const closeBtn = document.getElementById('variancePopClose');
+        const dismissBtn = document.getElementById('variancePopDismiss');
+        const explainBtn = document.getElementById('variancePopExplain');
+        if (closeBtn) closeBtn.addEventListener('click', () => this.closeVariancePopover());
+        if (dismissBtn) dismissBtn.addEventListener('click', () => this.dismissVariance());
+        if (explainBtn) explainBtn.addEventListener('click', () => this.explainVariance());
+
+        // Esc to close
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && !pop.hidden) {
+                this.closeVariancePopover();
+            }
         });
     },
 
