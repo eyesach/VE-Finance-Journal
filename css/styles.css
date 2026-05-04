@@ -4452,6 +4452,7 @@ th:hover .pn-icon-wrap,
 .vr-pop-stats > div:last-child { border: none; }
 .vr-delta-up { color: var(--amber); font-weight: 600; }
 .vr-delta-down { color: var(--green); font-weight: 600; }
+.vr-delta-none { color: var(--text-muted); }
 .vr-pop-actions {
     display: flex; justify-content: space-between; align-items: center;
     margin-top: 10px;

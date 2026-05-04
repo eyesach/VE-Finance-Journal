@@ -900,7 +900,7 @@ const UI = {
             let rowTotal = 0;
             // Pre-compute monthly values for variance check (effective values as displayed)
             const monthlyValues = months.map(mo => getEffectiveVal(catId, catData, mo));
-            html += `<tr draggable="true" data-category-id="${catId}" data-section="receivable">`;
+            html += `<tr draggable="true" data-category-id="${catId}" data-section="receivable"${buildVarianceRowAttr(monthlyValues)}>`;
             html += '<td class="cashflow-indent cashflow-drag-handle">' + Utils.escapeHtml(catData.name) + '</td>';
             months.forEach((m, i) => {
                 if (psActive && !catData.is_b2b && useProjectedView(m)) {
@@ -983,7 +983,7 @@ const UI = {
             let rowTotal = 0;
             // Pre-compute monthly values for variance check (effective values as displayed)
             const monthlyValues = months.map(mo => getEffectiveVal(catId, catData, mo));
-            html += `<tr draggable="true" data-category-id="${catId}" data-section="payable">`;
+            html += `<tr draggable="true" data-category-id="${catId}" data-section="payable"${buildVarianceRowAttr(monthlyValues)}>`;
             html += '<td class="cashflow-indent cashflow-drag-handle">' + Utils.escapeHtml(catData.name) + '</td>';
             months.forEach((m, i) => {
                 const amt = monthlyValues[i];
@@ -1269,7 +1269,7 @@ const UI = {
                 const fallback = isFuture(mo) && computed === 0 ? projAvg : computed;
                 return getVal(catId, mo, fallback);
             });
-            html += `<tr class="pnl-indent" draggable="true" data-category-id="${catId}" data-section="revenue"><td class="pnl-drag-handle">${Utils.escapeHtml(catData.name)}</td>`;
+            html += `<tr class="pnl-indent" draggable="true" data-category-id="${catId}" data-section="revenue"${buildVarianceRowAttr(monthlyValues)}><td class="pnl-drag-handle">${Utils.escapeHtml(catData.name)}</td>`;
             months.forEach((m, i) => {
                 if (psActive && useProjectedView(m)) {
                     // Projected sales covers this month for non-B2B
@@ -1297,7 +1297,7 @@ const UI = {
                 const fallback = isFuture(mo) && computed === 0 ? projAvg : computed;
                 return getVal(catId, mo, fallback);
             });
-            html += `<tr class="pnl-indent" draggable="true" data-category-id="${catId}" data-section="revenue"><td class="pnl-drag-handle">${Utils.escapeHtml(catData.name)}</td>`;
+            html += `<tr class="pnl-indent" draggable="true" data-category-id="${catId}" data-section="revenue"${buildVarianceRowAttr(monthlyValues)}><td class="pnl-drag-handle">${Utils.escapeHtml(catData.name)}</td>`;
             months.forEach((m, i) => {
                 const val = monthlyValues[i];
                 monthRevenue[m] += val;
@@ -1357,7 +1357,7 @@ const UI = {
                 const fallback = isFuture(mo) && computed === 0 ? projAvg : computed;
                 return getVal(catId, mo, fallback);
             });
-            html += `<tr class="pnl-indent" draggable="true" data-category-id="${catId}" data-section="cogs"><td class="pnl-drag-handle">${Utils.escapeHtml(catData.name)}</td>`;
+            html += `<tr class="pnl-indent" draggable="true" data-category-id="${catId}" data-section="cogs"${buildVarianceRowAttr(monthlyValues)}><td class="pnl-drag-handle">${Utils.escapeHtml(catData.name)}</td>`;
             months.forEach((m, i) => {
                 const val = monthlyValues[i];
                 monthCogs[m] += val;
@@ -1414,7 +1414,7 @@ const UI = {
                 const fallback = isFuture(mo) && computed === 0 ? projAvg : computed;
                 return getVal(catId, mo, fallback);
             });
-            html += `<tr class="pnl-indent" draggable="true" data-category-id="${catId}" data-section="opex"><td class="pnl-drag-handle">${Utils.escapeHtml(catData.name)}</td>`;
+            html += `<tr class="pnl-indent" draggable="true" data-category-id="${catId}" data-section="opex"${buildVarianceRowAttr(monthlyValues)}><td class="pnl-drag-handle">${Utils.escapeHtml(catData.name)}</td>`;
             months.forEach((m, i) => {
                 const val = monthlyValues[i];
                 monthOpex[m] += val;
@@ -3555,6 +3555,8 @@ function _vrRound2(n) { return Math.round(Number(n) * 100) / 100; }
 
 // Build the {extraClass, extraAttrs} fragment for one (tab, catId, month) cell.
 // Returns empty fragments when flagging is disabled or the flag is dismissed.
+// data-vr-idx is the cell's index into the row's data-vr-series array, so the
+// popover can read the renderer's monthlyValues directly without DOM-text guessing.
 // Shared between renderProfitLossSpreadsheet and renderCashFlowSpreadsheet.
 function buildVarianceFlag({ tab, catId, monthlyValues, idx, month, varThreshold, dismissed, enabled }) {
     if (!enabled) return { extraClass: '', extraAttrs: '' };
@@ -3569,8 +3571,17 @@ function buildVarianceFlag({ tab, catId, monthlyValues, idx, month, varThreshold
     const tooltip = Utils.escapeHtml(formatVarianceTooltip(variance));
     return {
         extraClass: ' cell-flagged',
-        extraAttrs: ` data-vr-tab="${tab}" data-vr-cat="${catId}" data-vr-month="${month}" data-vr-value="${cur}" title="${tooltip}"`
+        extraAttrs: ` data-vr-tab="${tab}" data-vr-cat="${catId}" data-vr-month="${month}" data-vr-value="${cur}" data-vr-idx="${idx}" title="${tooltip}"`
     };
+}
+
+// Build a single attribute string emitted on each row that participates in
+// variance flagging, so openVariancePopover can read the row's exact monthly
+// series (matching what computeVariance saw at render time) instead of trying
+// to reconstruct numbers from formatted cell text.
+// JSON.stringify of an all-number array is safe inside a single-quoted attribute.
+function buildVarianceRowAttr(monthlyValues) {
+    return ` data-vr-series='${JSON.stringify(monthlyValues)}'`;
 }
 
 // Export for use in other modules

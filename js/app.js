@@ -5621,8 +5621,12 @@ const App = {
      * @param {string} tab 'pnl' | 'cashflow' | 'balancesheet'
      * @param {string} month 'YYYY-MM'
      * @param {HTMLElement} anchorEl The column header element to anchor to (or null for centered)
+     * @param {string} [prefillBody] Optional non-persisted seed text used when no existing
+     *   note is found. Lets "Explain this →" hand off a starter prompt without writing
+     *   a row to the DB. The prefill is treated as the initial currentBody so closing
+     *   without further edits is a no-op.
      */
-    openPeriodNote(tab, month, anchorEl) {
+    openPeriodNote(tab, month, anchorEl, prefillBody) {
         const pop = document.getElementById('periodNotePopover');
         const eyebrow = document.getElementById('periodNotePopEyebrow');
         const monthEl = document.getElementById('periodNotePopMonth');
@@ -5635,7 +5639,7 @@ const App = {
         monthEl.textContent = Utils.formatMonthDisplay(month);
 
         const existing = Database.getPeriodNote(tab, month);
-        textarea.value = existing ? existing.body : '';
+        textarea.value = existing ? existing.body : (prefillBody || '');
         const isPinned = !!(existing && existing.pinned_to_share);
         pin.classList.toggle('active', isPinned);
         pin.setAttribute('aria-pressed', isPinned ? 'true' : 'false');
@@ -5643,6 +5647,8 @@ const App = {
             ? `Last edited ${Utils.formatDate(existing.updated_at)} · auto-saves on close`
             : 'New note — auto-saves on close';
 
+        // currentBody is the textarea's value at open. Prefill is treated as
+        // the user's starting point — closing without typing more is a no-op.
         this._periodNoteState = { tab, month, currentBody: textarea.value, anchorEl };
 
         // Reset prior drag/resize state — let CSS defaults apply
@@ -5775,9 +5781,10 @@ const App = {
     // ==================== VARIANCE POPOVER (Phase 2) ====================
 
     /**
-     * Open the variance popover for a flagged cell. Reads attributes from the
-     * <td> and recomputes variance fresh against the current row's monthlyValues
-     * (which we reconstruct from the rendered DOM siblings on the same row).
+     * Open the variance popover for a flagged cell. Reads the renderer's exact
+     * monthly series from the parent row's data-vr-series attribute and the
+     * cell's own data-vr-idx — no DOM-text reconstruction (which would drift
+     * for ps-replaced cells where data-cat-id is absent).
      */
     openVariancePopover(td) {
         const pop = document.getElementById('variancePopover');
@@ -5787,21 +5794,19 @@ const App = {
         const catId = td.dataset.vrCat;
         const month = td.dataset.vrMonth;
         const value = parseFloat(td.dataset.vrValue);
+        const idx = parseInt(td.dataset.vrIdx, 10);
 
-        // Recompute variance from sibling cells in the same row to get fresh deltas.
-        const cells = Array.from(td.parentElement.querySelectorAll(`td[data-vr-tab="${tab}"][data-cat-id="${catId}"]`));
-        // The flagged-cell renderer puts data-vr-tab only on flagged cells, but data-cat-id
-        // is on every monthly cell. Use data-cat-id to gather the full month series.
-        const monthCells = Array.from(td.parentElement.querySelectorAll(`td[data-cat-id="${catId}"][data-month]`))
-            .filter(c => c.dataset.month && c.dataset.month !== 'total');
-        const monthValues = monthCells.map(c => {
-            // Extract numeric value from formatted text — values look like "$1,234" or "1,234" or "—"
-            const txt = c.textContent.replace(/[^\d.\-]/g, '');
-            return txt ? parseFloat(txt) : 0;
-        });
-        const idx = monthCells.findIndex(c => c.dataset.month === month);
+        // Read the row's pre-computed series — same array the renderer ran
+        // computeVariance against, so the popover's deltas match the cell tooltip.
+        let monthValues = [];
+        const seriesAttr = td.parentElement && td.parentElement.dataset.vrSeries;
+        if (seriesAttr) {
+            try { monthValues = JSON.parse(seriesAttr); } catch (e) { monthValues = []; }
+        }
         const threshold = parseInt(Database.getMetaValue('variance_threshold_pct'), 10) || 20;
-        const variance = (idx >= 0) ? Utils.computeVariance(monthValues, idx, threshold) : { deltaPrior: null, deltaAvg3: null };
+        const variance = (Number.isFinite(idx) && monthValues.length)
+            ? Utils.computeVariance(monthValues, idx, threshold)
+            : { deltaPrior: null, deltaAvg3: null };
 
         // Resolve category name for the title
         const cats = Database.getCategories();
@@ -5813,7 +5818,7 @@ const App = {
         // Build stats rows
         const fmt = (n) => Utils.formatCurrency(n);
         const fmtDelta = (d) => {
-            if (d === null) return '<span style="color:var(--text-muted)">no data</span>';
+            if (d === null) return '<span class="vr-delta-none">no data</span>';
             if (d === Infinity) return '<span class="vr-delta-up">+∞%</span>';
             const pct = (d * 100).toFixed(0);
             const sign = d >= 0 ? '+' : '';
@@ -5821,19 +5826,16 @@ const App = {
             return `<span class="${cls}">${sign}${pct}%</span>`;
         };
 
-        let priorVal = null;
-        let avg3Val = null;
-        if (idx >= 1) priorVal = monthValues[idx - 1];
-        if (idx >= 3) avg3Val = (monthValues[idx-3] + monthValues[idx-2] + monthValues[idx-1]) / 3;
-
+        // Drive row visibility off variance.deltaPrior/deltaAvg3 directly so
+        // this stays in sync if computeVariance ever changes its lookback.
         const statsEl = document.getElementById('variancePopStats');
         if (statsEl) {
             statsEl.innerHTML =
                 `<div><span>This month</span><strong>${fmt(value)}</strong></div>` +
-                (priorVal !== null
+                (variance.deltaPrior !== null
                     ? `<div><span>vs prior month</span>${fmtDelta(variance.deltaPrior)}</div>`
                     : '') +
-                (avg3Val !== null
+                (variance.deltaAvg3 !== null
                     ? `<div><span>vs 3-mo avg</span>${fmtDelta(variance.deltaAvg3)}</div>`
                     : '');
         }
@@ -5844,17 +5846,17 @@ const App = {
         pop.dataset.month = month;
         pop.dataset.value = String(value);
 
-        // Position next to the clicked cell — fixed at the cell's right edge,
-        // clamped to viewport so it never spills off-screen.
+        // Show first so we can measure actual rendered height for clamping.
+        pop.hidden = false;
         const rect = td.getBoundingClientRect();
-        const popW = 360; // matches CSS
+        const popW = pop.offsetWidth || 360;
+        const popH = pop.offsetHeight || 200;
         let left = rect.left + rect.width + 8;
         let top = rect.top;
         if (left + popW > window.innerWidth - 8) left = Math.max(8, rect.left - popW - 8);
-        if (top + 200 > window.innerHeight - 8) top = Math.max(8, window.innerHeight - 200 - 8);
+        if (top + popH > window.innerHeight - 8) top = Math.max(8, window.innerHeight - popH - 8);
         pop.style.left = left + 'px';
         pop.style.top = top + 'px';
-        pop.hidden = false;
     },
 
     closeVariancePopover() {
@@ -5895,7 +5897,9 @@ const App = {
 
     /**
      * Close the variance popover and open the Period Note popover for the
-     * same (tab, month). Pre-fills the textarea with a starter prompt the user can replace.
+     * same (tab, month). Pre-fills the textarea with a starter prompt — passed
+     * via openPeriodNote's prefillBody param so it never persists unless the
+     * user actually edits it. No DB write here.
      */
     explainVariance() {
         const pop = document.getElementById('variancePopover');
@@ -5904,30 +5908,19 @@ const App = {
         const catId = pop.dataset.catId;
         const month = pop.dataset.month;
 
-        // Resolve a friendly category name for the prompt.
         const cats = Database.getCategories();
         const cat = cats.find(c => String(c.id) === String(catId));
         const catName = cat ? cat.name : 'this line';
+        const prefill = `Why was ${catName} flagged in ${Utils.formatMonthShort(month)}? `;
 
         this.closeVariancePopover();
 
-        // Open the Period Note popover for this (tab, month). If a note already
-        // exists, leave the body alone; otherwise pre-fill a prompt.
-        const existing = Database.getPeriodNote(tab, month);
-        if (!existing) {
-            // Set a temporary draft body so the popover opens with this text.
-            // openPeriodNote should pick up the existing note (none) and we'll
-            // prefill the textarea after open via the placeholder route.
-            Database.setNote('period', `${tab}:${month}`, `Why was ${catName} flagged in ${Utils.formatMonthShort(month)}? `, null);
-        }
-
-        // Anchor the popover to the column header that matches this month, falling back
-        // to the body if the header isn't visible (e.g., scrolled off).
+        // Anchor the popover to the column header that matches this month,
+        // fall back to centered if the header isn't in the DOM (scrolled or hidden).
         const header = document.querySelector(`.note-icon[data-tab="${tab}"][data-month="${month}"]`);
-        if (header && this.openPeriodNote) {
-            this.openPeriodNote(tab, month, header.closest('th') || header);
-        } else if (this.openPeriodNote) {
-            this.openPeriodNote(tab, month, null);
+        const anchor = header ? (header.closest('th') || header) : null;
+        if (this.openPeriodNote) {
+            this.openPeriodNote(tab, month, anchor, prefill);
         }
     },
 
