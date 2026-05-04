@@ -107,6 +107,7 @@ const App = {
     _rollbackTargetVersion: null,
     calcMode: false,
     calcRefCounter: 0,
+    editMode: false,
 
     // Theme preset palettes: { c1: sidebar, c2: accent, c3: background, c4: surface, c5: border, c6: text, style?: string }
     themePresets: {
@@ -235,6 +236,7 @@ const App = {
             // Wire up drag/resize handlers for the period note popover
             this._setupPeriodNoteDragResize();
             this._setupVariancePopover();
+            this._setupCellResetMenu();
 
             console.log('Application initialized successfully');
         } catch (error) {
@@ -758,12 +760,16 @@ const App = {
 
         container.addEventListener('click', (e) => {
             if (this.calcMode) return;
+            if (!this.editMode) return;             // Edit mode required
             const cell = e.target.closest('.cf-editable');
             if (!cell) return;
+            if (cell.classList.contains('cell-flagged')) return;  // Variance popover handles flagged cells
 
             const catId = parseInt(cell.dataset.catId);
             const month = cell.dataset.month;
             const currentText = cell.textContent.replace(/[^0-9.\-]/g, '');
+            // Capture pre-edit value for no-change detection
+            const preValue = currentText === '' ? null : parseFloat(currentText);
 
             const input = document.createElement('input');
             input.type = 'number';
@@ -777,10 +783,17 @@ const App = {
 
             const save = () => {
                 const val = input.value.trim();
-                if (val === '') {
+                const newValue = val === '' ? null : parseFloat(val);
+                // Smart no-change detection: blur with no actual change → do nothing
+                const round2 = (n) => n === null || isNaN(n) ? null : Math.round(n * 100) / 100;
+                if (round2(newValue) === round2(preValue)) {
+                    this.refreshCashFlow();
+                    return;
+                }
+                if (newValue === null) {
                     Database.setCashFlowOverride(catId, month, null);
                 } else {
-                    Database.setCashFlowOverride(catId, month, parseFloat(val));
+                    Database.setCashFlowOverride(catId, month, newValue);
                 }
                 this.refreshCashFlow();
             };
@@ -1076,8 +1089,10 @@ const App = {
 
         container.addEventListener('click', (e) => {
             if (this.calcMode) return;
+            if (!this.editMode) return;             // Edit mode required
             const cell = e.target.closest('.pnl-editable');
             if (!cell || cell.querySelector('.pnl-cell-input')) return;
+            if (cell.classList.contains('cell-flagged')) return;  // Variance popover handles flagged cells
 
             const catId = parseInt(cell.dataset.catId);
             const month = cell.dataset.month;
@@ -1085,6 +1100,8 @@ const App = {
             // Get current displayed value (strip currency formatting)
             const currentText = cell.textContent.replace(/[^0-9.\-]/g, '');
             const currentVal = parseFloat(currentText) || 0;
+            // Capture pre-edit value for no-change detection
+            const preValue = currentText === '' ? null : parseFloat(currentText);
 
             const input = document.createElement('input');
             input.type = 'number';
@@ -1099,13 +1116,17 @@ const App = {
 
             const save = () => {
                 const newVal = input.value.trim();
-                if (newVal === '' || newVal === currentText) {
-                    // No change or cleared - remove override if cleared
-                    if (newVal === '') {
-                        Database.setPLOverride(catId, month, null);
-                    }
+                const newValue = newVal === '' ? null : parseFloat(newVal);
+                // Smart no-change detection: blur with no actual change → do nothing
+                const round2 = (n) => n === null || isNaN(n) ? null : Math.round(n * 100) / 100;
+                if (round2(newValue) === round2(preValue)) {
+                    this.refreshPnL();
+                    return;
+                }
+                if (newValue === null) {
+                    Database.setPLOverride(catId, month, null);
                 } else {
-                    Database.setPLOverride(catId, month, parseFloat(newVal));
+                    Database.setPLOverride(catId, month, newValue);
                 }
                 this.refreshPnL();
             };
@@ -4486,6 +4507,11 @@ const App = {
             this.toggleCalcMode();
         });
 
+        const editToggleBtn = document.getElementById('editToggleBtn');
+        if (editToggleBtn) {
+            editToggleBtn.addEventListener('click', () => this.toggleEditMode());
+        }
+
         document.getElementById('calcCloseBtn').addEventListener('click', () => {
             this.exitCalcMode();
         });
@@ -5959,6 +5985,91 @@ const App = {
                 this.closeVariancePopover();
             }
         });
+    },
+
+    // ==================== EDIT MODE TOGGLE ====================
+
+    /**
+     * Toggle Edit mode (cell editing for P&L and Cash Flow).
+     * Default is OFF; cells aren't editable when off and asterisks are hidden.
+     */
+    toggleEditMode() {
+        this.editMode = !this.editMode;
+        document.body.classList.toggle('edit-mode', this.editMode);
+        const btn = document.getElementById('editToggleBtn');
+        if (btn) btn.classList.toggle('active', this.editMode);
+        // Re-render the active P&L/CF view so any hover hints / asterisks reflect new state.
+        const activeTab = document.querySelector('.main-tab.active');
+        if (activeTab) {
+            const tab = activeTab.dataset.tab;
+            if (tab === 'pnl') this.refreshPnL();
+            else if (tab === 'cashflow') this.refreshCashFlow();
+        }
+        this.closeCellResetMenu();
+    },
+
+    // ==================== CELL RESET CONTEXT MENU ====================
+
+    /**
+     * Wire right-click context menu on overridden P&L/CF cells in Edit mode.
+     * Idempotent: safe to call multiple times.
+     */
+    _setupCellResetMenu() {
+        if (this._cellResetMenuSetup) return;
+        this._cellResetMenuSetup = true;
+        const menu = document.getElementById('cellResetMenu');
+        if (!menu) return;
+
+        document.addEventListener('contextmenu', (e) => {
+            if (!this.editMode) return;
+            const cell = e.target.closest('td.pnl-editable.pnl-overridden, td.cf-editable.pnl-overridden');
+            if (!cell) return;
+            const catId = cell.dataset.catId;
+            const month = cell.dataset.month;
+            if (!catId || !month || month === 'total') return;
+            // Determine override table by class membership
+            const tab = cell.classList.contains('cf-editable') ? 'cashflow' : 'pnl';
+            e.preventDefault();
+            menu.dataset.tab = tab;
+            menu.dataset.catId = catId;
+            menu.dataset.month = month;
+            menu.style.left = e.clientX + 'px';
+            menu.style.top = e.clientY + 'px';
+            menu.hidden = false;
+        });
+
+        document.addEventListener('click', (e) => {
+            if (!menu.hidden && !menu.contains(e.target)) this.closeCellResetMenu();
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && !menu.hidden) this.closeCellResetMenu();
+        });
+
+        const resetBtn = document.getElementById('cellResetMenuReset');
+        if (resetBtn) resetBtn.addEventListener('click', () => this.resetOverriddenCell());
+    },
+
+    closeCellResetMenu() {
+        const menu = document.getElementById('cellResetMenu');
+        if (menu) menu.hidden = true;
+    },
+
+    resetOverriddenCell() {
+        const menu = document.getElementById('cellResetMenu');
+        if (!menu || menu.hidden) return;
+        const tab = menu.dataset.tab;
+        const catId = parseInt(menu.dataset.catId, 10);
+        const month = menu.dataset.month;
+        if (tab === 'pnl') {
+            Database.setPLOverride(catId, month, null);
+            this.refreshPnL();
+        } else if (tab === 'cashflow') {
+            Database.setCashFlowOverride(catId, month, null);
+            this.refreshCashFlow();
+        }
+        this.closeCellResetMenu();
+        UI.showNotification('Cell reset to calculated value', 'info');
     },
 
     // ==================== CATEGORY HANDLERS ====================

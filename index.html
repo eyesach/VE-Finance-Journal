@@ -316,6 +316,7 @@
                 <button id="loadDbBtn" class="btn btn-secondary">Load</button>
                 <input type="file" id="loadDbInput" accept=".db" style="display: none;">
                 <button id="calcToggleBtn" class="btn btn-secondary" title="Calculator sidebar">Calc</button>
+                <button id="editToggleBtn" class="btn btn-secondary" title="Toggle cell editing in P&amp;L and Cash Flow">Edit</button>
             </div>
         </header>
 
@@ -2799,6 +2800,11 @@
                 <button type="button" class="btn btn-text" id="variancePopDismiss">Dismiss flag</button>
                 <button type="button" class="btn btn-primary btn-sm" id="variancePopExplain">Explain this →</button>
             </div>
+        </div>
+
+        <!-- Cell reset context menu (Edit mode) -->
+        <div id="cellResetMenu" class="cell-reset-menu" role="menu" hidden>
+            <button type="button" class="cell-reset-menu-item" id="cellResetMenuReset" role="menuitem">↺ Reset to calculated value</button>
         </div>
 
         <!-- Calculator Sidebar -->
