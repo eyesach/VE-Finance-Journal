@@ -773,19 +773,11 @@ const UI = {
         let dismissedVariances = [];
         try { dismissedVariances = JSON.parse(Database.getMetaValue('dismissed_variances') || '[]'); } catch (e) { dismissedVariances = []; }
         const showFlags = (typeof App !== 'undefined') && !App.isViewOnly;
-        // Build attrs for a CF cell. Returns { extraClass, extraAttrs } to merge into <td>.
-        const buildCFFlag = (catId, monthlyValues, idx, month) => {
-            if (!showFlags) return { extraClass: '', extraAttrs: '' };
-            const variance = Utils.computeVariance(monthlyValues, idx, varThreshold);
-            if (!variance.flagged) return { extraClass: '', extraAttrs: '' };
-            const targetKey = `cashflow:${catId}:${month}`;
-            const cur = monthlyValues[idx];
-            const isDismissed = dismissedVariances.some(d => d.target_key === targetKey && d.value === cur);
-            if (isDismissed) return { extraClass: '', extraAttrs: '' };
-            const tooltip = formatVarianceTooltip(variance);
-            const extraAttrs = ` data-vr-tab="cashflow" data-vr-cat="${catId}" data-vr-month="${month}" data-vr-value="${cur}" title="${Utils.escapeHtml(tooltip)}"`;
-            return { extraClass: ' cell-flagged', extraAttrs };
-        };
+        // Build attrs for a CF cell. Thin wrapper around shared buildVarianceFlag.
+        const buildCFFlag = (catId, monthlyValues, idx, month) => buildVarianceFlag({
+            tab: 'cashflow', catId, monthlyValues, idx, month,
+            varThreshold, dismissed: dismissedVariances, enabled: showFlags
+        });
 
         // Helpers (defined before totals so projections are reflected in subtotals)
         const fmtMonth = (m) => Utils.formatMonthShort(m);
@@ -1218,19 +1210,11 @@ const UI = {
         let dismissedVariances = [];
         try { dismissedVariances = JSON.parse(Database.getMetaValue('dismissed_variances') || '[]'); } catch (e) { dismissedVariances = []; }
         const showFlags = (typeof App !== 'undefined') && !App.isViewOnly;
-        // Build attrs for a P&L cell. Returns { extraClass, extraAttrs } to merge into <td>.
-        const buildPnLFlag = (catId, monthlyValues, idx, month) => {
-            if (!showFlags) return { extraClass: '', extraAttrs: '' };
-            const variance = Utils.computeVariance(monthlyValues, idx, varThreshold);
-            if (!variance.flagged) return { extraClass: '', extraAttrs: '' };
-            const targetKey = `pnl:${catId}:${month}`;
-            const cur = monthlyValues[idx];
-            const isDismissed = dismissedVariances.some(d => d.target_key === targetKey && d.value === cur);
-            if (isDismissed) return { extraClass: '', extraAttrs: '' };
-            const tooltip = formatVarianceTooltip(variance);
-            const extraAttrs = ` data-vr-tab="pnl" data-vr-cat="${catId}" data-vr-month="${month}" data-vr-value="${cur}" title="${Utils.escapeHtml(tooltip)}"`;
-            return { extraClass: ' cell-flagged', extraAttrs };
-        };
+        // Build attrs for a P&L cell. Thin wrapper around shared buildVarianceFlag.
+        const buildPnLFlag = (catId, monthlyValues, idx, month) => buildVarianceFlag({
+            tab: 'pnl', catId, monthlyValues, idx, month,
+            varThreshold, dismissed: dismissedVariances, enabled: showFlags
+        });
 
         // Start building table
         let html = '<table class="pnl-table"><thead><tr>';
@@ -3563,6 +3547,30 @@ function formatVarianceTooltip(v) {
         pieces.push('+∞% vs 3-mo avg');
     }
     return pieces.join(' · ');
+}
+
+// Round to cents to give dismissal-match a stable bucket — float drift in the
+// underlying number must not silently un-dismiss a flag the user already accepted.
+function _vrRound2(n) { return Math.round(Number(n) * 100) / 100; }
+
+// Build the {extraClass, extraAttrs} fragment for one (tab, catId, month) cell.
+// Returns empty fragments when flagging is disabled or the flag is dismissed.
+// Shared between renderProfitLossSpreadsheet and renderCashFlowSpreadsheet.
+function buildVarianceFlag({ tab, catId, monthlyValues, idx, month, varThreshold, dismissed, enabled }) {
+    if (!enabled) return { extraClass: '', extraAttrs: '' };
+    const variance = Utils.computeVariance(monthlyValues, idx, varThreshold);
+    if (!variance.flagged) return { extraClass: '', extraAttrs: '' };
+    const cur = monthlyValues[idx];
+    const targetKey = `${tab}:${catId}:${month}`;
+    const curRounded = _vrRound2(cur);
+    if (dismissed.some(d => d.target_key === targetKey && _vrRound2(d.value) === curRounded)) {
+        return { extraClass: '', extraAttrs: '' };
+    }
+    const tooltip = Utils.escapeHtml(formatVarianceTooltip(variance));
+    return {
+        extraClass: ' cell-flagged',
+        extraAttrs: ` data-vr-tab="${tab}" data-vr-cat="${catId}" data-vr-month="${month}" data-vr-value="${cur}" title="${tooltip}"`
+    };
 }
 
 // Export for use in other modules
