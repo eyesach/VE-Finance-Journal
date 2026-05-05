@@ -7420,6 +7420,66 @@ const App = {
                 searchTimer = setTimeout(() => this.refreshInsights(), 200);
             });
         }
+
+        // Card click → cross-tab navigation
+        const feedEl = document.getElementById('insightsFeed');
+        if (feedEl) {
+            feedEl.addEventListener('click', (e) => {
+                const card = e.target.closest('.insight-card');
+                if (!card) return;
+                this._handleInsightCardClick(card);
+            });
+        }
+    },
+
+    /**
+     * Route an insight-card click to its source location.
+     */
+    _handleInsightCardClick(card) {
+        const sourceType = card.dataset.sourceType;
+        const sourceId = card.dataset.sourceId;
+        const targetKey = card.dataset.targetKey || '';
+
+        if (sourceType === 'period') {
+            const [tab, month] = targetKey.split(':');
+            if (!tab || !month) return;
+            this.switchMainTab(tab);
+            // Wait one tick for the tab content to render, then open the note popover
+            setTimeout(() => {
+                const icon = document.querySelector(`.note-icon[data-tab="${tab}"][data-month="${month}"]`);
+                const anchor = icon ? (icon.closest('th') || icon) : null;
+                if (this.openPeriodNote) this.openPeriodNote(tab, month, anchor);
+            }, 50);
+            return;
+        }
+
+        if (sourceType === 'transaction') {
+            const txnId = parseInt(sourceId, 10);
+            if (!txnId) return;
+            this.switchMainTab('journal');
+            setTimeout(() => {
+                this._scrollAndHighlightTransaction(txnId);
+            }, 50);
+            return;
+        }
+
+        if (sourceType === 'anomaly' || sourceType === 'chart') {
+            // Phase 4/5 will hook scroll-into-view here. For v1 of Insights Hub,
+            // landing on the dashboard is sufficient.
+            this.switchMainTab('dashboard');
+            return;
+        }
+    },
+
+    /**
+     * Find the journal row for a transaction id, scroll to it, and flash a highlight.
+     */
+    _scrollAndHighlightTransaction(txnId) {
+        const row = document.querySelector(`#transactionsContainer tr[data-id="${txnId}"]`);
+        if (!row) return;
+        row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        row.classList.add('insight-flash');
+        setTimeout(() => row.classList.remove('insight-flash'), 1500);
     },
 
     /**

@@ -4633,3 +4633,12 @@ body:not(.edit-mode) .cf-editable:not(.cell-flagged) {
     .insights-layout { grid-template-columns: 1fr; }
     .insights-sidebar { border-right: none; border-bottom: 1px solid var(--border); }
 }
+
+/* Brief highlight when navigating from an insight card to a journal row */
+.insight-flash {
+    animation: insightFlash 1.4s ease-out;
+}
+@keyframes insightFlash {
+    0% { background: var(--blue-bg); }
+    100% { background: transparent; }
+}
