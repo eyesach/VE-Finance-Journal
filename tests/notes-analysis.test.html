@@ -121,6 +121,121 @@ test(s2, 'NaN in 3-mo window does not poison the avg flag', () => {
   assert(v.flagged, 'NaN should be coerced to 0 in slice, not poison the avg');
 });
 
+const s3 = suite('Anomaly Rules');
+
+// === runway_drop ===
+test(s3, 'runway_drop fires when current 18 days less than prior', () => {
+  const ctx = { snapshotMonth: '2026-04', cashRunwayDays: { current: 124, prior: 142 } };
+  const a = Utils.anomalyRunwayDrop(ctx);
+  assert(a, 'should return anomaly');
+  assertEq(a.signature, 'runway_drop');
+  assertEq(a.severity, 'critical');
+  assert(a.title.includes('18'), 'title mentions 18 days');
+});
+test(s3, 'runway_drop returns null when drop < 10 days', () => {
+  const a = Utils.anomalyRunwayDrop({ snapshotMonth: '2026-04', cashRunwayDays: { current: 138, prior: 142 } });
+  assertEq(a, null);
+});
+test(s3, 'runway_drop returns null when prior is missing', () => {
+  const a = Utils.anomalyRunwayDrop({ snapshotMonth: '2026-04', cashRunwayDays: { current: 100, prior: null } });
+  assertEq(a, null);
+});
+
+// === category_spike ===
+test(s3, 'category_spike picks the highest multiplier', () => {
+  const ctx = {
+    snapshotMonth: '2026-04',
+    categories: [
+      { id: 1, name: 'Office', recentMonths: [400, 410, 420, 400, 410, 410, 1840] },     // ~4.4x
+      { id: 2, name: 'Saas',   recentMonths: [200, 200, 200, 200, 200, 200, 800] },       // 4x
+      { id: 3, name: 'Stable', recentMonths: [100, 100, 100, 100, 100, 100, 100] }        // 1x
+    ]
+  };
+  const a = Utils.anomalyCategorySpike(ctx);
+  assert(a, 'should return anomaly');
+  assertEq(a.target_id, 1);
+  assert(a.title.includes('Office'), 'title names Office');
+});
+test(s3, 'category_spike returns null when nothing exceeds 3x', () => {
+  const ctx = {
+    snapshotMonth: '2026-04',
+    categories: [{ id: 1, name: 'Steady', recentMonths: [100, 100, 100, 100, 100, 100, 200] }] // 2x
+  };
+  assertEq(Utils.anomalyCategorySpike(ctx), null);
+});
+test(s3, 'category_spike skips categories with zero history', () => {
+  const ctx = {
+    snapshotMonth: '2026-04',
+    categories: [{ id: 1, name: 'New', recentMonths: [0, 0, 0, 0, 0, 0, 5000] }]
+  };
+  assertEq(Utils.anomalyCategorySpike(ctx), null);
+});
+
+// === ar_aging_trend ===
+test(s3, 'ar_aging_trend fires when climbing 3 months', () => {
+  const ctx = { snapshotMonth: '2026-04', arDaysOutstanding: { current: 41, prior: 33, twoMonthsAgo: 28, threeMonthsAgo: 24 } };
+  const a = Utils.anomalyArAgingTrend(ctx);
+  assert(a, 'should fire');
+  assertEq(a.severity, 'critical');
+});
+test(s3, 'ar_aging_trend null when not strictly climbing', () => {
+  const ctx = { snapshotMonth: '2026-04', arDaysOutstanding: { current: 41, prior: 33, twoMonthsAgo: 35, threeMonthsAgo: 24 } };
+  assertEq(Utils.anomalyArAgingTrend(ctx), null);
+});
+
+// === profitability_flip ===
+test(s3, 'profitability_flip positive when negative→positive', () => {
+  const a = Utils.anomalyProfitabilityFlip({ snapshotMonth: '2026-04', netIncome: { current: 3200, prior: -800 } });
+  assert(a, 'should fire');
+  assertEq(a.severity, 'positive');
+  assert(a.title.toLowerCase().includes('profitable'));
+});
+test(s3, 'profitability_flip critical when positive→negative', () => {
+  const a = Utils.anomalyProfitabilityFlip({ snapshotMonth: '2026-04', netIncome: { current: -500, prior: 200 } });
+  assert(a, 'should fire');
+  assertEq(a.severity, 'critical');
+});
+test(s3, 'profitability_flip null when both same sign', () => {
+  assertEq(Utils.anomalyProfitabilityFlip({ snapshotMonth: '2026-04', netIncome: { current: 100, prior: 200 } }), null);
+});
+
+// === dscr_breach ===
+test(s3, 'dscr_breach fires on cross below 1.0', () => {
+  const a = Utils.anomalyDscrBreach({ snapshotMonth: '2026-04', dscr: { current: 0.85, prior: 1.10 } });
+  assert(a, 'should fire');
+});
+test(s3, 'dscr_breach null when both below 1.0 (already breached)', () => {
+  assertEq(Utils.anomalyDscrBreach({ snapshotMonth: '2026-04', dscr: { current: 0.7, prior: 0.8 } }), null);
+});
+test(s3, 'dscr_breach null when both at/above 1.0', () => {
+  assertEq(Utils.anomalyDscrBreach({ snapshotMonth: '2026-04', dscr: { current: 1.2, prior: 1.5 } }), null);
+});
+
+// === recurring_disappeared ===
+test(s3, 'recurring_disappeared fires when 6 priors non-zero, current zero', () => {
+  const ctx = {
+    snapshotMonth: '2026-04',
+    categories: [{ id: 5, name: 'Adobe Sub', recentMonths: [50, 50, 50, 50, 50, 50, 0] }]
+  };
+  const a = Utils.anomalyRecurringDisappeared(ctx);
+  assert(a, 'should fire');
+  assertEq(a.target_id, 5);
+});
+test(s3, 'recurring_disappeared null when any prior is zero', () => {
+  const ctx = {
+    snapshotMonth: '2026-04',
+    categories: [{ id: 5, name: 'Sometimes', recentMonths: [50, 50, 0, 50, 50, 50, 0] }]
+  };
+  assertEq(Utils.anomalyRecurringDisappeared(ctx), null);
+});
+test(s3, 'recurring_disappeared null when current is non-zero', () => {
+  const ctx = {
+    snapshotMonth: '2026-04',
+    categories: [{ id: 5, name: 'Active', recentMonths: [50, 50, 50, 50, 50, 50, 25] }]
+  };
+  assertEq(Utils.anomalyRecurringDisappeared(ctx), null);
+});
+
 // Display summary
 document.getElementById('summary').textContent = `${passed} passed, ${failed} failed`;
 document.getElementById('summary').style.background = failed === 0 ? '#d1fae5' : '#fee2e2';

@@ -1020,6 +1020,142 @@ const Utils = {
             out.flagged = true;
         }
         return out;
+    },
+
+    // ============== ANOMALY RULES (Phase 4) ==============
+    // Each rule takes a context object and returns an anomaly or null.
+    // Pure functions — no DB access. Composed and run from App.
+
+    anomalyRunwayDrop(ctx) {
+        const cur = ctx.cashRunwayDays && ctx.cashRunwayDays.current;
+        const prior = ctx.cashRunwayDays && ctx.cashRunwayDays.prior;
+        if (cur == null || prior == null) return null;
+        const drop = prior - cur;
+        if (drop < 10) return null;
+        return {
+            signature: 'runway_drop',
+            severity: 'critical',
+            title: `Cash runway shortened by ${Math.round(drop)} days`,
+            description: `From ${Math.round(prior)} days last month to ${Math.round(cur)} days this month.`,
+            sourceTab: 'cashflow',
+            targetMonth: ctx.snapshotMonth,
+            target_id: null,
+            explanationStarter: `Why did cash runway drop in ${this.formatMonthShort(ctx.snapshotMonth)}?`
+        };
+    },
+
+    anomalyCategorySpike(ctx) {
+        if (!ctx.categories || !ctx.categories.length) return null;
+        let best = null;
+        let bestMultiplier = 0;
+        for (const cat of ctx.categories) {
+            const months = cat.recentMonths || [];
+            if (months.length < 7) continue; // need 6 priors + current
+            const current = Number(months[months.length - 1]) || 0;
+            const priors = months.slice(0, months.length - 1);
+            const sum = priors.reduce((a, b) => a + (Number(b) || 0), 0);
+            const avg = sum / priors.length;
+            if (avg <= 0 || current <= 0) continue;
+            const multiplier = current / avg;
+            if (multiplier >= 3 && multiplier > bestMultiplier) {
+                bestMultiplier = multiplier;
+                best = { cat, current, avg, multiplier };
+            }
+        }
+        if (!best) return null;
+        const mult = best.multiplier;
+        const multLabel = Number.isInteger(mult) ? `${mult}x` : `${mult.toFixed(1)}x`;
+        return {
+            signature: 'category_spike',
+            severity: 'notable',
+            title: `${best.cat.name} spend ${multLabel} the 6-month avg`,
+            description: `$${Math.round(best.current).toLocaleString()} this month vs $${Math.round(best.avg).toLocaleString()} avg.`,
+            sourceTab: 'pnl',
+            targetMonth: ctx.snapshotMonth,
+            target_id: best.cat.id,
+            explanationStarter: `Why was ${best.cat.name} spend so high in ${this.formatMonthShort(ctx.snapshotMonth)}?`
+        };
+    },
+
+    anomalyArAgingTrend(ctx) {
+        const a = ctx.arDaysOutstanding;
+        if (!a || a.current == null || a.prior == null || a.twoMonthsAgo == null || a.threeMonthsAgo == null) return null;
+        const climbing = a.current > a.prior && a.prior > a.twoMonthsAgo && a.twoMonthsAgo > a.threeMonthsAgo;
+        if (!climbing) return null;
+        return {
+            signature: 'ar_aging_trend',
+            severity: 'critical',
+            title: 'AR Days Outstanding climbing 3 months in a row',
+            description: `${Math.round(a.threeMonthsAgo)} → ${Math.round(a.twoMonthsAgo)} → ${Math.round(a.prior)} → ${Math.round(a.current)} days.`,
+            sourceTab: 'dashboard',
+            targetMonth: ctx.snapshotMonth,
+            target_id: null,
+            explanationStarter: 'Why has AR Days Outstanding been climbing?'
+        };
+    },
+
+    anomalyProfitabilityFlip(ctx) {
+        const cur = ctx.netIncome && ctx.netIncome.current;
+        const prior = ctx.netIncome && ctx.netIncome.prior;
+        if (cur == null || prior == null) return null;
+        const turnedPositive = prior < 0 && cur >= 0;
+        const turnedNegative = prior >= 0 && cur < 0;
+        if (!turnedPositive && !turnedNegative) return null;
+        return {
+            signature: 'profitability_flip',
+            severity: turnedPositive ? 'positive' : 'critical',
+            title: turnedPositive ? 'First profitable month' : 'First unprofitable month',
+            description: turnedPositive
+                ? `Net income flipped to +$${Math.round(cur).toLocaleString()} from −$${Math.abs(Math.round(prior)).toLocaleString()}.`
+                : `Net income flipped to −$${Math.abs(Math.round(cur)).toLocaleString()} from +$${Math.round(prior).toLocaleString()}.`,
+            sourceTab: 'pnl',
+            targetMonth: ctx.snapshotMonth,
+            target_id: null,
+            explanationStarter: turnedPositive
+                ? `What drove the profitable month in ${this.formatMonthShort(ctx.snapshotMonth)}?`
+                : `Why did we flip unprofitable in ${this.formatMonthShort(ctx.snapshotMonth)}?`
+        };
+    },
+
+    anomalyDscrBreach(ctx) {
+        const cur = ctx.dscr && ctx.dscr.current;
+        const prior = ctx.dscr && ctx.dscr.prior;
+        if (cur == null || prior == null) return null;
+        if (!(cur < 1.0 && prior >= 1.0)) return null;
+        return {
+            signature: 'dscr_breach',
+            severity: 'critical',
+            title: 'DSCR dropped below 1.0 — covenant risk',
+            description: `From ${prior.toFixed(2)} last month to ${cur.toFixed(2)} this month.`,
+            sourceTab: 'dashboard',
+            targetMonth: ctx.snapshotMonth,
+            target_id: null,
+            explanationStarter: `Why did DSCR drop below 1.0 in ${this.formatMonthShort(ctx.snapshotMonth)}?`
+        };
+    },
+
+    anomalyRecurringDisappeared(ctx) {
+        if (!ctx.categories || !ctx.categories.length) return null;
+        for (const cat of ctx.categories) {
+            const months = cat.recentMonths || [];
+            if (months.length < 7) continue;
+            const current = Number(months[months.length - 1]) || 0;
+            const priors = months.slice(0, months.length - 1);
+            const allPriorsNonZero = priors.every(v => (Number(v) || 0) !== 0);
+            if (current === 0 && allPriorsNonZero) {
+                return {
+                    signature: 'recurring_disappeared',
+                    severity: 'notable',
+                    title: `${cat.name} (recurring) has no entries this month`,
+                    description: `${cat.name} had activity in each of the prior 6 months but is $0 in ${this.formatMonthShort(ctx.snapshotMonth)}.`,
+                    sourceTab: 'pnl',
+                    targetMonth: ctx.snapshotMonth,
+                    target_id: cat.id,
+                    explanationStarter: `Why no ${cat.name} activity in ${this.formatMonthShort(ctx.snapshotMonth)}?`
+                };
+            }
+        }
+        return null;
     }
 };
 
