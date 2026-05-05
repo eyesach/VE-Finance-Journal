@@ -3467,6 +3467,190 @@ const Database = {
         });
     },
 
+    /**
+     * Aggregate notes + transaction-notes into a single feed for the Insights Hub.
+     * Filters and label generation happen in JS after a simple UNION ALL query.
+     *
+     * @param {Object} filters
+     * @param {string} [filters.search] Full-text substring (case-insensitive) on body
+     * @param {Array<string>} [filters.types] Subset of ['period','anomaly','chart','transaction']
+     * @param {Array<string>} [filters.tabs] Subset of ['cashflow','pnl','balancesheet','dashboard','journal']
+     * @param {string} [filters.range] 'all' | 'quarter' | 'year' (relative to today)
+     * @returns {Array<Object>} Sorted newest-first by source_month then updated_at
+     */
+    getInsightsFeed(filters = {}) {
+        const types = (filters.types && filters.types.length) ? filters.types : ['period', 'anomaly', 'chart', 'transaction'];
+        const wantNotes = types.some(t => t !== 'transaction');
+        const wantTxn = types.includes('transaction');
+
+        const rows = [];
+
+        if (wantNotes) {
+            const noteTypes = types.filter(t => t !== 'transaction');
+            const placeholders = noteTypes.map(() => '?').join(',');
+            const result = this.db.exec(
+                `SELECT id, target_type, target_key, body, pinned_to_share, updated_at
+                 FROM notes
+                 WHERE target_type IN (${placeholders})`,
+                noteTypes
+            );
+            if (result.length) {
+                for (const r of result[0].values) {
+                    const [id, target_type, target_key, body, pinned_to_share, updated_at] = r;
+                    rows.push({
+                        source_type: target_type,
+                        source_id: id,
+                        target_key,
+                        body,
+                        source_month: this._extractInsightMonth(target_type, target_key),
+                        source_label: this._buildInsightLabel(target_type, target_key),
+                        updated_at,
+                        pinned_to_share: pinned_to_share || 0
+                    });
+                }
+            }
+        }
+
+        if (wantTxn) {
+            const result = this.db.exec(
+                `SELECT t.id, t.notes, t.entry_date, t.updated_at, c.name AS cat_name
+                 FROM transactions t
+                 LEFT JOIN categories c ON c.id = t.category_id
+                 WHERE t.notes IS NOT NULL AND TRIM(t.notes) != ''`
+            );
+            if (result.length) {
+                for (const r of result[0].values) {
+                    const [id, body, entry_date, updated_at, cat_name] = r;
+                    rows.push({
+                        source_type: 'transaction',
+                        source_id: id,
+                        target_key: `txn:${id}`,
+                        body,
+                        source_month: (entry_date || '').substring(0, 7),
+                        source_label: `Journal · #${id}${cat_name ? ' · ' + cat_name : ''}`,
+                        updated_at,
+                        pinned_to_share: 0
+                    });
+                }
+            }
+        }
+
+        // === Apply post-query filters in JS ===
+        let filtered = rows;
+
+        // Tab filter (skip for transaction — transactions are always "Journal")
+        if (filters.tabs && filters.tabs.length && !filters.tabs.includes('all')) {
+            filtered = filtered.filter(row => {
+                if (row.source_type === 'transaction') {
+                    return filters.tabs.includes('journal');
+                }
+                if (row.source_type === 'anomaly') {
+                    return filters.tabs.includes('dashboard');
+                }
+                if (row.source_type === 'chart') {
+                    return filters.tabs.includes('dashboard');
+                }
+                // period: extract tab from target_key prefix (e.g. 'pnl:2026-03' -> 'pnl')
+                const tabPart = (row.target_key || '').split(':')[0];
+                return filters.tabs.includes(tabPart);
+            });
+        }
+
+        // Time range filter
+        if (filters.range && filters.range !== 'all') {
+            const today = new Date();
+            const cutoff = new Date(today);
+            if (filters.range === 'quarter') cutoff.setMonth(today.getMonth() - 3);
+            else if (filters.range === 'year') cutoff.setFullYear(today.getFullYear() - 1);
+            const cutoffMonth = cutoff.toISOString().substring(0, 7);
+            filtered = filtered.filter(row => row.source_month && row.source_month >= cutoffMonth);
+        }
+
+        // Search filter (case-insensitive substring on body)
+        if (filters.search) {
+            const q = filters.search.toLowerCase().trim();
+            if (q) filtered = filtered.filter(row => (row.body || '').toLowerCase().includes(q));
+        }
+
+        // Sort: newest source_month first, then most recently updated within month, then id desc as deterministic tiebreaker
+        filtered.sort((a, b) => {
+            if (a.source_month !== b.source_month) {
+                return (b.source_month || '').localeCompare(a.source_month || '');
+            }
+            if (a.updated_at !== b.updated_at) {
+                return (b.updated_at || '').localeCompare(a.updated_at || '');
+            }
+            return (b.source_id || 0) - (a.source_id || 0);
+        });
+
+        return filtered;
+    },
+
+    /**
+     * Extract YYYY-MM from a notes target_key, based on its target_type.
+     * - period: 'pnl:2026-03' → '2026-03'
+     * - anomaly: 'runway_drop:2026-04' → '2026-04'
+     * - chart: 'dashChartPnL:2026-03' → '2026-03'
+     */
+    _extractInsightMonth(targetType, targetKey) {
+        if (!targetKey) return '';
+        const lastColon = targetKey.lastIndexOf(':');
+        if (lastColon === -1) return '';
+        const candidate = targetKey.substring(lastColon + 1);
+        // Validate YYYY-MM shape
+        if (/^\d{4}-\d{2}$/.test(candidate)) return candidate;
+        return '';
+    },
+
+    /**
+     * Build a human-readable source label for a notes row.
+     * - period 'pnl:2026-03' → 'P&L · Mar 2026'
+     * - anomaly 'runway_drop:2026-04' → 'Dashboard · Apr 2026'
+     * - chart 'dashChartPnL:2026-03' → 'P&L Chart · Mar 2026'
+     */
+    _buildInsightLabel(targetType, targetKey) {
+        const parts = (targetKey || '').split(':');
+        const monthCandidate = parts[parts.length - 1];
+        const monthLabel = /^\d{4}-\d{2}$/.test(monthCandidate)
+            ? this._formatMonthShortInline(monthCandidate)
+            : '';
+        const tabLabels = {
+            pnl: 'P&L',
+            cashflow: 'Cash Flow',
+            balancesheet: 'Balance Sheet',
+            dashboard: 'Dashboard'
+        };
+        if (targetType === 'period') {
+            const t = tabLabels[parts[0]] || parts[0] || 'Note';
+            return monthLabel ? `${t} · ${monthLabel}` : t;
+        }
+        if (targetType === 'anomaly') {
+            return monthLabel ? `Dashboard · ${monthLabel}` : 'Dashboard';
+        }
+        if (targetType === 'chart') {
+            const chartLabels = {
+                dashChartCashFlow: 'Cash Flow Chart',
+                dashChartPnL: 'P&L Chart',
+                dashChartBS: 'Balance Sheet Chart'
+            };
+            const c = chartLabels[parts[0]] || 'Chart';
+            return monthLabel ? `${c} · ${monthLabel}` : c;
+        }
+        return targetKey;
+    },
+
+    // Inline minimal month formatter — avoids depending on Utils inside Database.
+    // Returns 'Mar 2026' from '2026-03'. Returns the input on failure.
+    _formatMonthShortInline(yyyymm) {
+        const m = /^(\d{4})-(\d{2})$/.exec(yyyymm || '');
+        if (!m) return yyyymm || '';
+        const year = m[1];
+        const monthIdx = parseInt(m[2], 10) - 1;
+        const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        if (monthIdx < 0 || monthIdx > 11) return yyyymm;
+        return `${monthNames[monthIdx]} ${year}`;
+    },
+
     // ==================== BALANCE SHEET QUERIES ====================
 
     /**
