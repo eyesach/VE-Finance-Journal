@@ -4413,17 +4413,19 @@ th:hover .pn-icon-wrap,
 }
 
 /* === Variance flag (Phase 2) === */
-.cell-flagged {
+/* Flags suppressed visually in Edit mode so they don't block cell editing —
+   user explicitly opted into modifying values, the flag is no longer useful. */
+body:not(.edit-mode) .cell-flagged {
     background: var(--amber-bg) !important;
     position: relative;
+    cursor: pointer;
 }
-[data-theme="dark"] .cell-flagged { background: rgba(217,119,6,0.12) !important; }
-.cell-flagged::after {
+body:not(.edit-mode)[data-theme="dark"] .cell-flagged { background: rgba(217,119,6,0.12) !important; }
+body:not(.edit-mode) .cell-flagged::after {
     content: ""; position: absolute; top: 4px; right: 4px;
     width: 6px; height: 6px; border-radius: 50%; background: var(--amber);
     pointer-events: none;
 }
-.cell-flagged { cursor: pointer; }
 
 /* === Variance popover === */
 .variance-popover {

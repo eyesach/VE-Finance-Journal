@@ -782,7 +782,9 @@ const App = {
             if (!this.editMode) return;             // Edit mode required
             const cell = e.target.closest('.cf-editable');
             if (!cell) return;
-            if (cell.classList.contains('cell-flagged')) return;  // Variance popover handles flagged cells
+            // Variance popover handles flagged cells — but ONLY when not in Edit mode.
+            // In Edit mode the flag is suppressed and the user clearly wants to modify the value.
+            if (!this.editMode && cell.classList.contains('cell-flagged')) return;
 
             const catId = parseInt(cell.dataset.catId);
             const month = cell.dataset.month;
@@ -1111,7 +1113,9 @@ const App = {
             if (!this.editMode) return;             // Edit mode required
             const cell = e.target.closest('.pnl-editable');
             if (!cell || cell.querySelector('.pnl-cell-input')) return;
-            if (cell.classList.contains('cell-flagged')) return;  // Variance popover handles flagged cells
+            // Variance popover handles flagged cells — but ONLY when not in Edit mode.
+            // In Edit mode the flag is suppressed and the user clearly wants to modify the value.
+            if (!this.editMode && cell.classList.contains('cell-flagged')) return;
 
             const catId = parseInt(cell.dataset.catId);
             const month = cell.dataset.month;
@@ -5979,9 +5983,10 @@ const App = {
         this._variancePopoverSetup = true;
 
         // Delegated click handler on document for any flagged cell.
+        // Suppressed entirely in Edit mode — user is editing values, not investigating flags.
         document.addEventListener('click', (e) => {
             const td = e.target.closest('td.cell-flagged');
-            if (td) {
+            if (td && !this.editMode) {
                 e.preventDefault();
                 e.stopPropagation();
                 this.openVariancePopover(td);
