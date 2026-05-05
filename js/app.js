@@ -561,12 +561,29 @@ const App = {
         const nav = document.querySelector('.main-tabs');
         if (!nav) return;
 
+        // Migration: splice newly-introduced tabs into a meaningful position in
+        // any saved order so returning users see them where the spec puts them,
+        // not appended at the end. Each entry: [newTab, anchorTab] — splice
+        // newTab immediately after anchorTab if newTab is missing from order.
+        const newTabAnchors = [
+            ['insights', 'balancesheet'],  // Phase 3 (2026-04-28)
+        ];
+        let migrated = false;
+        for (const [newTab, anchor] of newTabAnchors) {
+            if (order.includes(newTab)) continue;
+            const anchorIdx = order.indexOf(anchor);
+            if (anchorIdx === -1) continue;
+            order.splice(anchorIdx + 1, 0, newTab);
+            migrated = true;
+        }
+        if (migrated) Database.setTabOrder(order);
+
         order.forEach(tabName => {
             const tab = nav.querySelector(`.main-tab[data-tab="${tabName}"]`);
             if (tab) nav.appendChild(tab);
         });
 
-        // Append any tabs not in the saved order (e.g., newly added tabs)
+        // Append any tabs not in the saved order (e.g., newly added tabs without anchors)
         nav.querySelectorAll('.main-tab[data-tab]').forEach(tab => {
             if (!order.includes(tab.dataset.tab)) {
                 nav.appendChild(tab);
