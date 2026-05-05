@@ -1396,6 +1396,19 @@
                         <select id="dashSnapshotMonth" class="snapshot-month-select"></select>
                     </label>
                 </div>
+                <div id="anomalyWidget" class="anomaly-widget" hidden>
+                    <div class="anomaly-widget-header">
+                        <button type="button" class="anomaly-widget-toggle" id="anomalyWidgetToggle" aria-expanded="false">
+                            <span class="anomaly-widget-icon">⚡</span>
+                            <span class="anomaly-widget-title" id="anomalyWidgetTitle">Worth Looking At</span>
+                            <span class="anomaly-widget-count" id="anomalyWidgetCount">0</span>
+                            <span class="anomaly-widget-chevron" aria-hidden="true">▾</span>
+                        </button>
+                    </div>
+                    <div class="anomaly-widget-body" id="anomalyWidgetBody" hidden>
+                        <!-- cards rendered here by App._renderAnomalyWidget -->
+                    </div>
+                </div>
                 <div class="dashboard-sections" id="dashboardSections"></div>
             </div>
         </div>

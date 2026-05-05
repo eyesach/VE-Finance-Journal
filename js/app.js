@@ -1308,6 +1308,328 @@ const App = {
         this._renderDashboardSections(snapshotMonth);
     },
 
+    // ==================== ANOMALY WIDGET (Phase 4) ====================
+
+    /**
+     * Build the context object the anomaly rules consume.
+     * Pulls cash runway, AR DSO, DSCR, P&L net income, and per-category 7-month series.
+     * Reuses the same data sources `_computeKpiData` already needs, so this is cheap.
+     */
+    _buildAnomalyContext(snapshotMonth) {
+        const month = snapshotMonth || Utils.getCurrentMonth();
+        const priorMonth = this._monthsAgo(month, 1);
+        const twoMonthsAgo = this._monthsAgo(month, 2);
+        const threeMonthsAgo = this._monthsAgo(month, 3);
+
+        // Cash runway: cash / monthly burn (proxy from Database existing helpers).
+        const cashCur = Database.getCashAsOf ? Database.getCashAsOf(month) : null;
+        const cashPrior = Database.getCashAsOf ? Database.getCashAsOf(priorMonth) : null;
+        const burnCur = this._estimateMonthlyBurn(month);
+        const burnPrior = this._estimateMonthlyBurn(priorMonth);
+        const runwayCur = (cashCur != null && burnCur != null && burnCur > 0) ? Math.round(cashCur / burnCur * 30) : null;
+        const runwayPrior = (cashPrior != null && burnPrior != null && burnPrior > 0) ? Math.round(cashPrior / burnPrior * 30) : null;
+
+        // Net income (proxy: monthly revenue - monthly opex)
+        const netCur = this._estimateNetIncome(month);
+        const netPrior = this._estimateNetIncome(priorMonth);
+
+        // AR Days Outstanding — if no helper exists, leave nulls (the rule will null-skip)
+        const ar = {
+            current:        this._estimateArDays(month),
+            prior:          this._estimateArDays(priorMonth),
+            twoMonthsAgo:   this._estimateArDays(twoMonthsAgo),
+            threeMonthsAgo: this._estimateArDays(threeMonthsAgo)
+        };
+
+        // DSCR — derived from existing dashboard math if available, else nulls
+        const dscrCur = this._estimateDscr(month);
+        const dscrPrior = this._estimateDscr(priorMonth);
+
+        // Per-category 7-month series (6 priors + current). Build [m-6, m-5, ..., m-1, m]
+        const months7 = [];
+        let m = month;
+        for (let i = 0; i < 7; i++) { months7.unshift(m); m = this._monthsAgo(m, 1); }
+        const cats = (Database.getCategories ? Database.getCategories() : []) || [];
+        const categories = [];
+        for (const cat of cats) {
+            // Only include expense-side categories (where spike detection is meaningful)
+            if (cat.is_b2b || cat.is_sales) continue;
+            const series = months7.map(mo => this._categoryMonthTotal(cat.id, mo));
+            categories.push({ id: cat.id, name: cat.name, recentMonths: series });
+        }
+
+        return {
+            snapshotMonth: month,
+            cashRunwayDays: { current: runwayCur, prior: runwayPrior },
+            netIncome: { current: netCur, prior: netPrior },
+            arDaysOutstanding: ar,
+            dscr: { current: dscrCur, prior: dscrPrior },
+            categories
+        };
+    },
+
+    /**
+     * Run all 6 anomaly rules and return ranked anomalies. Filters out dismissed ones.
+     * Sort: critical > notable > positive, ties broken by signature alphabetical.
+     */
+    _computeAnomalies(snapshotMonth) {
+        const ctx = this._buildAnomalyContext(snapshotMonth);
+        const candidates = [];
+        const rules = [
+            'anomalyRunwayDrop',
+            'anomalyCategorySpike',
+            'anomalyArAgingTrend',
+            'anomalyProfitabilityFlip',
+            'anomalyDscrBreach',
+            'anomalyRecurringDisappeared'
+        ];
+        for (const ruleName of rules) {
+            try {
+                const a = Utils[ruleName] ? Utils[ruleName](ctx) : null;
+                if (a) candidates.push(a);
+            } catch (e) {
+                console.warn(`[anomaly] ${ruleName} threw:`, e);
+            }
+        }
+
+        // Filter dismissed
+        const dismissed = this._readDismissedAnomalies();
+        const isMatch = (d, a) => d.signature === a.signature
+            && d.month === a.targetMonth
+            && ((d.target_id == null && a.target_id == null) || d.target_id === a.target_id);
+        const surviving = candidates.filter(a => !dismissed.some(d => isMatch(d, a)));
+
+        // Rank: critical > notable > positive, then signature alphabetical
+        const sevOrder = { critical: 0, notable: 1, positive: 2 };
+        surviving.sort((x, y) => {
+            const xs = sevOrder[x.severity] != null ? sevOrder[x.severity] : 99;
+            const ys = sevOrder[y.severity] != null ? sevOrder[y.severity] : 99;
+            if (xs !== ys) return xs - ys;
+            return x.signature.localeCompare(y.signature);
+        });
+        return surviving;
+    },
+
+    _readDismissedAnomalies() {
+        try { return JSON.parse(Database.getMetaValue('dismissed_anomalies') || '[]'); }
+        catch (e) { return []; }
+    },
+
+    _writeDismissedAnomalies(arr) {
+        Database.setMetaValue('dismissed_anomalies', JSON.stringify(arr));
+        Database.autoSave();
+    },
+
+    /**
+     * Subtract `n` months from a YYYY-MM string. n=1 returns the prior month.
+     */
+    _monthsAgo(month, n) {
+        const [y, m] = month.split('-').map(Number);
+        const d = new Date(y, m - 1 - n, 1);
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    },
+
+    /**
+     * Estimate net income for a given month: monthly revenue - opex.
+     * Uses existing Database helpers (which take arrays). Returns null if any required helper is missing.
+     */
+    _estimateNetIncome(month) {
+        try {
+            if (!Database.getMonthlyTotalRevenue || !Database.getMonthlyTotalOpex) return null;
+            const rev = Database.getMonthlyTotalRevenue([month]);
+            const opex = Database.getMonthlyTotalOpex([month]);
+            const r = rev && rev[month];
+            const o = opex && opex[month];
+            if (r == null || o == null) return null;
+            return r - o;
+        } catch (e) { return null; }
+    },
+
+    /**
+     * Crude burn estimate: average (opex - revenue) over the prior 3 months.
+     * If unavailable, returns null and the rule will skip.
+     */
+    _estimateMonthlyBurn(month) {
+        try {
+            if (!Database.getMonthlyTotalOpex || !Database.getMonthlyTotalRevenue) return null;
+            const months = [
+                this._monthsAgo(month, 0),
+                this._monthsAgo(month, 1),
+                this._monthsAgo(month, 2),
+            ];
+            const opexMap = Database.getMonthlyTotalOpex(months) || {};
+            const revMap = Database.getMonthlyTotalRevenue(months) || {};
+            let totalOpex = 0, totalRev = 0, count = 0;
+            for (const mo of months) {
+                const opex = opexMap[mo];
+                const rev = revMap[mo];
+                if (opex == null || rev == null) continue;
+                totalOpex += opex;
+                totalRev += rev;
+                count++;
+            }
+            if (count === 0) return null;
+            const avgBurn = (totalOpex - totalRev) / count;
+            return avgBurn > 0 ? avgBurn : null;
+        } catch (e) { return null; }
+    },
+
+    /**
+     * Per-category single-month total. If Database has a dedicated helper, use it;
+     * otherwise compute from getTransactions filtered by category & month.
+     */
+    _categoryMonthTotal(categoryId, monthYYYYMM) {
+        try {
+            if (Database.getMonthlyTotalForCategory) {
+                return Number(Database.getMonthlyTotalForCategory(categoryId, monthYYYYMM)) || 0;
+            }
+            // Fallback: sum transactions where category_id matches and month_due/date in monthYYYYMM
+            if (!Database.getTransactions) return 0;
+            const txns = Database.getTransactions({ categoryId: categoryId }) || [];
+            let sum = 0;
+            for (const t of txns) {
+                const dateStr = t.month_due || t.date_due || t.date || '';
+                if (typeof dateStr === 'string' && dateStr.startsWith(monthYYYYMM)) {
+                    sum += Math.abs(Number(t.amount) || 0);
+                }
+            }
+            return sum;
+        } catch (e) { return 0; }
+    },
+
+    /**
+     * Stub: AR Days Outstanding for a month. If no helper exists, return null.
+     * This keeps the rule null-safe; user can wire a real calc later.
+     */
+    _estimateArDays(month) {
+        try {
+            if (Database.getArDaysOutstanding) return Database.getArDaysOutstanding(month);
+            return null;
+        } catch (e) { return null; }
+    },
+
+    /**
+     * Stub: DSCR for a month. If no helper exists, return null.
+     */
+    _estimateDscr(month) {
+        try {
+            if (Database.getDscr) return Database.getDscr(month);
+            return null;
+        } catch (e) { return null; }
+    },
+
+    /**
+     * Refresh the dashboard anomaly widget.
+     * Called from _renderDashboardSections.
+     */
+    _renderAnomalyWidget(snapshotMonth) {
+        if (this.isViewOnly) {
+            const widget = document.getElementById('anomalyWidget');
+            if (widget) widget.hidden = true;
+            return;
+        }
+        const month = snapshotMonth || Utils.getCurrentMonth();
+        const anomalies = this._computeAnomalies(month);
+        UI.renderAnomalyWidget(anomalies, month);
+        if (!this._anomalyWidgetWired) {
+            this._wireAnomalyWidget();
+            this._anomalyWidgetWired = true;
+        }
+    },
+
+    /**
+     * Wire toggle, action buttons, and "Show more" once.
+     */
+    _wireAnomalyWidget() {
+        const widget = document.getElementById('anomalyWidget');
+        if (!widget) return;
+
+        const toggle = document.getElementById('anomalyWidgetToggle');
+        const body = document.getElementById('anomalyWidgetBody');
+        if (toggle && body) {
+            toggle.addEventListener('click', () => {
+                const expanded = widget.dataset.expanded === 'true';
+                widget.dataset.expanded = (!expanded).toString();
+                body.hidden = expanded;
+                toggle.setAttribute('aria-expanded', (!expanded).toString());
+            });
+        }
+
+        // Delegated handlers on the widget for action buttons + show more
+        widget.addEventListener('click', (e) => {
+            const showMore = e.target.closest('#anomalyShowMoreBtn');
+            if (showMore) {
+                const more = document.getElementById('anomalyMoreCards');
+                if (more) more.hidden = false;
+                showMore.style.display = 'none';
+                return;
+            }
+
+            const btn = e.target.closest('[data-anomaly-action]');
+            if (!btn) return;
+            const action = btn.dataset.anomalyAction;
+            const key = btn.dataset.anomalyKey;
+            const anomaly = this._findAnomalyByKey(key);
+            if (!anomaly) return;
+
+            if (action === 'capture') this._captureAnomalyExplanation(anomaly);
+            else if (action === 'dismiss') this._dismissAnomaly(anomaly);
+            else if (action === 'view') this._viewAnomalySource(anomaly);
+        });
+    },
+
+    _findAnomalyByKey(key) {
+        if (!key) return null;
+        const month = this._dashSnapshotMonth || Utils.getCurrentMonth();
+        const all = this._computeAnomalies(month);
+        return all.find(a => `${a.signature}|${a.target_id != null ? a.target_id : ''}|${a.targetMonth}` === key);
+    },
+
+    /**
+     * "Capture explanation" → opens the period note popover with the rule's
+     * starter prompt as a non-persisted prefill.
+     */
+    _captureAnomalyExplanation(a) {
+        let tab = a.sourceTab === 'dashboard' ? 'pnl' : a.sourceTab;
+        const month = a.targetMonth;
+        const prefill = a.explanationStarter || '';
+        if (tab !== 'pnl' && tab !== 'cashflow' && tab !== 'balancesheet') {
+            tab = 'pnl';
+        }
+        this.switchMainTab(tab);
+        setTimeout(() => {
+            const refreshedIcon = document.querySelector(`.pn-icon-wrap[data-pn-tab="${tab}"][data-pn-month="${month}"]`);
+            const refreshedAnchor = refreshedIcon ? (refreshedIcon.closest('th') || refreshedIcon) : null;
+            if (this.openPeriodNote) this.openPeriodNote(tab, month, refreshedAnchor, prefill);
+        }, 50);
+    },
+
+    _dismissAnomaly(a) {
+        const dismissed = this._readDismissedAnomalies();
+        const exists = dismissed.some(d => d.signature === a.signature && d.month === a.targetMonth && ((d.target_id == null && a.target_id == null) || d.target_id === a.target_id));
+        if (!exists) {
+            dismissed.push({ signature: a.signature, month: a.targetMonth, target_id: a.target_id != null ? a.target_id : null });
+            this._writeDismissedAnomalies(dismissed);
+        }
+        // Re-render the widget to drop the dismissed card
+        this._renderAnomalyWidget(this._dashSnapshotMonth);
+        UI.showNotification('Anomaly dismissed', 'info');
+    },
+
+    _viewAnomalySource(a) {
+        const tab = a.sourceTab || 'dashboard';
+        if (tab === 'dashboard') {
+            // Already on dashboard. Just collapse the widget so user sees the KPIs.
+            const widget = document.getElementById('anomalyWidget');
+            const body = document.getElementById('anomalyWidgetBody');
+            const toggle = document.getElementById('anomalyWidgetToggle');
+            if (widget && body) { widget.dataset.expanded = 'false'; body.hidden = true; }
+            if (toggle) toggle.setAttribute('aria-expanded', 'false');
+        } else {
+            this.switchMainTab(tab);
+        }
+    },
+
     // ==================== KPI DATA COMPUTATION (cached for modal use) ====================
 
     _kpiCache: null,
@@ -2444,6 +2766,9 @@ const App = {
         this._renderDashBSChart(snapshotMonth);
         this._renderDashBreakevenBar(snapshotMonth);
         this._renderDashRevConcentrationChart(snapshotMonth);
+
+        // Anomaly widget (Phase 4)
+        this._renderAnomalyWidget(snapshotMonth);
     },
 
     _getTimelineMonths() {

@@ -2803,6 +2803,70 @@ const UI = {
     },
 
     /**
+     * Render anomaly cards into the widget body.
+     * Hides the whole widget if no anomalies. Severity icons mapped here.
+     */
+    renderAnomalyWidget(anomalies, snapshotMonth) {
+        const widget = document.getElementById('anomalyWidget');
+        const titleEl = document.getElementById('anomalyWidgetTitle');
+        const countEl = document.getElementById('anomalyWidgetCount');
+        const body = document.getElementById('anomalyWidgetBody');
+        if (!widget || !body) return;
+
+        if (!anomalies.length) {
+            widget.hidden = true;
+            return;
+        }
+        widget.hidden = false;
+
+        if (titleEl) titleEl.textContent = `Worth Looking At — ${Utils.formatMonthShort(snapshotMonth)}`;
+        if (countEl) countEl.textContent = `${anomalies.length} ${anomalies.length === 1 ? 'item' : 'items'}`;
+
+        const top = anomalies.slice(0, 3);
+        const rest = anomalies.slice(3);
+        let html = '';
+        for (const a of top) html += this.renderAnomalyCard(a);
+        if (rest.length) {
+            html += `<button type="button" class="anomaly-show-more" id="anomalyShowMoreBtn">Show ${rest.length} more</button>`;
+            html += `<div id="anomalyMoreCards" hidden>`;
+            for (const a of rest) html += this.renderAnomalyCard(a);
+            html += `</div>`;
+        }
+        body.innerHTML = html;
+    },
+
+    renderAnomalyCard(a) {
+        const sevClass = `anomaly-card-${a.severity || 'notable'}`;
+        const iconMap = {
+            runway_drop: '📉',
+            category_spike: '📈',
+            ar_aging_trend: '⏰',
+            profitability_flip: a.severity === 'positive' ? '✨' : '📉',
+            dscr_breach: '⚠️',
+            recurring_disappeared: '🔍'
+        };
+        const icon = iconMap[a.signature] || '⚡';
+        const sigKey = `${a.signature}|${a.target_id != null ? a.target_id : ''}|${a.targetMonth}`;
+        const safeTitle = Utils.escapeHtml(a.title || '');
+        const safeDesc = Utils.escapeHtml(a.description || '');
+        const actions = [];
+        actions.push(`<button type="button" class="anomaly-action-btn primary" data-anomaly-action="capture" data-anomaly-key="${Utils.escapeHtml(sigKey)}">Capture explanation</button>`);
+        // Dynamic 'View ...' button per source tab
+        const tabLabels = { pnl: 'P&L', cashflow: 'Cash Flow', balancesheet: 'Balance Sheet', dashboard: 'Dashboard' };
+        const tabLabel = tabLabels[a.sourceTab] || 'source';
+        actions.push(`<button type="button" class="anomaly-action-btn" data-anomaly-action="view" data-anomaly-tab="${Utils.escapeHtml(a.sourceTab || '')}" data-anomaly-key="${Utils.escapeHtml(sigKey)}">View ${tabLabel} →</button>`);
+        actions.push(`<button type="button" class="anomaly-action-btn" data-anomaly-action="dismiss" data-anomaly-key="${Utils.escapeHtml(sigKey)}">Dismiss</button>`);
+        return `<div class="anomaly-card ${sevClass}" data-anomaly-key="${Utils.escapeHtml(sigKey)}">
+            <div class="anomaly-card-icon">${icon}</div>
+            <div class="anomaly-card-content">
+                <p class="anomaly-card-title">${safeTitle}</p>
+                <p class="anomaly-card-desc">${safeDesc}</p>
+                <div class="anomaly-card-actions">${actions.join('')}</div>
+            </div>
+        </div>`;
+    },
+
+    /**
      * Show notification message
      * @param {string} message - Message to show
      * @param {string} type - 'success', 'error', or 'info'
