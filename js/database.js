@@ -3474,7 +3474,7 @@ const Database = {
      * @param {Object} filters
      * @param {string} [filters.search] Full-text substring (case-insensitive) on body
      * @param {Array<string>} [filters.types] Subset of ['period','anomaly','chart','transaction']
-     * @param {Array<string>} [filters.tabs] Subset of ['cashflow','pnl','balancesheet','dashboard','journal']
+     * @param {Array<string>} [filters.tabs] Subset of ['cashflow','pnl','balancesheet','dashboard','journal']. Pass ['all'] or omit for no filter.
      * @param {string} [filters.range] 'all' | 'quarter' | 'year' (relative to today)
      * @returns {Array<Object>} Sorted newest-first by source_month then updated_at
      */
