@@ -77,6 +77,10 @@
                         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
                         Balance Sheet
                     </button>
+                    <button class="main-tab" data-tab="insights">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7c.8.6 1 1.5 1 2.3v1h6v-1c0-.8.2-1.7 1-2.3A7 7 0 0 0 12 2z"/></svg>
+                        Insights
+                    </button>
                     <span class="sidebar-nav-group">Assets</span>
                     <button class="main-tab" data-tab="assets">
                         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v3"/></svg>
@@ -725,6 +729,43 @@
             <section class="bs-ratios-section" id="bsRatiosSection">
                 <div id="bsRatiosContent"></div>
             </section>
+        </div>
+
+        <!-- Insights Hub Tab -->
+        <div id="insightsTab" style="display: none;">
+            <div class="insights-layout">
+                <aside class="insights-sidebar">
+                    <div class="insights-filter-group">
+                        <div class="insights-filter-label">Type</div>
+                        <button class="insights-filter-pill active" data-filter-type="all">All <span class="insights-filter-count" id="insightsCountAll">0</span></button>
+                        <button class="insights-filter-pill" data-filter-type="period">📝 Period notes <span class="insights-filter-count" id="insightsCountPeriod">0</span></button>
+                        <button class="insights-filter-pill" data-filter-type="anomaly">🎯 Anomalies <span class="insights-filter-count" id="insightsCountAnomaly">0</span></button>
+                        <button class="insights-filter-pill" data-filter-type="chart">📊 Chart pins <span class="insights-filter-count" id="insightsCountChart">0</span></button>
+                        <button class="insights-filter-pill" data-filter-type="transaction">💬 Transaction <span class="insights-filter-count" id="insightsCountTransaction">0</span></button>
+                    </div>
+                    <div class="insights-filter-group">
+                        <div class="insights-filter-label">Source tab</div>
+                        <button class="insights-filter-pill" data-filter-tab="all">All</button>
+                        <button class="insights-filter-pill" data-filter-tab="cashflow">Cash Flow</button>
+                        <button class="insights-filter-pill" data-filter-tab="pnl">P&amp;L</button>
+                        <button class="insights-filter-pill" data-filter-tab="balancesheet">Balance Sheet</button>
+                        <button class="insights-filter-pill" data-filter-tab="dashboard">Dashboard</button>
+                        <button class="insights-filter-pill" data-filter-tab="journal">Journal</button>
+                    </div>
+                    <div class="insights-filter-group">
+                        <div class="insights-filter-label">Time range</div>
+                        <button class="insights-filter-pill active" data-filter-range="all">All time</button>
+                        <button class="insights-filter-pill" data-filter-range="quarter">This quarter</button>
+                        <button class="insights-filter-pill" data-filter-range="year">This year</button>
+                    </div>
+                </aside>
+                <section class="insights-content">
+                    <input type="search" id="insightsSearchInput" class="insights-search" placeholder="🔍 Search notes...">
+                    <div id="insightsFeed" class="insights-feed">
+                        <div class="insights-empty">No insights yet — period notes, variance explanations, anomaly captures, and chart pins will appear here.</div>
+                    </div>
+                </section>
+            </div>
         </div>
 
         <!-- Fixed Assets Tab -->

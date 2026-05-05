@@ -266,6 +266,7 @@ const App = {
             () => this.refreshCashFlow(),
             () => this.refreshPnL(),
             () => this.refreshBalanceSheet(),
+            () => this.refreshInsights(),
             () => this.refreshFixedAssets(),
             () => this.refreshLoans(),
             () => this.refreshBudget(),
@@ -591,7 +592,7 @@ const App = {
 
     TAB_LABELS: {
         journal: 'Journal', cashflow: 'Cash Flow', pnl: 'P&L',
-        balancesheet: 'Balance Sheet', assets: 'Assets & Equity',
+        balancesheet: 'Balance Sheet', insights: 'Insights', assets: 'Assets & Equity',
         loan: 'Loans', budget: 'Budget', breakeven: 'Break-Even',
         projectedsales: 'Projected Sales', products: 'Products', vesales: 'VE Sales',
         b2bcontract: 'B2B Contract',
@@ -599,7 +600,7 @@ const App = {
     },
 
     WORK_TABS: ['journal', 'budget', 'products', 'vesales', 'b2bcontract', 'assets', 'loan', 'projectedsales'],
-    ANALYZE_TABS: ['dashboard', 'cashflow', 'pnl', 'balancesheet', 'breakeven'],
+    ANALYZE_TABS: ['dashboard', 'cashflow', 'pnl', 'balancesheet', 'insights', 'breakeven'],
 
     applyHiddenTabs() {
         this.applyModeAwareHiddenTabs();
@@ -710,6 +711,7 @@ const App = {
             case 'cashflow': this.refreshCashFlow(); break;
             case 'pnl': this.refreshPnL(); break;
             case 'balancesheet': this.refreshBalanceSheet(); break;
+            case 'insights': this.refreshInsights(); break;
             case 'assets': this.refreshFixedAssets(); break;
             case 'loan': this.refreshLoans(); break;
             case 'budget': this.refreshBudget(); break;
@@ -1173,7 +1175,7 @@ const App = {
             btn.classList.toggle('active', btn.dataset.tab === tab);
         });
 
-        const tabs = ['journalTab', 'cashflowTab', 'pnlTab', 'balancesheetTab', 'assetsTab', 'loanTab', 'budgetTab', 'breakevenTab', 'projectedsalesTab', 'productsTab', 'vesalesTab', 'b2bcontractTab', 'quickguideTab', 'changelogTab', 'dashboardTab'];
+        const tabs = ['journalTab', 'cashflowTab', 'pnlTab', 'balancesheetTab', 'insightsTab', 'assetsTab', 'loanTab', 'budgetTab', 'breakevenTab', 'projectedsalesTab', 'productsTab', 'vesalesTab', 'b2bcontractTab', 'quickguideTab', 'changelogTab', 'dashboardTab'];
         tabs.forEach(id => {
             const el = document.getElementById(id);
             if (el) el.style.display = 'none';
@@ -1188,6 +1190,9 @@ const App = {
         } else if (tab === 'balancesheet') {
             document.getElementById('balancesheetTab').style.display = 'block';
             this.refreshBalanceSheet();
+        } else if (tab === 'insights') {
+            document.getElementById('insightsTab').style.display = 'block';
+            this.refreshInsights();
         } else if (tab === 'assets') {
             document.getElementById('assetsTab').style.display = 'block';
             this.refreshFixedAssets();
@@ -7311,6 +7316,17 @@ const App = {
         // Also render equity section
         const equityConfig = Database.getEquityConfig();
         UI.renderEquitySection(equityConfig);
+    },
+
+    /**
+     * Refresh the Insights Hub tab. v1 stub — Tasks 3.2/3.3 add the data feed and filter logic.
+     */
+    refreshInsights() {
+        // Stub for now — placeholder content already in the DOM.
+        // Tasks 3.2/3.3 will:
+        //  - Query Database.getInsightsFeed(filters)
+        //  - Render UI.renderInsightsTab(feed, filters)
+        //  - Wire filter pills + search input + cross-tab navigation
     },
 
     /**

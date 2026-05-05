@@ -3255,6 +3255,10 @@ const Database = {
                 this.db.run('DELETE FROM b2b_contract_products');
                 this.db.run('DELETE FROM b2b_contracts');
                 break;
+            case 'insights':
+                // Insights data sources (notes, anomalies, chart pins) added in Tasks 3.2/3.3.
+                // No-op for now so the case is explicit rather than falling through.
+                break;
         }
         this.autoSave();
     },
