@@ -5965,7 +5965,7 @@ const App = {
 
         // Anchor the popover to the column header that matches this month,
         // fall back to centered if the header isn't in the DOM (scrolled or hidden).
-        const header = document.querySelector(`.note-icon[data-tab="${tab}"][data-month="${month}"]`);
+        const header = document.querySelector(`.pn-icon-wrap[data-pn-tab="${tab}"][data-pn-month="${month}"]`);
         const anchor = header ? (header.closest('th') || header) : null;
         if (this.openPeriodNote) {
             this.openPeriodNote(tab, month, anchor, prefill);
@@ -7446,7 +7446,7 @@ const App = {
             this.switchMainTab(tab);
             // Wait one tick for the tab content to render, then open the note popover
             setTimeout(() => {
-                const icon = document.querySelector(`.note-icon[data-tab="${tab}"][data-month="${month}"]`);
+                const icon = document.querySelector(`.pn-icon-wrap[data-pn-tab="${tab}"][data-pn-month="${month}"]`);
                 const anchor = icon ? (icon.closest('th') || icon) : null;
                 if (this.openPeriodNote) this.openPeriodNote(tab, month, anchor);
             }, 50);
