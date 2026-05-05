@@ -7336,14 +7336,90 @@ const App = {
     },
 
     /**
-     * Refresh the Insights Hub tab. v1 stub — Tasks 3.2/3.3 add the data feed and filter logic.
+     * Refresh the Insights Hub tab. Reads filter state from sidebar pill .active classes
+     * and the search input, queries the unified feed, renders cards.
      */
     refreshInsights() {
-        // Stub for now — placeholder content already in the DOM.
-        // Tasks 3.2/3.3 will:
-        //  - Query Database.getInsightsFeed(filters)
-        //  - Render UI.renderInsightsTab(feed, filters)
-        //  - Wire filter pills + search input + cross-tab navigation
+        if (!this._insightsFiltersWired) {
+            this._wireInsightsFilters();
+            this._insightsFiltersWired = true;
+        }
+
+        const filters = this._readInsightsFilterState();
+        const feed = Database.getInsightsFeed(filters);
+
+        // Compute per-type counts from an UNFILTERED query (so the sidebar always shows
+        // the total that exists, not the count after filters).
+        const allRows = Database.getInsightsFeed({});
+        const counts = {
+            all: allRows.length,
+            period: allRows.filter(r => r.source_type === 'period').length,
+            anomaly: allRows.filter(r => r.source_type === 'anomaly').length,
+            chart: allRows.filter(r => r.source_type === 'chart').length,
+            transaction: allRows.filter(r => r.source_type === 'transaction').length,
+        };
+
+        UI.renderInsightsTab(feed, counts);
+    },
+
+    _readInsightsFilterState() {
+        const sidebar = document.querySelector('#insightsTab .insights-sidebar');
+        if (!sidebar) return {};
+
+        const activeType = sidebar.querySelector('[data-filter-type].active');
+        const activeTab = sidebar.querySelector('[data-filter-tab].active');
+        const activeRange = sidebar.querySelector('[data-filter-range].active');
+        const searchInput = document.getElementById('insightsSearchInput');
+
+        const filters = {};
+        if (activeType && activeType.dataset.filterType !== 'all') {
+            filters.types = [activeType.dataset.filterType];
+        }
+        if (activeTab && activeTab.dataset.filterTab !== 'all') {
+            filters.tabs = [activeTab.dataset.filterTab];
+        }
+        if (activeRange && activeRange.dataset.filterRange) {
+            filters.range = activeRange.dataset.filterRange;
+        }
+        if (searchInput && searchInput.value.trim()) {
+            filters.search = searchInput.value.trim();
+        }
+        return filters;
+    },
+
+    _wireInsightsFilters() {
+        const sidebar = document.querySelector('#insightsTab .insights-sidebar');
+        if (!sidebar) return;
+
+        // Click handlers for all pills (delegated to the sidebar). Each filter group
+        // is single-select: clicking a pill activates it and deactivates its siblings
+        // within the same data-filter-* dimension. Dimension is detected from the
+        // pill's dataset key, then mapped back to the matching data-* attribute.
+        const dimToAttr = {
+            filterType: 'data-filter-type',
+            filterTab: 'data-filter-tab',
+            filterRange: 'data-filter-range'
+        };
+        sidebar.addEventListener('click', (e) => {
+            const pill = e.target.closest('button.insights-filter-pill');
+            if (!pill) return;
+            const dim = Object.keys(dimToAttr).find(d => pill.dataset[d] !== undefined);
+            if (!dim) return;
+            // Deactivate other pills in the same dimension
+            sidebar.querySelectorAll(`button[${dimToAttr[dim]}]`).forEach(p => p.classList.remove('active'));
+            pill.classList.add('active');
+            this.refreshInsights();
+        });
+
+        // Debounced search
+        const searchInput = document.getElementById('insightsSearchInput');
+        if (searchInput) {
+            let searchTimer = null;
+            searchInput.addEventListener('input', () => {
+                clearTimeout(searchTimer);
+                searchTimer = setTimeout(() => this.refreshInsights(), 200);
+            });
+        }
     },
 
     /**

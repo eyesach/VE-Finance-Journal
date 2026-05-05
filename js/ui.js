@@ -1807,6 +1807,73 @@ const UI = {
     },
 
     /**
+     * Render the Insights Hub feed inside #insightsFeed.
+     * @param {Array<Object>} feed Result of Database.getInsightsFeed(filters)
+     * @param {Object} counts { all, period, anomaly, chart, transaction } for sidebar pills
+     */
+    renderInsightsTab(feed, counts) {
+        const container = document.getElementById('insightsFeed');
+        if (!container) return;
+
+        // Update sidebar counts
+        const setCount = (id, n) => { const el = document.getElementById(id); if (el) el.textContent = String(n); };
+        setCount('insightsCountAll', counts.all || 0);
+        setCount('insightsCountPeriod', counts.period || 0);
+        setCount('insightsCountAnomaly', counts.anomaly || 0);
+        setCount('insightsCountChart', counts.chart || 0);
+        setCount('insightsCountTransaction', counts.transaction || 0);
+
+        if (!feed.length) {
+            container.innerHTML = `<div class="insights-empty">No insights match the current filters.</div>`;
+            return;
+        }
+
+        // Group by source_month, then render one timeline header per group
+        const groups = new Map();
+        for (const item of feed) {
+            const key = item.source_month || 'undated';
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key).push(item);
+        }
+
+        let html = '';
+        for (const [month, items] of groups.entries()) {
+            const heading = month === 'undated' ? 'Undated' : Utils.formatMonthDisplay(month);
+            html += `<div class="insights-timeline-month">${Utils.escapeHtml(heading)}</div>`;
+            for (const item of items) {
+                html += this.renderInsightCard(item);
+            }
+        }
+        container.innerHTML = html;
+    },
+
+    /**
+     * Render a single insight card. Uses Utils.renderMarkdownSafe for the body.
+     * data-* attrs let Task 3.4 wire cross-tab navigation later.
+     */
+    renderInsightCard(item) {
+        const tagInfo = {
+            period:      { cls: 'tag-period',      label: '📝 Period Note' },
+            anomaly:     { cls: 'tag-anomaly',     label: '🎯 Anomaly' },
+            chart:       { cls: 'tag-chart',       label: '📊 Chart Pin' },
+            transaction: { cls: 'tag-transaction', label: '💬 Transaction' }
+        };
+        const meta = tagInfo[item.source_type] || { cls: 'tag-period', label: 'Note' };
+        const bodyHtml = Utils.renderMarkdownSafe(item.body || '');
+        const sourceLabel = Utils.escapeHtml(item.source_label || '');
+        return `<div class="insight-card"
+                     data-source-type="${Utils.escapeHtml(item.source_type)}"
+                     data-source-id="${item.source_id}"
+                     data-target-key="${Utils.escapeHtml(item.target_key || '')}">
+            <div class="insight-card-header">
+                <span class="insight-tag ${meta.cls}">${meta.label}</span>
+                <span class="insight-source">${sourceLabel}</span>
+            </div>
+            <div class="insight-body">${bodyHtml}</div>
+        </div>`;
+    },
+
+    /**
      * Render the Fixed Assets tab with list/detail layout
      * @param {Array} assets - Array of asset objects
      * @param {number|null} selectedAssetId - Currently selected asset ID
