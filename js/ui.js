@@ -1824,7 +1824,11 @@ const UI = {
         setCount('insightsCountTransaction', counts.transaction || 0);
 
         if (!feed.length) {
-            container.innerHTML = `<div class="insights-empty">No insights match the current filters.</div>`;
+            // Distinguish "no notes anywhere" from "filtered to zero" — different actionable copy.
+            const message = counts.all === 0
+                ? 'No insights yet — period notes, variance explanations, anomaly captures, and chart pins will appear here.'
+                : 'No insights match the current filters.';
+            container.innerHTML = `<div class="insights-empty">${Utils.escapeHtml(message)}</div>`;
             return;
         }
 
