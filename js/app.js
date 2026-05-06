@@ -1430,31 +1430,35 @@ const App = {
     },
 
     /**
-     * Estimate net income for a given month: monthly revenue - opex.
-     * Uses existing Database helpers (which take arrays). Returns null if any required helper is missing.
+     * Estimate Net Income Before Taxes for a given month — same formula the P&L
+     * spreadsheet uses (Revenue − COGS − OPEX, see ui.js renderProfitLossSpreadsheet).
+     * Returns null if any required helper is missing.
      */
     _estimateNetIncome(month) {
         try {
-            if (!Database.getMonthlyTotalRevenue || !Database.getMonthlyTotalOpex) return null;
+            if (!Database.getMonthlyTotalRevenue || !Database.getMonthlyTotalCogs || !Database.getMonthlyTotalOpex) return null;
             const rev = Database.getMonthlyTotalRevenue([month]);
+            const cogs = Database.getMonthlyTotalCogs([month]);
             const opex = Database.getMonthlyTotalOpex([month]);
             const r = rev && rev[month];
+            const c = cogs && cogs[month];
             const o = opex && opex[month];
-            if (r == null || o == null) return null;
-            return r - o;
+            if (r == null || c == null || o == null) return null;
+            return r - c - o;
         } catch (e) { return null; }
     },
 
     /**
-     * Crude burn estimate: average (opex - revenue) over the prior 3 months.
-     * Excludes the current month — its opex/revenue are partial mid-month and
-     * would bias burn low / runway high right when the rule is most likely to
-     * fire.
+     * Crude burn estimate: average (opex + cogs − revenue) over the prior 3 months.
+     * Excludes the current month — its values are partial mid-month and would
+     * bias burn low / runway high right when the rule is most likely to fire.
+     * Mirrors the NIBT formula (rev − cogs − opex) negated, so it stays
+     * consistent with _estimateNetIncome.
      * If unavailable, returns null and the rule will skip.
      */
     _estimateMonthlyBurn(month) {
         try {
-            if (!Database.getMonthlyTotalOpex || !Database.getMonthlyTotalRevenue) return null;
+            if (!Database.getMonthlyTotalOpex || !Database.getMonthlyTotalRevenue || !Database.getMonthlyTotalCogs) return null;
             const months = [
                 this._monthsAgo(month, 1),
                 this._monthsAgo(month, 2),
@@ -1462,17 +1466,20 @@ const App = {
             ];
             const opexMap = Database.getMonthlyTotalOpex(months) || {};
             const revMap = Database.getMonthlyTotalRevenue(months) || {};
-            let totalOpex = 0, totalRev = 0, count = 0;
+            const cogsMap = Database.getMonthlyTotalCogs(months) || {};
+            let totalOpex = 0, totalRev = 0, totalCogs = 0, count = 0;
             for (const mo of months) {
                 const opex = opexMap[mo];
                 const rev = revMap[mo];
-                if (opex == null || rev == null) continue;
+                const cogs = cogsMap[mo];
+                if (opex == null || rev == null || cogs == null) continue;
                 totalOpex += opex;
                 totalRev += rev;
+                totalCogs += cogs;
                 count++;
             }
             if (count === 0) return null;
-            const avgBurn = (totalOpex - totalRev) / count;
+            const avgBurn = (totalOpex + totalCogs - totalRev) / count;
             return avgBurn > 0 ? avgBurn : null;
         } catch (e) { return null; }
     },
