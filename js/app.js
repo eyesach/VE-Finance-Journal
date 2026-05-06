@@ -1447,15 +1447,18 @@ const App = {
 
     /**
      * Crude burn estimate: average (opex - revenue) over the prior 3 months.
+     * Excludes the current month — its opex/revenue are partial mid-month and
+     * would bias burn low / runway high right when the rule is most likely to
+     * fire.
      * If unavailable, returns null and the rule will skip.
      */
     _estimateMonthlyBurn(month) {
         try {
             if (!Database.getMonthlyTotalOpex || !Database.getMonthlyTotalRevenue) return null;
             const months = [
-                this._monthsAgo(month, 0),
                 this._monthsAgo(month, 1),
                 this._monthsAgo(month, 2),
+                this._monthsAgo(month, 3),
             ];
             const opexMap = Database.getMonthlyTotalOpex(months) || {};
             const revMap = Database.getMonthlyTotalRevenue(months) || {};
@@ -1590,12 +1593,26 @@ const App = {
      * starter prompt as a non-persisted prefill.
      */
     _captureAnomalyExplanation(a) {
-        let tab = a.sourceTab === 'dashboard' ? 'pnl' : a.sourceTab;
+        // Route the captured note to the most relevant notes-aware tab for each
+        // anomaly type. AR aging and DSCR are cashflow-shaped problems — putting
+        // their explanations in the P&L period notes would file them in the wrong
+        // narrative. Per-signature routing wins over per-sourceTab routing.
+        const captureTabBySignature = {
+            runway_drop: 'cashflow',
+            ar_aging_trend: 'cashflow',
+            dscr_breach: 'cashflow',
+            category_spike: 'pnl',
+            profitability_flip: 'pnl',
+            recurring_disappeared: 'pnl'
+        };
+        let tab = captureTabBySignature[a.signature];
+        if (!tab) {
+            tab = (a.sourceTab === 'pnl' || a.sourceTab === 'cashflow' || a.sourceTab === 'balancesheet')
+                ? a.sourceTab
+                : 'pnl';
+        }
         const month = a.targetMonth;
         const prefill = a.explanationStarter || '';
-        if (tab !== 'pnl' && tab !== 'cashflow' && tab !== 'balancesheet') {
-            tab = 'pnl';
-        }
         this.switchMainTab(tab);
         setTimeout(() => {
             const refreshedIcon = document.querySelector(`.pn-icon-wrap[data-pn-tab="${tab}"][data-pn-month="${month}"]`);
