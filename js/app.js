@@ -13289,7 +13289,6 @@ const App = {
     sdAfterExclusionChange() {
         this.veRebuildIgnoredKeys();
         this.veRenderSalesData();
-        if (document.getElementById('veExcludedModal').classList.contains('active')) this.sdRenderExcluded();
         this.veRenderProducts();
         this.veRenderTransactions();
         this.veRenderTestItems();
@@ -13427,7 +13426,7 @@ const App = {
                     <td><span class="sd-mixbar"><i style="width:${mix}%"></i></span>${mix.toFixed(0)}%</td>
                     <td class="num">${fmt(r.avgPrice)}</td>
                     <td class="num">${cogsCell}</td>
-                    <td class="num ${mcls}">${fmt(r.margin)}</td>
+                    <td class="num sd-pos">${fmt(r.margin)}</td>
                     <td class="num ${mcls}">${r.marginPct.toFixed(1)}%</td>
                     <td class="num">${fmt(r.profit)}</td>
                 </tr>`;
@@ -13459,7 +13458,10 @@ const App = {
         document.querySelectorAll('.sd-seg [data-sd-metric]').forEach(b => {
             b.classList.toggle('active', b.dataset.sdMetric === metric);
         });
-        const months = Object.keys(sd.bestSellers).sort();
+        const lineMonths = lines.map(l => l.month).filter(Boolean).sort();
+        const bsFrom = filters.from ? filters.from.slice(0, 7) : lineMonths[0];
+        const bsTo = filters.to ? filters.to.slice(0, 7) : lineMonths[lineMonths.length - 1];
+        const months = Utils.monthsBetween(bsFrom, bsTo, 36);
         let bs = '';
         if (months.length === 0) {
             bs = '<div class="ve-muted">No linked sales</div>';
@@ -13480,6 +13482,9 @@ const App = {
             bs += '</div>';
         }
         document.getElementById('sdBestSellers').innerHTML = bs;
+
+        // Keep an open Excluded modal in sync (its row buttons index into this._salesData)
+        if (document.getElementById('veExcludedModal').classList.contains('active')) this.sdRenderExcluded();
     },
 
     veRenderEventsPanel() {

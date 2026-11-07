@@ -869,6 +869,25 @@ const Utils = {
      * @param {Array<{id:number,name:string,cogs:number}>} products
      * @returns {Object} SalesData (see Sales Data design doc)
      */
+    /**
+     * Inclusive chronological list of 'YYYY-MM' between two months (date strings accepted).
+     * Capped at `max`, keeping the most recent months. Empty if from > to or input invalid.
+     */
+    monthsBetween(fromYM, toYM, max = 36) {
+        const parse = (s) => {
+            const m = /^(\d{4})-(\d{2})/.exec(String(s || ''));
+            return m ? Number(m[1]) * 12 + (Number(m[2]) - 1) : null;
+        };
+        const a = parse(fromYM), b = parse(toYM);
+        if (a == null || b == null || a > b) return [];
+        const start = Math.max(a, b - max + 1);
+        const out = [];
+        for (let i = start; i <= b; i++) {
+            out.push(`${Math.floor(i / 12)}-${String((i % 12) + 1).padStart(2, '0')}`);
+        }
+        return out;
+    },
+
     computeSalesData(lines, products) {
         const r2 = (x) => Math.round(x * 100) / 100;
         const prodById = new Map((products || []).map(p => [p.id, p]));
