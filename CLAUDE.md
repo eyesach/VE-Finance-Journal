@@ -113,6 +113,13 @@ Vanilla HTML/CSS/JS accounting app with SQLite (sql.js) in-browser database, mul
 - **Logic**: `app.js:8685-10362` refreshVESales, Excel/JSON import, event management, journal creation
 - **DB**: `database.js:3544-3716` VE sales CRUD, VE events CRUD, event assignments
 
+### Sales Data (VE Sales subtab)
+- **HTML**: `index.html` `#veSubtabData` (break-even fill-in, margins, best sellers, shipping), `#veExcludedModal` (Unlinked/Ignored), `#veLinkPickerModal`, `#veTestItemsSection` (collapsible, inside `#veSubtabSales`)
+- **Logic**: `app.js:~13140-13420` veSwitchSubtab, veGetFilters, veRenderSalesData, sdUseInBreakeven, sdOpenExcluded, sdRenderExcluded, sdOpenLinkPicker, sdRenderLinkPicker, sdAfterExclusionChange, sdBindListeners; `app.js:~12134-12150` veRebuildIgnoredKeys (`_veIgnoredKeys`), veRenderAll; `app.js:~12390` veRenderTestItems (Product Breakdown skips ignored items; Transactions shows "test" badge)
+- **DB**: `database.js` getSalesDataLines (~3063), getShippingSummary (~3104), getIgnoredItems / addIgnoredItem / removeIgnoredItem (~2917-2940), addProductVeMapping (~2905); table `ve_ignored_items`
+- **Math**: `utils.js` computeSalesData (~872), getLastMonthsRange (~854)
+- **Tests**: `tests/sales-data.test.html`
+
 ### B2B Contracts
 - **HTML**: `index.html:1327-1352` b2bcontractTab; `index.html:2004-2084` b2bContractModal
 - **Logic**: `app.js:10363-11099` B2B contract CRUD, sync journal entries, finalize/unfinalize
@@ -208,8 +215,8 @@ Vanilla HTML/CSS/JS accounting app with SQLite (sql.js) in-browser database, mul
 - `768px`: Stack layout, smaller fonts (`styles.css:3008-3052`)
 - `480px`: Mobile-optimized, touch targets (`styles.css:3054-3077`)
 
-## Database Schema (18 tables)
-Defined in `database.js:70-337`. Key tables: `transactions`, `categories`, `category_folders`, `balance_sheet_assets`, `loans`, `budget_expenses`, `budget_groups`, `products`, `b2b_contracts`, `ve_sales`, `ve_sale_items`, `ve_events`, `product_ve_mappings`, `pl_overrides`, `cashflow_overrides`, `app_meta`, `loan_skipped_payments`, `loan_payment_overrides`. Migrations: `database.js:342-773`.
+## Database Schema (19 tables)
+Defined in `database.js:70-337`. Key tables: `transactions`, `categories`, `category_folders`, `balance_sheet_assets`, `loans`, `budget_expenses`, `budget_groups`, `products`, `b2b_contracts`, `ve_sales`, `ve_sale_items`, `ve_events`, `product_ve_mappings`, `pl_overrides`, `cashflow_overrides`, `app_meta`, `loan_skipped_payments`, `loan_payment_overrides`, `ve_ignored_items`. Migrations: `database.js:342-773`.
 
 ## Key Utilities (utils.js)
 - Formatting: `formatCurrency`, `formatDate`, `formatMonthDisplay` (lines 11-119)

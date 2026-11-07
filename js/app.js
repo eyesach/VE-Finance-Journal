@@ -12131,11 +12131,17 @@ const App = {
         this.veRenderAll();
     },
 
+    veRebuildIgnoredKeys() {
+        this._veIgnoredKeys = new Set(Database.getIgnoredItems().map(r => r.name + '|' + Number(r.price).toFixed(2)));
+    },
+
     veRenderAll() {
+        this.veRebuildIgnoredKeys();
         this.veRenderSummary();
         this.veRenderSourceBreakdown();
         this.veRenderProducts();
         this.veRenderTransactions();
+        this.veRenderTestItems();
         const sdPane = document.getElementById('veSubtabData');
         if (sdPane && sdPane.style.display !== 'none') this.veRenderSalesData();
     },
@@ -12237,6 +12243,7 @@ const App = {
             if (items && items.length > 0) {
                 for (const item of items) {
                     const price = item.price || 0;
+                    if (this._veIgnoredKeys && this._veIgnoredKeys.has(item.name + '|' + Number(price).toFixed(2))) continue;
                     const key = (item.name || 'Unknown').toLowerCase().trim() + '|' + price.toFixed(2);
                     if (!map.has(key)) {
                         map.set(key, { name: item.name || 'Unknown', productNumber: item.productNumber || null, price, totalQty: 0, totalRevenue: 0, totalTax: 0, hasInferred: false });
@@ -12360,6 +12367,11 @@ const App = {
                 statusHtml = '<span class="ve-status-dot unknown"></span>Unknown';
             }
 
+            if (items && items.length > 0 && this._veIgnoredKeys && this._veIgnoredKeys.size) {
+                const nTest = items.filter(i => this._veIgnoredKeys.has(i.name + '|' + Number(i.price || 0).toFixed(2))).length;
+                if (nTest) statusHtml += `<span class="ve-inferred-badge sd-test-badge" title="${nTest} test item${nTest !== 1 ? 's' : ''} excluded from Product Breakdown">test</span>`;
+            }
+
             const eventName = s.event_id && this._veEventsMap ? (this._veEventsMap.get(s.event_id) || '') : '';
             const eventBadge = eventName ? `<span class="ve-event-badge">${Utils.escapeHtml(eventName)}</span>` : '<span class="ve-no-event">&mdash;</span>';
 
@@ -12376,6 +12388,31 @@ const App = {
             </tr>`;
         }
         tbody.innerHTML = html;
+    },
+
+    veRenderTestItems() {
+        const section = document.getElementById('veTestItemsSection');
+        if (!section) return;
+        const lines = Database.getSalesDataLines(this.veGetFilters());
+        const rows = Utils.computeSalesData(lines, []).ignored;
+        this._veTestRows = rows;
+        if (!rows.length) {
+            section.style.display = 'none';
+            return;
+        }
+        section.style.display = '';
+        const esc = (t) => Utils.escapeHtml(String(t == null ? '' : t));
+        let open = false;
+        try { open = localStorage.getItem('veTestItemsOpen') === '1'; } catch (e) { /* ignore */ }
+        document.getElementById('veTestItemsCount').textContent = `(${rows.length})`;
+        document.getElementById('veTestItemsBody').style.display = open ? '' : 'none';
+        document.getElementById('veTestItemsArrow').textContent = open ? '▾' : '▸';
+        const readOnly = !!this.isViewOnly;
+        document.getElementById('veTestItemsHead').innerHTML = ['Item', 'Price', 'Qty', 'Orders', 'First', 'Last'].map(c => `<th>${c}</th>`).join('') + (readOnly ? '' : '<th></th>');
+        document.getElementById('veTestItemsRows').innerHTML = rows.map((r, i) => {
+            const act = readOnly ? '' : `<td><button type="button" class="btn btn-secondary btn-sm" data-idx="${i}">Restore</button></td>`;
+            return `<tr><td>${esc(r.name)}</td><td>${this.veFmt(r.price)}</td><td>${esc(r.qty)}</td><td>${esc(r.orders)}</td><td>${r.firstDate ? esc(this.veFmtDate(r.firstDate)) : ''}</td><td>${r.lastDate ? esc(this.veFmtDate(r.lastDate)) : ''}</td>${act}</tr>`;
+        }).join('');
     },
 
     // --- VE Excel Parsing (client-side via SheetJS) ---
@@ -13250,12 +13287,30 @@ const App = {
     },
 
     sdAfterExclusionChange() {
+        this.veRebuildIgnoredKeys();
         this.veRenderSalesData();
         if (document.getElementById('veExcludedModal').classList.contains('active')) this.sdRenderExcluded();
         this.veRenderProducts();
+        this.veRenderTransactions();
+        this.veRenderTestItems();
     },
 
     sdBindListeners() {
+        document.getElementById('veTestItemsToggle').addEventListener('click', () => {
+            const body = document.getElementById('veTestItemsBody');
+            const open = body.style.display === 'none';
+            body.style.display = open ? '' : 'none';
+            document.getElementById('veTestItemsArrow').textContent = open ? '▾' : '▸';
+            try { localStorage.setItem('veTestItemsOpen', open ? '1' : '0'); } catch (e) { /* ignore */ }
+        });
+        document.getElementById('veTestItemsRows').addEventListener('click', (e) => {
+            const btn = e.target.closest('button[data-idx]');
+            if (!btn || this.isViewOnly) return;
+            const row = (this._veTestRows || [])[parseInt(btn.dataset.idx, 10)];
+            if (!row) return;
+            Database.removeIgnoredItem(row.name, row.price);
+            this.sdAfterExclusionChange();
+        });
         document.getElementById('sdUseInBreakevenBtn').addEventListener('click', () => this.sdUseInBreakeven());
         document.getElementById('sdLinkedPill').addEventListener('click', () => this.sdOpenExcluded('unlinked'));
         document.getElementById('sdExCloseBtn').addEventListener('click', () => UI.hideModal('veExcludedModal'));
@@ -14846,6 +14901,14 @@ const App = {
     // ==================== CHANGE LOG ====================
 
     changelogData: [
+        {
+            version: '2.3',
+            date: '2026-11-07',
+            title: 'Sales Data',
+            changes: [
+                { type: 'feature', text: 'Sales Data subtab: weighted avg price/COGS with "Use in Break-even", product margins & mix, best sellers by month, excluded/test item management' }
+            ]
+        },
         {
             version: '2.2',
             date: '2026-03-24',
