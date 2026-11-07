@@ -3034,6 +3034,83 @@ const Database = {
         return { totals, byProduct, monthlyCogs };
     },
 
+    /**
+     * Build WHERE fragment + params for Sales Data filters.
+     * @param {{source?:string, from?:string, to?:string, event?:string}} f
+     */
+    _salesDataWhere(f) {
+        f = f || {};
+        const conds = [];
+        const params = [];
+        if (f.source && f.source !== 'both') { conds.push('vs.source = ?'); params.push(f.source); }
+        if (f.from) { conds.push('vs.date >= ?'); params.push(f.from); }
+        if (f.to) { conds.push('vs.date <= ?'); params.push(f.to); }
+        if (f.event === '__unassigned__') {
+            conds.push('vs.event_id IS NULL');
+        } else if (f.event) {
+            conds.push('vs.event_id = ?'); params.push(Number(f.event));
+        }
+        return { where: conds.length ? 'WHERE ' + conds.join(' AND ') : '', params };
+    },
+
+    /**
+     * Flat sale lines for the Sales Data subtab, with allocated discount,
+     * linked product ids (ascending) and ignored flag.
+     * @param {{source?:string, from?:string, to?:string, event?:string}} filters
+     * @returns {Array<{transaction_no:string, date:string, month:string, name:string, price:number,
+     *   quantity:number, amount:number, discount:number, product_ids:number[], ignored:boolean}>}
+     */
+    getSalesDataLines(filters) {
+        const { where, params } = this._salesDataWhere(filters);
+        const results = this.db.exec(`
+            SELECT vi.transaction_no AS transaction_no,
+                   vs.date AS date,
+                   SUBSTR(vs.date, 1, 7) AS month,
+                   vi.name AS name,
+                   vi.price AS price,
+                   vi.quantity AS quantity,
+                   vi.amount AS amount,
+                   CASE WHEN vs.subtotal > 0 THEN vs.discount * (vi.amount * 1.0 / vs.subtotal) ELSE 0 END AS discount,
+                   (SELECT GROUP_CONCAT(product_id) FROM (
+                        SELECT m.product_id AS product_id FROM product_ve_mappings m
+                        WHERE m.ve_item_name = vi.name AND ROUND(m.ve_item_price, 2) = ROUND(vi.price, 2)
+                        ORDER BY m.product_id)) AS product_ids,
+                   EXISTS (SELECT 1 FROM ve_ignored_items g
+                           WHERE g.ve_item_name = vi.name AND ROUND(g.ve_item_price, 2) = ROUND(vi.price, 2)) AS ignored
+            FROM ve_sale_items vi
+            JOIN ve_sales vs ON vs.transaction_no = vi.transaction_no
+            ${where}
+            ORDER BY vs.date ASC, vi.transaction_no ASC, vi.rowid ASC
+        `, params);
+        if (!results.length) return [];
+        return this.rowsToObjects(results[0]).map(r => ({
+            transaction_no: String(r.transaction_no),
+            date: r.date,
+            month: r.month,
+            name: r.name,
+            price: Number(r.price) || 0,
+            quantity: Number(r.quantity) || 0,
+            amount: Number(r.amount) || 0,
+            discount: Number(r.discount) || 0,
+            product_ids: r.product_ids ? String(r.product_ids).split(',').map(Number).sort((a, b) => a - b) : [],
+            ignored: !!r.ignored
+        }));
+    },
+
+    /**
+     * Shipping collected across orders matching the filters.
+     * @returns {{total:number, orders:number}} orders = count where shipping > 0
+     */
+    getShippingSummary(filters) {
+        const { where, params } = this._salesDataWhere(filters);
+        const results = this.db.exec(
+            `SELECT COALESCE(SUM(vs.shipping), 0), COALESCE(SUM(CASE WHEN vs.shipping > 0 THEN 1 ELSE 0 END), 0)
+             FROM ve_sales vs ${where}`, params);
+        if (!results.length) return { total: 0, orders: 0 };
+        const row = results[0].values[0];
+        return { total: Number(row[0]) || 0, orders: Number(row[1]) || 0 };
+    },
+
     // ==================== BREAK-EVEN CONFIG ====================
 
     /**

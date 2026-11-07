@@ -103,6 +103,95 @@ async function freshDb() {
     assertEqual(r.length, 1);
   });
 
+  function seedSales(d) {
+    d.db = new d.SQL.Database(); d.createSchema();
+    d.addProduct('Bundle v1', '', 25, 0, 13.75, null);
+    d.addProduct('Sticker', '', 6, 0, 1.2, null);
+    d.addProduct('Sticker Rebrand', '', 6, 0, 1.2, null);
+    d.addProductVeMapping(1, 'Bundle', 25);
+    d.addProductVeMapping(2, 'Sticker', 6);
+    d.addProductVeMapping(3, 'Sticker', 6);
+    const sale = 'INSERT INTO ve_sales (transaction_no, date, billing_name, description, subtotal, tax, shipping, discount, total, source, event_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)';
+    d.db.run(sale, ['T1', '2026-08-03', 'A', '', 56, 0, 6, 5.6, 56.4, 'online', null]);
+    d.db.run(sale, ['T2', '2026-09-10', 'B', '', 12, 0, 0, 0, 12, 'tradeshow', 7]);
+    d.db.run(sale, ['T3', '2026-09-12', 'C', '', 0, 0, 4, 2, 2, 'online', null]);
+    const item = 'INSERT INTO ve_sale_items (transaction_no, name, product_number, price, quantity, taxable, amount, inferred) VALUES (?,?,?,?,?,?,?,?)';
+    d.db.run(item, ['T1', 'Bundle', '', 25, 2, 0, 50, 0]);
+    d.db.run(item, ['T1', 'Sticker', '', 6, 1, 0, 6, 0]);
+    d.db.run(item, ['T2', 'Sticker', '', 6, 1, 0, 6, 0]);
+    d.db.run(item, ['T2', 'TEST ITEM', '', 1, 6, 0, 6, 0]);
+    d.db.run(item, ['T3', 'Mystery', '', 0, 1, 0, 0, 0]);
+    d.addIgnoredItem('TEST ITEM', 1);
+  }
+  const find = (lines, tn, name) => lines.find(l => l.transaction_no === tn && l.name === name);
+
+  const s4 = suite('Sales data lines');
+  test(s4, 'lines: all filters empty returns 5 lines', () => {
+    seedSales(Database);
+    assertEqual(Database.getSalesDataLines({}).length, 5);
+  });
+  test(s4, 'lines: discount allocated proportionally', () => {
+    seedSales(Database);
+    const l = Database.getSalesDataLines({});
+    assertClose(find(l, 'T1', 'Bundle').discount, 5.0);
+    assertClose(find(l, 'T1', 'Sticker').discount, 0.6);
+  });
+  test(s4, 'lines: zero-subtotal order allocates no discount', () => {
+    seedSales(Database);
+    assertEqual(find(Database.getSalesDataLines({}), 'T3', 'Mystery').discount, 0);
+  });
+  test(s4, 'lines: multi-link product_ids ascending', () => {
+    seedSales(Database);
+    assertEqual(JSON.stringify(find(Database.getSalesDataLines({}), 'T1', 'Sticker').product_ids), '[2,3]');
+  });
+  test(s4, 'lines: unlinked has empty product_ids', () => {
+    seedSales(Database);
+    assertEqual(find(Database.getSalesDataLines({}), 'T3', 'Mystery').product_ids.length, 0);
+  });
+  test(s4, 'lines: ignored flag', () => {
+    seedSales(Database);
+    const l = Database.getSalesDataLines({});
+    assertEqual(find(l, 'T2', 'TEST ITEM').ignored, true);
+    assertEqual(find(l, 'T1', 'Bundle').ignored, false);
+    assertEqual(find(l, 'T3', 'Mystery').ignored, false);
+  });
+  test(s4, 'lines: numeric fields are numbers', () => {
+    seedSales(Database);
+    const l = find(Database.getSalesDataLines({}), 'T1', 'Bundle');
+    assertEqual(typeof l.price, 'number'); assertEqual(typeof l.quantity, 'number');
+    assertEqual(typeof l.amount, 'number'); assertEqual(typeof l.discount, 'number');
+  });
+  test(s4, 'lines: source filter', () => {
+    seedSales(Database);
+    assertEqual(Database.getSalesDataLines({ source: 'online' }).length, 3);
+    assertEqual(Database.getSalesDataLines({ source: 'both' }).length, 5);
+  });
+  test(s4, 'lines: date filter', () => {
+    seedSales(Database);
+    assertEqual(Database.getSalesDataLines({ from: '2026-09-01', to: '2026-09-30' }).length, 3);
+  });
+  test(s4, 'lines: event filter id', () => {
+    seedSales(Database);
+    assertEqual(Database.getSalesDataLines({ event: '7' }).length, 2);
+    assertEqual(Database.getSalesDataLines({ event: '__unassigned__' }).length, 3);
+  });
+  test(s4, 'lines: month field', () => {
+    seedSales(Database);
+    const l = Database.getSalesDataLines({}).filter(x => x.transaction_no === 'T2');
+    assert(l.length === 2 && l.every(x => x.month === '2026-09'));
+  });
+  test(s4, 'lines: empty result is []', () => {
+    seedSales(Database);
+    assertEqual(Database.getSalesDataLines({ source: 'nope' }).length, 0);
+  });
+  test(s4, 'shipping: summary', () => {
+    seedSales(Database);
+    const all = Database.getShippingSummary({});
+    assertEqual(all.total, 10); assertEqual(all.orders, 2);
+    const on = Database.getShippingSummary({ source: 'online', from: '2026-08-01', to: '2026-08-31' });
+    assertEqual(on.total, 6); assertEqual(on.orders, 1);
+  });
+
   document.getElementById('summary').textContent = `${passed}/${passed + failed} tests passed, ${failed} failed`;
 })().catch(e => { document.getElementById('summary').textContent = 'CRASH: ' + e.message; });
 </script>
