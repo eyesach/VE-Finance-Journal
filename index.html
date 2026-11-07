@@ -1595,6 +1595,44 @@
             </div>
         </div>
 
+        <!-- Sales Data: Excluded Sales Modal -->
+        <div id="veExcludedModal" class="modal">
+            <div class="modal-content modal-wide">
+                <h3>Excluded Sales</h3>
+                <div class="sd-seg" style="margin-bottom:10px;">
+                    <button type="button" class="sd-seg-btn active" id="sdExUnlinkedTab" data-sd-exview="unlinked">Unlinked (0)</button>
+                    <button type="button" class="sd-seg-btn" id="sdExIgnoredTab" data-sd-exview="ignored">Ignored (0)</button>
+                </div>
+                <div class="ve-table-wrapper" style="max-height:360px; overflow-y:auto;">
+                    <table class="ve-table">
+                        <thead><tr id="sdExHead"></tr></thead>
+                        <tbody id="sdExBody"></tbody>
+                    </table>
+                </div>
+                <div class="modal-actions" style="margin-top:12px;">
+                    <button type="button" class="btn btn-secondary" id="sdExCloseBtn">Close</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sales Data: Link Picker Modal -->
+        <div id="veLinkPickerModal" class="modal">
+            <div class="modal-content modal-wide">
+                <div class="pvm-header">
+                    <h3 class="pvm-title" id="sdLpTitle"></h3>
+                </div>
+                <div class="pvm-search-wrap">
+                    <input type="text" id="sdLpSearch" class="pvm-search" placeholder="Search products...">
+                </div>
+                <div class="pvm-list-wrap">
+                    <div class="pvm-list" id="sdLpList"></div>
+                </div>
+                <div class="modal-actions" style="margin-top:12px;">
+                    <button type="button" class="btn btn-secondary" id="sdLpCancelBtn">Cancel</button>
+                </div>
+            </div>
+        </div>
+
         <!-- VE Create Journal Entry Modal -->
         <div id="veJournalModal" class="modal">
             <div class="modal-content">

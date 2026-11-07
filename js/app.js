@@ -11777,7 +11777,7 @@ const App = {
             'saveDbBtn', 'saveAllDbBtn', 'loadDbBtn', 'shareBtn',
             'veCreateJournalBtn', 'veClearBtn', 'veImportSubmit',
             'veSyncFromServer', 'veAddEventBtn', 'veAddAllToJournalBtn',
-            'veRemoveAllFromJournalBtn'
+            'veRemoveAllFromJournalBtn', 'sdUseInBreakevenBtn'
         ];
         hideIds.forEach(id => {
             const el = document.getElementById(id);
@@ -13159,6 +13159,142 @@ const App = {
         };
     },
 
+    sdUseInBreakeven() {
+        const w = this._salesData && this._salesData.weighted;
+        if (!w) return;
+        const oldCfg = Database.getBreakevenConfig();
+        const oldConsumer = JSON.parse(JSON.stringify(oldCfg.consumer || {}));
+        const price = Math.round(w.avgPrice * 100) / 100;
+        const cogs = Math.round(w.avgCogs * 100) / 100;
+        const apply = () => {
+            const cfg = Database.getBreakevenConfig();
+            cfg.consumer = Object.assign({}, cfg.consumer, { avgPrice: price, avgCogs: cogs, enabled: true });
+            Database.setBreakevenConfig(cfg);
+        };
+        apply();
+        this.pushUndo({
+            type: 'sd-use-breakeven',
+            label: 'Use sales averages in Break-even',
+            undo: () => {
+                const cfg = Database.getBreakevenConfig();
+                cfg.consumer = JSON.parse(JSON.stringify(oldConsumer));
+                Database.setBreakevenConfig(cfg);
+            },
+            redo: apply
+        });
+        UI.showNotification(`Break-even updated: price ${this.veFmt(price)}, COGS ${this.veFmt(cogs)}`, 'success');
+        if (document.querySelector('.main-tab.active')?.dataset.tab === 'breakeven') this.refreshBreakeven();
+    },
+
+    sdOpenExcluded(view) {
+        this._sdExView = view === 'ignored' ? 'ignored' : 'unlinked';
+        this.sdRenderExcluded();
+        UI.showModal('veExcludedModal');
+    },
+
+    sdRenderExcluded() {
+        const sd = this._salesData || { unlinked: [], ignored: [] };
+        const view = this._sdExView || 'unlinked';
+        const esc = (t) => Utils.escapeHtml(String(t == null ? '' : t));
+        const rows = view === 'ignored' ? sd.ignored : sd.unlinked;
+        const readOnly = !!this.isViewOnly;
+        document.getElementById('sdExUnlinkedTab').textContent = `Unlinked (${sd.unlinked.length})`;
+        document.getElementById('sdExIgnoredTab').textContent = `Ignored (${sd.ignored.length})`;
+        document.getElementById('sdExUnlinkedTab').classList.toggle('active', view === 'unlinked');
+        document.getElementById('sdExIgnoredTab').classList.toggle('active', view === 'ignored');
+        const cols = ['Item', 'Price', 'Qty', 'Orders', 'First', 'Last'];
+        document.getElementById('sdExHead').innerHTML = cols.map(c => `<th>${c}</th>`).join('') + (readOnly ? '' : '<th></th>');
+        const ncols = cols.length + (readOnly ? 0 : 1);
+        const body = document.getElementById('sdExBody');
+        if (!rows.length) {
+            const msg = view === 'ignored' ? 'No ignored items.' : 'Every sale in this window is linked to a product.';
+            body.innerHTML = `<tr><td colspan="${ncols}" style="text-align:center; padding:16px; color:var(--text-muted);">${msg}</td></tr>`;
+            return;
+        }
+        body.innerHTML = rows.map(r => {
+            const attrs = `data-name="${esc(r.name)}" data-price="${esc(r.price)}"`;
+            let actions = '';
+            if (!readOnly) {
+                actions = view === 'ignored'
+                    ? `<button type="button" class="btn btn-secondary btn-sm" data-sd-action="restore" ${attrs}>Restore</button>`
+                    : `<button type="button" class="btn btn-secondary btn-sm" data-sd-action="link" ${attrs}>Link\u2026</button> <button type="button" class="btn btn-secondary btn-sm" data-sd-action="ignore" ${attrs}>Mark as test</button>`;
+                actions = `<td style="white-space:nowrap;">${actions}</td>`;
+            }
+            return `<tr><td>${esc(r.name)}</td><td>${this.veFmt(r.price)}</td><td>${esc(r.qty)}</td><td>${esc(r.orders)}</td><td>${r.firstDate ? esc(this.veFmtDate(r.firstDate)) : ''}</td><td>${r.lastDate ? esc(this.veFmtDate(r.lastDate)) : ''}</td>${actions}</tr>`;
+        }).join('');
+    },
+
+    sdOpenLinkPicker(name, price) {
+        this._sdLp = { name, price };
+        document.getElementById('sdLpTitle').textContent = `Link "${name}" (${this.veFmt(price)}) to\u2026`;
+        document.getElementById('sdLpSearch').value = '';
+        this.sdRenderLinkPicker();
+        UI.showModal('veLinkPickerModal');
+        document.getElementById('sdLpSearch').focus();
+    },
+
+    sdRenderLinkPicker() {
+        const lp = this._sdLp;
+        if (!lp) return;
+        const esc = (t) => Utils.escapeHtml(String(t == null ? '' : t));
+        const q = document.getElementById('sdLpSearch').value.trim().toLowerCase();
+        const matches = (p) => Math.abs((p.price || 0) - lp.price) < 0.005;
+        let prods = Database.getProducts().filter(p => !p.is_discontinued && (!q || String(p.name).toLowerCase().includes(q)));
+        prods = prods.filter(matches).concat(prods.filter(p => !matches(p)));
+        const list = document.getElementById('sdLpList');
+        if (!prods.length) {
+            list.innerHTML = '<div class="pvm-item" style="cursor:default; color:var(--text-muted);">No products found.</div>';
+            return;
+        }
+        list.innerHTML = prods.map(p => `<div class="pvm-item" data-product-id="${esc(p.id)}"><span class="pvm-item-name">${esc(p.name)}${matches(p) ? '<span class="ve-linked-badge">price match</span>' : ''}</span><span>${this.veFmt(p.price || 0)} &middot; COGS ${this.veFmt(p.cogs || 0)}</span></div>`).join('');
+    },
+
+    sdAfterExclusionChange() {
+        this.veRenderSalesData();
+        if (document.getElementById('veExcludedModal').classList.contains('active')) this.sdRenderExcluded();
+        this.veRenderProducts();
+    },
+
+    sdBindListeners() {
+        document.getElementById('sdUseInBreakevenBtn').addEventListener('click', () => this.sdUseInBreakeven());
+        document.getElementById('sdLinkedPill').addEventListener('click', () => this.sdOpenExcluded('unlinked'));
+        document.getElementById('sdExCloseBtn').addEventListener('click', () => UI.hideModal('veExcludedModal'));
+        document.getElementById('sdLpCancelBtn').addEventListener('click', () => UI.hideModal('veLinkPickerModal'));
+        document.querySelectorAll('[data-sd-exview]').forEach(b => b.addEventListener('click', () => {
+            this._sdExView = b.dataset.sdExview;
+            this.sdRenderExcluded();
+        }));
+        document.getElementById('sdExBody').addEventListener('click', (e) => {
+            const btn = e.target.closest('button[data-sd-action]');
+            if (!btn || this.isViewOnly) return;
+            const name = btn.dataset.name;
+            const price = parseFloat(btn.dataset.price);
+            const action = btn.dataset.sdAction;
+            if (action === 'link') {
+                this.sdOpenLinkPicker(name, price);
+            } else if (action === 'ignore') {
+                Database.addIgnoredItem(name, price);
+                UI.showNotification('Moved to Ignored. Restore anytime from Ignored.', 'success');
+                this.sdAfterExclusionChange();
+            } else if (action === 'restore') {
+                Database.removeIgnoredItem(name, price);
+                this.sdAfterExclusionChange();
+            }
+        });
+        document.getElementById('sdLpSearch').addEventListener('input', () => this.sdRenderLinkPicker());
+        document.getElementById('sdLpList').addEventListener('click', (e) => {
+            const item = e.target.closest('.pvm-item[data-product-id]');
+            if (!item || !this._sdLp || this.isViewOnly) return;
+            const id = item.dataset.productId;
+            const prod = Database.getProducts().find(p => String(p.id) === String(id));
+            if (!prod) return;
+            Database.addProductVeMapping(prod.id, this._sdLp.name, this._sdLp.price);
+            UI.showNotification('Linked to ' + prod.name, 'success');
+            UI.hideModal('veLinkPickerModal');
+            this.sdAfterExclusionChange();
+        });
+    },
+
     veRenderSalesData() {
         const filters = this.veGetFilters();
         const lines = Database.getSalesDataLines(filters);
@@ -13739,6 +13875,7 @@ const App = {
         // Sales Data panel: sort headers and best-seller metric toggle (bind once; this runs again on the view-only path)
         if (!this._sdListenersBound) {
         this._sdListenersBound = true;
+        this.sdBindListeners();
         document.querySelectorAll('#sdMarginTable th[data-sdsort]').forEach(th => {
             th.addEventListener('click', () => {
                 const key = th.dataset.sdsort;
