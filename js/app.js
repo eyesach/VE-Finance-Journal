@@ -12054,7 +12054,7 @@ const App = {
             end = dates[dates.length - 1] ? dates[dates.length - 1].substring(0, 7) : null;
         }
 
-        sel.innerHTML = '<option value="">Date preset...</option><option value="all">All time</option>';
+        sel.innerHTML = '<option value="">Date preset...</option><option value="all">All time</option><option value="last1">Last month</option><option value="last3">Last 3 months</option>';
         if (!start || !end) return;
         if (end > currentYM) end = currentYM;
 
@@ -13124,6 +13124,11 @@ const App = {
             fromEl.value = `${preset}-01`;
             const lastDay = new Date(y, m, 0).getDate();
             toEl.value = `${preset}-${String(lastDay).padStart(2, '0')}`;
+        } else if (/^last(\d+)$/.test(preset)) {
+            const n = Number(preset.match(/^last(\d+)$/)[1]);
+            const range = Utils.getLastMonthsRange(n, new Date());
+            fromEl.value = range.from;
+            toEl.value = range.to;
         }
         this.veApplyFilters();
     },
