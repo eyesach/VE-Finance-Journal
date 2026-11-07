@@ -13736,7 +13736,9 @@ const App = {
             btn.addEventListener('click', () => this.veSwitchSubtab(btn.dataset.veSubtab));
         });
 
-        // Sales Data panel: sort headers and best-seller metric toggle
+        // Sales Data panel: sort headers and best-seller metric toggle (bind once; this runs again on the view-only path)
+        if (!this._sdListenersBound) {
+        this._sdListenersBound = true;
         document.querySelectorAll('#sdMarginTable th[data-sdsort]').forEach(th => {
             th.addEventListener('click', () => {
                 const key = th.dataset.sdsort;
@@ -13751,6 +13753,7 @@ const App = {
                 this.veRenderSalesData();
             });
         });
+        }
 
         // Events panel
         document.getElementById('veAutoDetectBtn').addEventListener('click', (e) => {

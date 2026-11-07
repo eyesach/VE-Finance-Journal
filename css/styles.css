@@ -2931,6 +2931,7 @@ body.edit-mode .pnl-overridden::after { content: ' *'; color: var(--text-muted);
 .sd-pos { color: var(--green); }
 .sd-also { display: block; font-size: var(--font-xs); color: var(--text-muted); }
 .sd-conflict { color: var(--amber); cursor: help; margin-left: 4px; }
+#sdMarginTable th[data-sdsort] { cursor: pointer; }
 #sdMarginTable th.sd-sorted::after { content: attr(data-arrow); margin-left: 4px; }
 @media (max-width: 768px) { .sd-grid2 { grid-template-columns: 1fr; } }
 
