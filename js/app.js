@@ -12131,6 +12131,16 @@ const App = {
         this.veRenderAll();
     },
 
+    /**
+     * Line items for one sale. Online and POS exports can share transaction
+     * numbers, so only items tagged with this sale's source (or untagged
+     * legacy items) belong to it.
+     */
+    veItemsForSale(s) {
+        const items = this._veItemsCache.get(s.transaction_no) || [];
+        return items.filter(i => !i.source || i.source === s.source);
+    },
+
     veRebuildIgnoredKeys() {
         this._veIgnoredKeys = new Set(Database.getIgnoredItems().map(r => r.name + '|' + Number(r.price).toFixed(2)));
     },
@@ -12239,7 +12249,7 @@ const App = {
         let unscrapedSubtotal = 0, unscrapedTax = 0, unscrapedCount = 0;
 
         for (const s of this._veFiltered) {
-            const items = this._veItemsCache.get(s.transaction_no);
+            const items = this.veItemsForSale(s);
             if (items && items.length > 0) {
                 for (const item of items) {
                     const price = item.price || 0;
@@ -12356,7 +12366,7 @@ const App = {
 
         let html = '';
         for (const s of this._veFiltered) {
-            const items = this._veItemsCache.get(s.transaction_no);
+            const items = this.veItemsForSale(s);
             let statusHtml = '';
             if (items && items.length > 0) {
                 const isInferred = items.some(i => i.inferred);
@@ -12595,11 +12605,21 @@ const App = {
         // Restore event assignments
         Database.restoreVEEventAssignments(eventMap);
 
-        // Import line items
+        // Import line items. The JSON keys items by transaction number only, so
+        // tag each with its sale's source when that number belongs to exactly
+        // one source; otherwise leave it untagged (ambiguous in the export).
         if (data.lineItems && typeof data.lineItems === 'object') {
+            const sourcesByTx = new Map();
+            for (const s of sales) {
+                const key = String(s.transactionNo);
+                if (!sourcesByTx.has(key)) sourcesByTx.set(key, new Set());
+                sourcesByTx.get(key).add(s.source || 'online');
+            }
             for (const [txNo, items] of Object.entries(data.lineItems)) {
                 if (Array.isArray(items) && items.length > 0) {
-                    Database.upsertVESaleItems(txNo, items);
+                    const srcs = sourcesByTx.get(String(txNo));
+                    const source = srcs && srcs.size === 1 ? [...srcs][0] : null;
+                    Database.upsertVESaleItems(txNo, items, source);
                 }
             }
         }
@@ -12631,7 +12651,7 @@ const App = {
         Database.restoreVEEventAssignments(eventMap);
         let totalItems = 0;
         for (const [txNo, items] of lineItems) {
-            Database.upsertVESaleItems(txNo, items);
+            Database.upsertVESaleItems(txNo, items, effectiveSource);
             totalItems += items.length;
         }
         return { salesCount: sales.length, itemsCount: totalItems, source: effectiveSource };

@@ -751,6 +751,16 @@ const Database = {
             )
         `);
 
+        // === Add source to ve_sale_items ===
+        // Online and POS exports can reuse the same transaction numbers, so
+        // items must be tied to (transaction_no, source). NULL = legacy row
+        // imported before this column existed; it joins on transaction_no alone.
+        try {
+            this.db.exec('SELECT source FROM ve_sale_items LIMIT 1');
+        } catch (e) {
+            this.db.run('ALTER TABLE ve_sale_items ADD COLUMN source TEXT');
+        }
+
         // === Create products table if missing ===
         this.db.run(`
             CREATE TABLE IF NOT EXISTS products (
@@ -2980,12 +2990,13 @@ const Database = {
         const totalsResult = this.db.exec(`
             SELECT
                 COALESCE(SUM(vi.amount), 0) AS pretax_total,
-                COALESCE(SUM(CASE WHEN vs.subtotal > 0 THEN vs.tax * (vi.amount / vs.subtotal) ELSE 0 END), 0) AS sales_tax,
-                COALESCE(SUM(CASE WHEN vs.subtotal > 0 THEN vs.discount * (vi.amount / vs.subtotal) ELSE 0 END), 0) AS discount
+                COALESCE(SUM(CASE WHEN vs.subtotal > 0 THEN vs.tax * (vi.amount * 1.0 / vs.subtotal) ELSE 0 END), 0) AS sales_tax,
+                COALESCE(SUM(CASE WHEN vs.subtotal > 0 THEN vs.discount * (vi.amount * 1.0 / vs.subtotal) ELSE 0 END), 0) AS discount
             FROM ve_sale_items vi
-            JOIN ve_sales vs ON vs.transaction_no = vi.transaction_no
-            JOIN product_ve_mappings m ON m.ve_item_name = vi.name AND ROUND(m.ve_item_price, 2) = ROUND(vi.price, 2)
-            WHERE 1=1 ${whereFrag}
+            JOIN ve_sales vs ON vs.transaction_no = vi.transaction_no AND (vi.source IS NULL OR vi.source = vs.source)
+            WHERE EXISTS (SELECT 1 FROM product_ve_mappings m
+                          WHERE m.ve_item_name = vi.name AND ROUND(m.ve_item_price, 2) = ROUND(vi.price, 2))
+              ${whereFrag}
         `, params);
 
         let totals = { pretax_total: 0, sales_tax: 0, post_tax_total: 0, discount: 0, pretax_after_discount: 0 };
@@ -3004,7 +3015,7 @@ const Database = {
             FROM ve_sale_items vi
             JOIN product_ve_mappings m ON m.ve_item_name = vi.name AND ROUND(m.ve_item_price, 2) = ROUND(vi.price, 2)
             JOIN products p ON p.id = m.product_id
-            JOIN ve_sales vs ON vs.transaction_no = vi.transaction_no
+            JOIN ve_sales vs ON vs.transaction_no = vi.transaction_no AND (vi.source IS NULL OR vi.source = vs.source)
             WHERE 1=1 ${whereFrag}
             GROUP BY p.id, p.name, p.cogs
             ORDER BY revenue DESC
@@ -3021,7 +3032,7 @@ const Database = {
                 FROM ve_sale_items vi
                 JOIN product_ve_mappings m ON m.ve_item_name = vi.name AND ROUND(m.ve_item_price, 2) = ROUND(vi.price, 2)
                 JOIN products p ON p.id = m.product_id
-                JOIN ve_sales vs ON vs.transaction_no = vi.transaction_no
+                JOIN ve_sales vs ON vs.transaction_no = vi.transaction_no AND (vi.source IS NULL OR vi.source = vs.source)
                 WHERE 1=1 ${whereFrag}
                 GROUP BY month, p.id
                 ORDER BY month ASC, p.name ASC
@@ -3078,7 +3089,7 @@ const Database = {
                    EXISTS (SELECT 1 FROM ve_ignored_items g
                            WHERE g.ve_item_name = vi.name AND ROUND(g.ve_item_price, 2) = ROUND(vi.price, 2)) AS ignored
             FROM ve_sale_items vi
-            JOIN ve_sales vs ON vs.transaction_no = vi.transaction_no
+            JOIN ve_sales vs ON vs.transaction_no = vi.transaction_no AND (vi.source IS NULL OR vi.source = vs.source)
             ${where}
             ORDER BY vs.date ASC, vi.transaction_no ASC, vi.rowid ASC
         `, params);
@@ -4372,12 +4383,15 @@ const Database = {
 
     clearVESales(source) {
         if (source) {
-            const txNos = this.db.exec('SELECT transaction_no FROM ve_sales WHERE source = ?', [source]);
-            if (txNos.length > 0) {
-                for (const row of txNos[0].values) {
-                    this.db.run('DELETE FROM ve_sale_items WHERE transaction_no = ?', [row[0]]);
-                }
-            }
+            // Items tagged with this source, plus legacy untagged items whose
+            // transaction number belongs only to this source.
+            this.db.run(`
+                DELETE FROM ve_sale_items
+                WHERE source = ?
+                   OR (source IS NULL
+                       AND transaction_no IN (SELECT transaction_no FROM ve_sales WHERE source = ?)
+                       AND transaction_no NOT IN (SELECT transaction_no FROM ve_sales WHERE source <> ?))
+            `, [source, source, source]);
             this.db.run('DELETE FROM ve_sales WHERE source = ?', [source]);
         } else {
             this.db.run('DELETE FROM ve_sale_items');
@@ -4395,11 +4409,29 @@ const Database = {
         this.autoSave();
     },
 
-    upsertVESaleItems(txNo, items) {
-        this.db.run('DELETE FROM ve_sale_items WHERE transaction_no = ?', [txNo]);
-        const stmt = this.db.prepare('INSERT INTO ve_sale_items (transaction_no, name, product_number, price, quantity, taxable, amount, inferred) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+    /**
+     * Replace the line items of one transaction.
+     * @param {string} txNo
+     * @param {Array} items
+     * @param {string|null} source - 'online' | 'tradeshow'; null when unknown
+     *   (only replaces items for this transaction number that aren't tied to
+     *   another source)
+     */
+    upsertVESaleItems(txNo, items, source = null) {
+        if (source) {
+            this.db.run(`
+                DELETE FROM ve_sale_items
+                WHERE transaction_no = ?
+                  AND (source = ?
+                       OR (source IS NULL AND NOT EXISTS (
+                           SELECT 1 FROM ve_sales WHERE transaction_no = ? AND source <> ?)))
+            `, [txNo, source, txNo, source]);
+        } else {
+            this.db.run('DELETE FROM ve_sale_items WHERE transaction_no = ? AND source IS NULL', [txNo]);
+        }
+        const stmt = this.db.prepare('INSERT INTO ve_sale_items (transaction_no, name, product_number, price, quantity, taxable, amount, inferred, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
         for (const item of items) {
-            stmt.run([txNo, item.name || 'Unknown', item.productNumber || null, item.price || 0, item.quantity || 1, item.taxable ? 1 : 0, item.amount || 0, item.inferred ? 1 : 0]);
+            stmt.run([txNo, item.name || 'Unknown', item.productNumber || null, item.price || 0, item.quantity || 1, item.taxable ? 1 : 0, item.amount || 0, item.inferred ? 1 : 0, source || null]);
         }
         stmt.free();
         this.autoSave();
@@ -4441,6 +4473,7 @@ const Database = {
                 taxable: !!row.taxable,
                 amount: row.amount,
                 inferred: !!row.inferred,
+                source: row.source || null,
             });
         }
         return map;

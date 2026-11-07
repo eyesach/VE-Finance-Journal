@@ -296,6 +296,68 @@ async function freshDb() {
     assertEqual(Utils.monthsBetween('2027-02', '2026-11').length, 0);
   });
 
+  const s6 = suite('Bug fixes');
+  test(s6, 'escapeHtml escapes quotes for attribute safety', () => {
+    assertEqual(Utils.escapeHtml('12" pizza'), '12&quot; pizza');
+    assertEqual(Utils.escapeHtml("it's"), 'it&#39;s');
+    assertEqual(Utils.escapeHtml('<b>a&b</b>'), '&lt;b&gt;a&amp;b&lt;/b&gt;');
+    assertEqual(Utils.escapeHtml(null), '');
+    assertEqual(Utils.escapeHtml(42), '42');
+  });
+  test(s6, 'linked analytics: discount allocated with integer-stored amounts', () => {
+    seedSales(Database);
+    const a = Database.getLinkedProductAnalytics(null, null, 'all');
+    // T1: 5.6 × 50/56 + 5.6 × 6/56 = 5.6; T2 has no discount
+    assertClose(a.totals.discount, 5.6, 0.001);
+  });
+
+  function seedCollision(d) {
+    d.db = new d.SQL.Database(); d.createSchema();
+    d.addProduct('A', '', 10, 0, 4, null);
+    d.addProduct('B', '', 20, 0, 5, null);
+    d.addProductVeMapping(1, 'A', 10);
+    d.addProductVeMapping(2, 'B', 20);
+    d.upsertVESales([
+      { transactionNo: 'X1', date: '2026-09-01', subtotal: 10, total: 10, source: 'online' },
+      { transactionNo: 'X1', date: '2026-09-02', subtotal: 20, total: 20, source: 'tradeshow' },
+    ]);
+    d.upsertVESaleItems('X1', [{ name: 'A', price: 10, quantity: 1, amount: 10 }], 'online');
+    d.upsertVESaleItems('X1', [{ name: 'B', price: 20, quantity: 1, amount: 20 }], 'tradeshow');
+  }
+  test(s6, 'same tx number in both sources: importing one keeps the other\'s items', () => {
+    seedCollision(Database);
+    const r = Database.db.exec('SELECT COUNT(*) FROM ve_sale_items');
+    assertEqual(r[0].values[0][0], 2);
+  });
+  test(s6, 'same tx number in both sources: lines are not double-joined', () => {
+    seedCollision(Database);
+    const all = Database.getSalesDataLines({});
+    assertEqual(all.length, 2);
+    const on = Database.getSalesDataLines({ source: 'online' });
+    assertEqual(on.length, 1); assertEqual(on[0].name, 'A');
+  });
+  test(s6, 'same tx number in both sources: linked analytics counts each once', () => {
+    seedCollision(Database);
+    const a = Database.getLinkedProductAnalytics(null, null, 'all');
+    assertEqual(a.byProduct.reduce((s, p) => s + p.units_sold, 0), 2);
+  });
+  test(s6, 'same tx number in both sources: clearing one source keeps the other', () => {
+    seedCollision(Database);
+    Database.clearVESales('tradeshow');
+    const r = Database.db.exec('SELECT name FROM ve_sale_items');
+    assertEqual(r[0].values.length, 1); assertEqual(r[0].values[0][0], 'A');
+  });
+  test(s6, 'getAllVESaleItems exposes item source', () => {
+    seedCollision(Database);
+    const m = Database.getAllVESaleItems();
+    const srcs = m.get('X1').map(i => i.source).sort();
+    assertEqual(JSON.stringify(srcs), JSON.stringify(['online', 'tradeshow']));
+  });
+  test(s6, 'legacy items without source still join to their order', () => {
+    seedSales(Database); // inserts items with no source column value
+    assertEqual(Database.getSalesDataLines({}).length, 5);
+  });
+
   document.getElementById('summary').textContent = `${passed}/${passed + failed} tests passed, ${failed} failed`;
 })().catch(e => { document.getElementById('summary').textContent = 'CRASH: ' + e.message; });
 </script>

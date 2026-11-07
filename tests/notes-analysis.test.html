@@ -47,7 +47,8 @@ function assertEq(a, b, msg) { if (a !== b) throw new Error((msg || 'Not equal')
 // === Markdown parser tests ===
 const s1 = suite('renderMarkdownSafe');
 test(s1, 'escapes < > & " before transforms', () => {
-  const out = Utils.renderMarkdownSafe('<script>alert(1)</script>');
+  // "<\/script>" — a literal closing tag here would end this <script> block early
+  const out = Utils.renderMarkdownSafe('<script>alert(1)<\/script>');
   assert(!out.includes('<script>'), 'must not contain raw <script>');
   assert(out.includes('&lt;script&gt;'), 'must contain escaped tag');
 });
