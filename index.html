@@ -1260,6 +1260,7 @@
                 <div class="ve-subtabs" id="veSubtabs" style="display:none;">
                     <button class="ve-subtab active" data-ve-subtab="sales">Sales</button>
                     <button class="ve-subtab" data-ve-subtab="events">Events</button>
+                    <button class="ve-subtab" data-ve-subtab="data">Sales Data</button>
                 </div>
 
                 <!-- Empty State -->
@@ -1381,6 +1382,61 @@
                     </div>
                     <div class="ve-events-grid" id="veEventsList"></div>
                 </div><!-- /#veSubtabEvents -->
+
+                <!-- Sales Data Sub-tab Content -->
+                <div class="ve-subtab-content" id="veSubtabData" style="display:none;">
+                    <div class="sd-be-panel">
+                        <div class="sd-be-head">
+                            <span class="sd-be-title">Break-even fill-in &middot; weighted by units sold &middot; pre-tax, after discounts</span>
+                            <button type="button" class="sd-pill" id="sdLinkedPill">&mdash;</button>
+                        </div>
+                        <div class="ve-cards">
+                            <div class="ve-card"><div class="ve-card-label">Avg Selling Price</div><div class="ve-card-value ve-pretax" id="sdCardPrice">&mdash;</div><div class="ve-card-sub">per unit</div></div>
+                            <div class="ve-card"><div class="ve-card-label">Avg COGS</div><div class="ve-card-value ve-tax" id="sdCardCogs">&mdash;</div><div class="ve-card-sub">per unit</div></div>
+                            <div class="ve-card"><div class="ve-card-label">Contribution Margin</div><div class="ve-card-value ve-total" id="sdCardCm">&mdash;</div><div class="ve-card-sub" id="sdCardCmSub">&nbsp;</div></div>
+                            <div class="ve-card"><div class="ve-card-label">Linked Units</div><div class="ve-card-value" id="sdCardUnits">&mdash;</div><div class="ve-card-sub" id="sdCardUnitsSub">&nbsp;</div></div>
+                        </div>
+                        <div class="sd-be-foot">
+                            <button type="button" class="btn btn-primary" id="sdUseInBreakevenBtn" disabled>Use in Break-even</button>
+                            <span class="sd-hint">Copies price + COGS into Break-even's consumer fields. Nothing changes until you click.</span>
+                        </div>
+                    </div>
+
+                    <div class="sd-grid2">
+                        <div class="ve-table-section">
+                            <h3>Product Margins &amp; Mix <span class="ve-count" id="sdMarginCount"></span></h3>
+                            <table class="ve-table" id="sdMarginTable">
+                                <thead><tr>
+                                    <th data-sdsort="name">Product</th>
+                                    <th class="num" data-sdsort="units">Units</th>
+                                    <th data-sdsort="mix">Mix</th>
+                                    <th class="num" data-sdsort="avgPrice">Avg Price</th>
+                                    <th class="num" data-sdsort="cogs">COGS</th>
+                                    <th class="num" data-sdsort="margin">Margin</th>
+                                    <th class="num" data-sdsort="marginPct">Margin %</th>
+                                    <th class="num" data-sdsort="profit">Profit</th>
+                                </tr></thead>
+                                <tbody id="sdMarginBody"></tbody>
+                            </table>
+                        </div>
+                        <div>
+                            <div class="ve-table-section"><h3>Shipping <span class="ve-count">excluded from margins</span></h3></div>
+                            <div class="ve-card" style="margin-bottom:10px"><div class="ve-card-label">Shipping Collected</div><div class="ve-card-value ve-shipping" id="sdShipTotal">$0.00</div><div class="ve-card-sub" id="sdShipSub">&nbsp;</div></div>
+                            <div class="ve-card"><div class="ve-card-label">Avg per Order</div><div class="ve-card-value ve-shipping" id="sdShipAvg">&mdash;</div><div class="ve-card-sub">online only</div></div>
+                        </div>
+                    </div>
+
+                    <div class="ve-table-section">
+                        <h3>Best Sellers by Month
+                            <span class="sd-seg">
+                                <button type="button" class="sd-seg-btn active" data-sd-metric="units">Units</button>
+                                <button type="button" class="sd-seg-btn" data-sd-metric="revenue">Revenue</button>
+                                <button type="button" class="sd-seg-btn" data-sd-metric="margin">Margin $</button>
+                            </span>
+                        </h3>
+                        <div class="ve-source-breakdown sd-months" id="sdBestSellers"></div>
+                    </div>
+                </div><!-- /#veSubtabData -->
 
                 </div><!-- /#veDashboard -->
             </section>

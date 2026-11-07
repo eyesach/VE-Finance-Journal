@@ -12136,6 +12136,8 @@ const App = {
         this.veRenderSourceBreakdown();
         this.veRenderProducts();
         this.veRenderTransactions();
+        const sdPane = document.getElementById('veSubtabData');
+        if (sdPane && sdPane.style.display !== 'none') this.veRenderSalesData();
     },
 
     veFmt(n) {
@@ -13141,7 +13143,149 @@ const App = {
         });
         document.getElementById('veSubtabSales').style.display = tab === 'sales' ? '' : 'none';
         document.getElementById('veSubtabEvents').style.display = tab === 'events' ? '' : 'none';
+        document.getElementById('veSubtabData').style.display = tab === 'data' ? '' : 'none';
         if (tab === 'events') this.veRenderEventsPanel();
+        if (tab === 'data') this.veRenderSalesData();
+    },
+
+    // ==================== VE SALES DATA SUB-TAB ====================
+
+    veGetFilters() {
+        return {
+            source: document.getElementById('ve-filterSource').value,
+            from: document.getElementById('ve-filterFrom').value,
+            to: document.getElementById('ve-filterTo').value,
+            event: document.getElementById('ve-filterEvent').value
+        };
+    },
+
+    veRenderSalesData() {
+        const filters = this.veGetFilters();
+        const lines = Database.getSalesDataLines(filters);
+        const sd = Utils.computeSalesData(lines, Database.getProducts());
+        this._salesData = sd;
+        const esc = (t) => Utils.escapeHtml(String(t == null ? '' : t));
+        const fmt = (n) => this.veFmt(n);
+        const setText = (id, t) => { document.getElementById(id).textContent = t; };
+        const w = sd.weighted;
+
+        // Linked pill
+        const pill = document.getElementById('sdLinkedPill');
+        if (sd.linkedPct == null) {
+            pill.textContent = 'No sales in window';
+            pill.classList.remove('ok');
+        } else {
+            pill.textContent = `${sd.linkedPct.toFixed(0)}% of sales linked \u00B7 view excluded \u203A`;
+            pill.classList.toggle('ok', sd.linkedPct >= 100);
+        }
+        pill.title = `Linked ${sd.linked.units} of ${sd.eligible.units} eligible units (${fmt(sd.linked.amount)} of ${fmt(sd.eligible.amount)})`;
+
+        // Fill-in cards
+        const btn = document.getElementById('sdUseInBreakevenBtn');
+        if (w) {
+            setText('sdCardPrice', fmt(w.avgPrice));
+            setText('sdCardCogs', fmt(w.avgCogs));
+            setText('sdCardCm', fmt(w.cm));
+            setText('sdCardCmSub', `${w.cmPct.toFixed(1)}% of price`);
+            setText('sdCardUnits', String(w.units));
+            setText('sdCardUnitsSub', `across ${w.productCount} product${w.productCount === 1 ? '' : 's'}`);
+            btn.disabled = false;
+        } else {
+            ['sdCardPrice', 'sdCardCogs', 'sdCardCm', 'sdCardUnits'].forEach(id => setText(id, '\u2014'));
+            setText('sdCardCmSub', '\u00A0');
+            setText('sdCardUnitsSub', 'Link products to see averages');
+            btn.disabled = true;
+        }
+
+        // Margins table
+        const sort = this._sdSort || (this._sdSort = { key: 'units', dir: 'desc' });
+        const rows = sd.byProduct.slice();
+        const dir = sort.dir === 'asc' ? 1 : -1;
+        rows.sort((a, b) => {
+            const av = a[sort.key], bv = b[sort.key];
+            if (sort.key === 'name') return dir * String(av).localeCompare(String(bv));
+            return dir * ((av || 0) - (bv || 0));
+        });
+        setText('sdMarginCount', `(${sd.byProduct.length} linked product${sd.byProduct.length === 1 ? '' : 's'})`);
+        document.querySelectorAll('#sdMarginTable th[data-sdsort]').forEach(th => {
+            const on = th.dataset.sdsort === sort.key;
+            th.classList.toggle('sd-sorted', on);
+            th.dataset.arrow = on ? (sort.dir === 'asc' ? '\u25B2' : '\u25BC') : '';
+        });
+        let html = '';
+        if (rows.length === 0) {
+            html = '<tr><td colspan="8"><span class="ve-muted">No linked sales in this window</span></td></tr>';
+        } else {
+            for (const r of rows) {
+                const low = w && r.marginPct < w.cmPct;
+                const mcls = low ? 'sd-warn' : 'sd-pos';
+                const also = (r.alsoNames && r.alsoNames.length) ? `<span class="sd-also">also: ${esc(r.alsoNames.join(', '))}</span>` : '';
+                let conflict = '';
+                if (r.cogsConflict) {
+                    const list = Array.isArray(r.cogsConflict) ? r.cogsConflict.map(v => fmt(v)).join(', ') : '';
+                    conflict = `<span class="sd-conflict" title="${esc('Linked products have different COGS: ' + list)}">\u26A0</span>`;
+                }
+                const cogsCell = r.missingCogs ? '<span class="ve-muted">\u2014</span>' : fmt(r.cogs);
+                const mix = Math.max(0, Math.min(100, r.mix || 0));
+                html += `<tr>
+                    <td>${esc(r.name)}${conflict}${also}</td>
+                    <td class="num">${r.units}</td>
+                    <td><span class="sd-mixbar"><i style="width:${mix}%"></i></span>${mix.toFixed(0)}%</td>
+                    <td class="num">${fmt(r.avgPrice)}</td>
+                    <td class="num">${cogsCell}</td>
+                    <td class="num ${mcls}">${fmt(r.margin)}</td>
+                    <td class="num ${mcls}">${r.marginPct.toFixed(1)}%</td>
+                    <td class="num">${fmt(r.profit)}</td>
+                </tr>`;
+            }
+            if (w) {
+                const totalProfit = sd.byProduct.reduce((s, r) => s + (r.profit || 0), 0);
+                html += `<tr class="ve-total-row">
+                    <td>Weighted total</td>
+                    <td class="num">${w.units}</td>
+                    <td>100%</td>
+                    <td class="num">${fmt(w.avgPrice)}</td>
+                    <td class="num">${fmt(w.avgCogs)}</td>
+                    <td class="num">${fmt(w.cm)}</td>
+                    <td class="num">${w.cmPct.toFixed(1)}%</td>
+                    <td class="num">${fmt(totalProfit)}</td>
+                </tr>`;
+            }
+        }
+        document.getElementById('sdMarginBody').innerHTML = html;
+
+        // Shipping
+        const ship = Database.getShippingSummary(filters);
+        setText('sdShipTotal', fmt(ship.total));
+        setText('sdShipAvg', ship.orders > 0 ? fmt(ship.total / ship.orders) : '\u2014');
+        setText('sdShipSub', `${ship.orders} shipped order${ship.orders === 1 ? '' : 's'}`);
+
+        // Best sellers
+        const metric = this._sdMetric || (this._sdMetric = 'units');
+        document.querySelectorAll('.sd-seg [data-sd-metric]').forEach(b => {
+            b.classList.toggle('active', b.dataset.sdMetric === metric);
+        });
+        const months = Object.keys(sd.bestSellers).sort();
+        let bs = '';
+        if (months.length === 0) {
+            bs = '<div class="ve-muted">No linked sales</div>';
+        }
+        for (const m of months) {
+            const [y, mo] = m.split('-').map(Number);
+            const label = new Date(y, mo - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+            const top = ((sd.bestSellers[m] || {})[metric] || []).slice(0, 3);
+            bs += `<div class="ve-source-card"><h4>${label}</h4>`;
+            if (top.length === 0) {
+                bs += '<div class="ve-source-stat"><span class="ve-muted">No linked sales</span></div>';
+            } else {
+                top.forEach((t, i) => {
+                    const v = metric === 'units' ? String(Math.round(t.value)) : fmt(t.value);
+                    bs += `<div class="ve-source-stat"><span${i === 2 ? ' class="ve-stat-label"' : ''}>${i + 1}. ${esc(t.name)}</span><span>${v}</span></div>`;
+                });
+            }
+            bs += '</div>';
+        }
+        document.getElementById('sdBestSellers').innerHTML = bs;
     },
 
     veRenderEventsPanel() {
@@ -13590,6 +13734,22 @@ const App = {
         // Sub-tabs
         document.querySelectorAll('.ve-subtab').forEach(btn => {
             btn.addEventListener('click', () => this.veSwitchSubtab(btn.dataset.veSubtab));
+        });
+
+        // Sales Data panel: sort headers and best-seller metric toggle
+        document.querySelectorAll('#sdMarginTable th[data-sdsort]').forEach(th => {
+            th.addEventListener('click', () => {
+                const key = th.dataset.sdsort;
+                const cur = this._sdSort || { key: 'units', dir: 'desc' };
+                this._sdSort = { key, dir: cur.key === key ? (cur.dir === 'asc' ? 'desc' : 'asc') : (key === 'name' ? 'asc' : 'desc') };
+                this.veRenderSalesData();
+            });
+        });
+        document.querySelectorAll('.sd-seg [data-sd-metric]').forEach(b => {
+            b.addEventListener('click', () => {
+                this._sdMetric = b.dataset.sdMetric;
+                this.veRenderSalesData();
+            });
         });
 
         // Events panel
