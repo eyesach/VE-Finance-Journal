@@ -13211,8 +13211,8 @@ const App = {
             body.innerHTML = `<tr><td colspan="${ncols}" style="text-align:center; padding:16px; color:var(--text-muted);">${msg}</td></tr>`;
             return;
         }
-        body.innerHTML = rows.map(r => {
-            const attrs = `data-name="${esc(r.name)}" data-price="${esc(r.price)}"`;
+        body.innerHTML = rows.map((r, i) => {
+            const attrs = `data-idx="${i}"`;
             let actions = '';
             if (!readOnly) {
                 actions = view === 'ignored'
@@ -13267,8 +13267,11 @@ const App = {
         document.getElementById('sdExBody').addEventListener('click', (e) => {
             const btn = e.target.closest('button[data-sd-action]');
             if (!btn || this.isViewOnly) return;
-            const name = btn.dataset.name;
-            const price = parseFloat(btn.dataset.price);
+            const sdd = this._salesData || { unlinked: [], ignored: [] };
+            const row = (this._sdExView === 'ignored' ? sdd.ignored : sdd.unlinked)[parseInt(btn.dataset.idx, 10)];
+            if (!row) return;
+            const name = row.name;
+            const price = row.price;
             const action = btn.dataset.sdAction;
             if (action === 'link') {
                 this.sdOpenLinkPicker(name, price);
