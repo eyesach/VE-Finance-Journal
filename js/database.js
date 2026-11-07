@@ -344,6 +344,16 @@ const Database = {
             )
         `);
 
+        this.db.run(`
+            CREATE TABLE IF NOT EXISTS ve_ignored_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ve_item_name TEXT NOT NULL,
+                ve_item_price REAL NOT NULL DEFAULT 0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(ve_item_name, ve_item_price)
+            )
+        `);
+
         // Create default "Monthly Expenses" folder
         this.db.run('INSERT OR IGNORE INTO category_folders (name, folder_type, sort_order) VALUES (?, ?, ?)', ['Monthly Expenses', 'payable', 0]);
 
@@ -727,6 +737,17 @@ const Database = {
                 ve_item_price REAL NOT NULL DEFAULT 0,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(product_id, ve_item_name, ve_item_price)
+            )
+        `);
+
+        // === Create ignored VE items table ===
+        this.db.run(`
+            CREATE TABLE IF NOT EXISTS ve_ignored_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ve_item_name TEXT NOT NULL,
+                ve_item_price REAL NOT NULL DEFAULT 0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(ve_item_name, ve_item_price)
             )
         `);
 
@@ -2875,6 +2896,50 @@ const Database = {
         const results = this.db.exec('SELECT DISTINCT ve_item_name, ve_item_price FROM product_ve_mappings');
         if (results.length === 0) return new Set();
         return new Set(results[0].values.map(r => r[0] + '|' + (r[1] || 0).toFixed(2)));
+    },
+
+    /**
+     * Add a single VE item mapping to a product without touching its other mappings.
+     * Duplicate (product, name, price) rows are ignored.
+     */
+    addProductVeMapping(productId, name, price) {
+        this.db.run(
+            'INSERT OR IGNORE INTO product_ve_mappings (product_id, ve_item_name, ve_item_price) VALUES (?, ?, ?)',
+            [productId, name, price || 0]
+        );
+        this.autoSave();
+    },
+
+    /**
+     * Get all ignored VE items, ordered by name.
+     * @returns {Array<{id:number, name:string, price:number}>}
+     */
+    getIgnoredItems() {
+        const results = this.db.exec(
+            'SELECT id, ve_item_name, ve_item_price FROM ve_ignored_items ORDER BY ve_item_name ASC, ve_item_price ASC'
+        );
+        if (!results.length) return [];
+        return results[0].values.map(r => ({ id: r[0], name: r[1], price: r[2] }));
+    },
+
+    /**
+     * Mark a VE item (name + price) as ignored. Price is stored rounded to 2dp.
+     */
+    addIgnoredItem(name, price) {
+        const p = Math.round((price || 0) * 100) / 100;
+        this.db.run('INSERT OR IGNORE INTO ve_ignored_items (ve_item_name, ve_item_price) VALUES (?, ?)', [name, p]);
+        this.autoSave();
+    },
+
+    /**
+     * Un-ignore a VE item (matches name and price rounded to 2dp).
+     */
+    removeIgnoredItem(name, price) {
+        this.db.run(
+            'DELETE FROM ve_ignored_items WHERE ve_item_name = ? AND ROUND(ve_item_price, 2) = ROUND(?, 2)',
+            [name, price || 0]
+        );
+        this.autoSave();
     },
 
     /**
