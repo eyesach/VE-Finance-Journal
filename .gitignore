@@ -4,3 +4,5 @@ src-tauri/target/
 app-icon.png
 build-tauri.bat
 *.tauri-build/
+.claude/worktrees/
+.superpowers/
