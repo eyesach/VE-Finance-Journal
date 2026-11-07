@@ -192,6 +192,102 @@ async function freshDb() {
     assertEqual(on.total, 6); assertEqual(on.orders, 1);
   });
 
+  const s5 = suite('computeSalesData');
+  const L = (o) => Object.assign({ transaction_no: 'T' + Math.random(), date: '2026-09-05', month: '2026-09', name: 'X', price: 1, quantity: 1, amount: 1, discount: 0, product_ids: [], ignored: false }, o);
+  const P = (id, name, cogs) => ({ id, name, cogs });
+  test(s5, 'getLastMonthsRange: last 3', () => {
+    assertEqual(JSON.stringify(Utils.getLastMonthsRange(3, new Date(2026, 10, 7))), JSON.stringify({ from: '2026-08-01', to: '2026-10-31' }));
+  });
+  test(s5, 'getLastMonthsRange: january rollover', () => {
+    assertEqual(JSON.stringify(Utils.getLastMonthsRange(1, new Date(2027, 0, 15))), JSON.stringify({ from: '2026-12-01', to: '2026-12-31' }));
+  });
+  test(s5, 'weighted: two products', () => {
+    const r = Utils.computeSalesData([
+      L({ product_ids: [1], quantity: 168, amount: 4032, price: 24 }),
+      L({ product_ids: [2], quantity: 121, amount: 726, price: 6 })
+    ], [P(1, 'A', 9.5), P(2, 'B', 1.2)]);
+    assertEqual(r.weighted.units, 289);
+    assertClose(r.weighted.avgPrice, 16.46, 0.01);
+    assertClose(r.weighted.avgCogs, 6.02, 0.01);
+    assertClose(r.weighted.cm, 10.44, 0.01);
+    assertEqual(r.weighted.productCount, 2);
+    assertEqual(r.byProduct[0].productId, 1);
+  });
+  test(s5, 'discount reduces revenue', () => {
+    const r = Utils.computeSalesData([L({ product_ids: [1], quantity: 2, amount: 50, discount: 5 })], [P(1, 'A', 10)]);
+    assertClose(r.byProduct[0].avgPrice, 22.5, 0.001);
+    assertClose(r.byProduct[0].margin, 12.5, 0.001);
+    assertClose(r.byProduct[0].netRevenue, 45, 0.001);
+  });
+  test(s5, 'multi-link: counted once, lowest id', () => {
+    const r = Utils.computeSalesData([L({ product_ids: [3, 2], quantity: 4, amount: 40 })],
+      [P(2, 'Sticker', 1.2), P(3, 'Sticker Rebrand', 1.2)]);
+    assertEqual(r.byProduct.length, 1);
+    assertEqual(r.byProduct[0].productId, 2);
+    assertEqual(r.byProduct[0].units, 4);
+    assertEqual(JSON.stringify(r.byProduct[0].alsoNames), JSON.stringify(['Sticker Rebrand']));
+    assertEqual(r.byProduct[0].cogsConflict, null);
+  });
+  test(s5, 'multi-link: conflicting cogs flagged', () => {
+    const r = Utils.computeSalesData([L({ product_ids: [2, 3], quantity: 4, amount: 40 })],
+      [P(2, 'Sticker', 1.2), P(3, 'Sticker Rebrand', 1.5)]);
+    assertEqual(r.byProduct[0].cogs, 1.2);
+    assertEqual(JSON.stringify(r.byProduct[0].cogsConflict), JSON.stringify([1.2, 1.5]));
+  });
+  test(s5, 'ignored wins over linked', () => {
+    const r = Utils.computeSalesData([L({ product_ids: [1], amount: 30, name: 'Z', ignored: true })], [P(1, 'A', 1)]);
+    assertEqual(r.byProduct.length, 0);
+    assertEqual(r.ignored.length, 1);
+    assertEqual(r.eligible.amount, 0);
+  });
+  test(s5, 'linkedPct', () => {
+    const r = Utils.computeSalesData([
+      L({ product_ids: [1], amount: 90 }),
+      L({ amount: 10, name: 'U' }),
+      L({ amount: 50, name: 'I', ignored: true })
+    ], [P(1, 'A', 1)]);
+    assertEqual(r.linkedPct, 90);
+    assertEqual(r.linked.amount, 90); assertEqual(r.eligible.amount, 100);
+  });
+  test(s5, 'unknown product ids treated as unlinked', () => {
+    const r = Utils.computeSalesData([L({ product_ids: [99], amount: 10, name: 'U' })], [P(1, 'A', 1)]);
+    assertEqual(r.unlinked.length, 1); assertEqual(r.weighted, null);
+  });
+  test(s5, 'empty linked set returns nulls', () => {
+    const a = Utils.computeSalesData([L({ amount: 10, name: 'U' })], []);
+    assertEqual(a.weighted, null);
+    const b = Utils.computeSalesData([L({ amount: 10, ignored: true })], []);
+    assertEqual(b.linkedPct, null);
+  });
+  test(s5, 'missing cogs flagged', () => {
+    const r = Utils.computeSalesData([L({ product_ids: [1], quantity: 2, amount: 20 })], [P(1, 'A', 0)]);
+    assertEqual(r.byProduct[0].missingCogs, true);
+    assertEqual(r.byProduct[0].units, 2);
+  });
+  test(s5, 'item groups', () => {
+    const r = Utils.computeSalesData([
+      L({ transaction_no: 'A', name: 'Mystery', price: 0, amount: 0, date: '2026-09-12' }),
+      L({ transaction_no: 'B', name: 'Mystery', price: 0, amount: 0, date: '2026-09-01' })
+    ], []);
+    const g = r.unlinked[0];
+    assertEqual(g.qty, 2); assertEqual(g.orders, 2);
+    assertEqual(g.firstDate, '2026-09-01'); assertEqual(g.lastDate, '2026-09-12');
+  });
+  test(s5, 'bestSellers top 3 per metric', () => {
+    // units: A5 B4 C3 D2 ; revenue: D200 C150 B40 A10 (differs)
+    const r = Utils.computeSalesData([
+      L({ product_ids: [1], quantity: 5, amount: 10 }),
+      L({ product_ids: [2], quantity: 4, amount: 40 }),
+      L({ product_ids: [3], quantity: 3, amount: 150 }),
+      L({ product_ids: [4], quantity: 2, amount: 200 })
+    ], [P(1, 'A', 0), P(2, 'B', 0), P(3, 'C', 0), P(4, 'D', 0)]);
+    const b = r.bestSellers['2026-09'];
+    assertEqual(b.units.length, 3); assertEqual(b.revenue.length, 3); assertEqual(b.margin.length, 3);
+    assertEqual(JSON.stringify(b.units.map(x => x.productId)), JSON.stringify([1, 2, 3]));
+    assertEqual(JSON.stringify(b.revenue.map(x => x.productId)), JSON.stringify([4, 3, 2]));
+    assertEqual(b.revenue[0].value, 200);
+  });
+
   document.getElementById('summary').textContent = `${passed}/${passed + failed} tests passed, ${failed} failed`;
 })().catch(e => { document.getElementById('summary').textContent = 'CRASH: ' + e.message; });
 </script>

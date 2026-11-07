@@ -846,6 +846,136 @@ const Utils = {
     },
 
     /**
+     * Date range covering the previous n full calendar months.
+     * @param {number} n - number of months
+     * @param {Date} today - reference date
+     * @returns {{from:string, to:string}} YYYY-MM-DD bounds
+     */
+    getLastMonthsRange(n, today) {
+        const pad = (x) => String(x).padStart(2, '0');
+        const fmt = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+        const start = new Date(today.getFullYear(), today.getMonth() - n, 1);
+        const end = new Date(today.getFullYear(), today.getMonth(), 0);
+        return { from: fmt(start), to: fmt(end) };
+    },
+
+    /**
+     * Turn filtered sales lines into weighted average price/COGS, per-product
+     * margins and mix, link coverage, unlinked/ignored item groups, and monthly best sellers.
+     * Lines: {transaction_no, date, month, name, price, quantity, amount, discount, product_ids, ignored}.
+     * A multi-linked line is attributed once, to its lowest known product id.
+     * Money is rounded to cents only at output; percentages are 0-100.
+     * @param {Array} lines
+     * @param {Array<{id:number,name:string,cogs:number}>} products
+     * @returns {Object} SalesData (see Sales Data design doc)
+     */
+    computeSalesData(lines, products) {
+        const r2 = (x) => Math.round(x * 100) / 100;
+        const prodById = new Map((products || []).map(p => [p.id, p]));
+        const byProd = new Map();      // id -> accumulator
+        const months = new Map();      // month -> Map(id -> {units, rev})
+        const unlinkedMap = new Map(), ignoredMap = new Map();
+        const linked = { amount: 0, units: 0 }, eligible = { amount: 0, units: 0 };
+
+        const addGroup = (map, l) => {
+            const key = l.name + '|' + Number(l.price).toFixed(2);
+            let g = map.get(key);
+            if (!g) {
+                g = { name: l.name, price: l.price, qty: 0, _orders: new Set(), firstDate: l.date, lastDate: l.date };
+                map.set(key, g);
+            }
+            g.qty += l.quantity;
+            g._orders.add(l.transaction_no);
+            if (l.date < g.firstDate) g.firstDate = l.date;
+            if (l.date > g.lastDate) g.lastDate = l.date;
+        };
+        const finishGroups = (map) => [...map.values()]
+            .map(g => ({ name: g.name, price: g.price, qty: g.qty, orders: g._orders.size, firstDate: g.firstDate, lastDate: g.lastDate }))
+            .sort((a, b) => b.qty - a.qty);
+
+        (lines || []).forEach(l => {
+            if (l.ignored) { addGroup(ignoredMap, l); return; }
+            eligible.amount += l.amount;
+            eligible.units += l.quantity;
+            const known = (l.product_ids || []).filter(id => prodById.has(id)).sort((a, b) => a - b);
+            if (!known.length) { addGroup(unlinkedMap, l); return; }
+            linked.amount += l.amount;
+            linked.units += l.quantity;
+            const primary = known[0];
+            const rev = l.amount - (l.discount || 0);
+            let acc = byProd.get(primary);
+            if (!acc) {
+                acc = { units: 0, rev: 0, also: new Set(), cogsSet: new Set() };
+                byProd.set(primary, acc);
+            }
+            acc.units += l.quantity;
+            acc.rev += rev;
+            known.forEach(id => {
+                acc.cogsSet.add(Number(prodById.get(id).cogs) || 0);
+                if (id !== primary) acc.also.add(prodById.get(id).name);
+            });
+            if (!months.has(l.month)) months.set(l.month, new Map());
+            const mm = months.get(l.month);
+            const ma = mm.get(primary) || { units: 0, rev: 0 };
+            ma.units += l.quantity;
+            ma.rev += rev;
+            mm.set(primary, ma);
+        });
+
+        let totalUnits = 0, totalRev = 0, totalCogs = 0;
+        const rows = [...byProd.entries()].map(([id, a]) => {
+            const p = prodById.get(id);
+            const cogs = Number(p.cogs) || 0;
+            const avgPrice = a.units ? a.rev / a.units : 0;
+            const margin = avgPrice - cogs;
+            totalUnits += a.units;
+            totalRev += a.rev;
+            totalCogs += a.units * cogs;
+            const cogsVals = [...a.cogsSet].sort((x, y) => x - y);
+            return {
+                productId: id, name: p.name, alsoNames: [...a.also],
+                units: a.units, netRevenue: r2(a.rev), avgPrice: r2(avgPrice), cogs,
+                margin: r2(margin), marginPct: avgPrice ? margin / avgPrice * 100 : 0,
+                profit: r2(a.units * margin), mix: 0, missingCogs: cogs === 0,
+                cogsConflict: cogsVals.length > 1 ? cogsVals : null
+            };
+        });
+        rows.forEach(row => { row.mix = totalUnits ? row.units / totalUnits * 100 : 0; });
+        rows.sort((a, b) => b.units - a.units);
+
+        let weighted = null;
+        if (totalUnits > 0) {
+            const avgPrice = totalRev / totalUnits;
+            const avgCogs = totalCogs / totalUnits;
+            const cm = avgPrice - avgCogs;
+            weighted = {
+                units: totalUnits, avgPrice: r2(avgPrice), avgCogs: r2(avgCogs), cm: r2(cm),
+                cmPct: avgPrice ? cm / avgPrice * 100 : 0, productCount: rows.length
+            };
+        }
+
+        const top3 = (arr, key) => arr.slice().sort((a, b) => b[key] - a[key] || a.name.localeCompare(b.name)).slice(0, 3);
+        const bestSellers = {};
+        [...months.keys()].sort().forEach(m => {
+            const items = [...months.get(m).entries()].map(([id, a]) => {
+                const p = prodById.get(id);
+                return { productId: id, name: p.name, units: a.units, revenue: a.rev, margin: a.rev - a.units * (Number(p.cogs) || 0) };
+            });
+            const rank = (key, round) => top3(items, key).map(i => ({ productId: i.productId, name: i.name, value: round ? r2(i[key]) : i[key] }));
+            bestSellers[m] = { units: rank('units', false), revenue: rank('revenue', true), margin: rank('margin', true) };
+        });
+
+        return {
+            weighted, byProduct: rows,
+            linked: { amount: r2(linked.amount), units: linked.units },
+            eligible: { amount: r2(eligible.amount), units: eligible.units },
+            linkedPct: eligible.amount > 0 ? linked.amount / eligible.amount * 100 : null,
+            unlinked: finishGroups(unlinkedMap), ignored: finishGroups(ignoredMap),
+            bestSellers
+        };
+    },
+
+    /**
      * Evaluate a math expression string with standard operator precedence.
      * Supports: +, -, *, ×, /, ÷, parentheses, unary minus, decimals.
      * Returns { value: number, error: string|null }
