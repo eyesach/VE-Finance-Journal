@@ -221,6 +221,9 @@ const App = {
             // Load and render data
             this.refreshAll();
 
+            // Keep the journal and derived entries live across tabs
+            this._installDataChangeHook();
+
             // Set up event listeners
             this.setupEventListeners();
             this.setupVESalesListeners();
@@ -250,13 +253,7 @@ const App = {
      * Refresh all UI components
      */
     refreshAll() {
-        // Skip write-heavy sync operations in view-only mode — they can throw
-        // when the database snapshot is missing expected state
-        if (!this.isViewOnly) {
-            this._syncAllLoanBudgetExpenses();
-            this.syncAllBudgetJournalEntries();
-            this.syncAllB2BContractEntries();
-        }
+        this.syncDerivedEntries();
 
         // Wrap each refresh in try-catch so one failure doesn't block the rest
         const refreshCalls = [
@@ -278,6 +275,82 @@ const App = {
         ];
         for (const fn of refreshCalls) {
             try { fn(); } catch (e) { console.error('refreshAll: tab refresh failed:', e); }
+        }
+    },
+
+    /**
+     * Regenerate journal entries that are derived from other tabs
+     * (loan -> budget expense, budget -> journal, B2B contracts -> journal).
+     * Idempotent. Skipped in view-only mode — the writes can throw when the
+     * database snapshot is missing expected state.
+     */
+    syncDerivedEntries() {
+        if (this.isViewOnly) return;
+        // The sync functions call autoSave themselves; don't let that re-trigger
+        // the data-change hook (would loop forever).
+        this._suppressDataChange = true;
+        try {
+            const syncs = [
+                () => this._syncAllLoanBudgetExpenses(),
+                () => this.syncAllBudgetJournalEntries(),
+                () => this.syncAllB2BContractEntries(),
+            ];
+            for (const fn of syncs) {
+                try { fn(); } catch (e) { console.error('syncDerivedEntries failed:', e); }
+            }
+        } finally {
+            this._suppressDataChange = false;
+        }
+    },
+
+    /**
+     * Every DB mutation calls Database.autoSave(). Hook it so that any change
+     * made on any tab (budget, assets, loans, equity, B2B…) re-syncs the derived
+     * journal entries and refreshes views that live outside the active tab,
+     * without needing a page reload.
+     */
+    _installDataChangeHook() {
+        if (this._dataChangeHookInstalled || this.isViewOnly) return;
+        this._dataChangeHookInstalled = true;
+        const app = this;
+        const originalAutoSave = Database.autoSave;
+        Database.autoSave = function(...args) {
+            if (!app._suppressDataChange) app._scheduleDataChanged();
+            return originalAutoSave.apply(this, args);
+        };
+    },
+
+    _scheduleDataChanged() {
+        clearTimeout(this._dataChangedTimer);
+        // Debounce so a burst of writes (bulk ops, imports) triggers one resync
+        this._dataChangedTimer = setTimeout(() => this._onDataChanged(), 150);
+    },
+
+    _onDataChanged() {
+        this._dataChangedTimer = null;
+        this.syncDerivedEntries();
+        try { this.refreshSummary(); } catch (e) { console.error('refreshSummary failed:', e); }
+
+        // If the journal is on screen, re-render it — unless the user is mid-edit
+        // there (inline input focused or bulk-selecting), in which case it will
+        // refresh on the next tab switch instead.
+        const activeTab = document.querySelector('.main-tab.active')?.dataset.tab || 'journal';
+        if (activeTab === 'journal') {
+            const focused = document.activeElement;
+            const journalTab = document.getElementById('journalTab');
+            const editingInJournal = focused && journalTab && journalTab.contains(focused)
+                && /^(INPUT|SELECT|TEXTAREA)$/.test(focused.tagName);
+            if (!editingInJournal && !this.bulkSelectMode) this._refreshJournalView();
+        }
+    },
+
+    _refreshJournalView() {
+        try {
+            this.refreshCategories();
+            this.refreshTransactions();
+            this.refreshSummary();
+        } catch (e) {
+            console.error('Journal refresh failed:', e);
         }
     },
 
@@ -1173,6 +1246,15 @@ const App = {
      * @param {string} tab - 'journal' | 'cashflow' | 'pnl' | 'balancesheet' | 'assets' | 'loan' | 'budget' | 'breakeven'
      */
     switchMainTab(tab) {
+        // Flush any pending derived-entry sync so the tab we're about to render
+        // sees edits made moments ago on another tab
+        if (this._dataChangedTimer) {
+            clearTimeout(this._dataChangedTimer);
+            this._dataChangedTimer = null;
+            this.syncDerivedEntries();
+            try { this.refreshSummary(); } catch (e) { console.error('refreshSummary failed:', e); }
+        }
+
         // Close sidebar on mobile after selecting a tab
         if (window.innerWidth <= 1024) {
             document.querySelector('.app-container').classList.remove('sidebar-open');
@@ -1249,6 +1331,8 @@ const App = {
             this.renderChangelog();
         } else {
             document.getElementById('journalTab').style.display = 'block';
+            // Journal may have changed from another tab (budget, assets, loans…)
+            this._refreshJournalView();
         }
 
         // Show/hide analyze chart panels based on mode

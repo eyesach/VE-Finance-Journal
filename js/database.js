@@ -362,6 +362,11 @@ const Database = {
             stmt.run([cat]);
         });
         stmt.free();
+
+        // Bring the fresh schema up to date with every later migration
+        // (columns/tables added after the base CREATE TABLEs). Without this,
+        // a brand-new database is missing them until the page is reloaded.
+        this.migrateSchema();
     },
 
     /**
