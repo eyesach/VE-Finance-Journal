@@ -224,6 +224,41 @@ const LEASE = { name: 'Lease', amount: 2000, paid_date: '2026-03-01', expected_r
     assertEqual(txOf('deposit_payment', id).length, 0);
   });
 
+  // ===================== Task 2 =====================
+  const s2 = suite('Deposit classification');
+  const DEP = { paid_date: '2026-03-01', expected_refund_date: '2028-02-28', refunded_date: null };
+  const cls = (d, m) => JSON.stringify(Utils.classifyDeposit(d, m));
+  const J = o => JSON.stringify(o);
+
+  test(s2, 'before paid month: not held', () => {
+    assertEqual(cls(DEP, '2026-02'), J({ held: false, bucket: null, overdue: false }));
+  });
+  test(s2, 'paid month, refund >12 months out: held long-term', () => {
+    assertEqual(cls(DEP, '2026-03'), J({ held: true, bucket: 'longterm', overdue: false }));
+  });
+  test(s2, 'exactly 12 months out: current', () => {
+    assertEqual(cls(DEP, '2027-02'), J({ held: true, bucket: 'current', overdue: false }));
+  });
+  test(s2, '13 months out: long-term', () => {
+    assertEqual(cls(DEP, '2027-01'), J({ held: true, bucket: 'longterm', overdue: false }));
+  });
+  test(s2, 'expected date passed, not refunded: current and overdue', () => {
+    assertEqual(cls(DEP, '2028-05'), J({ held: true, bucket: 'current', overdue: true }));
+  });
+  test(s2, 'refunded: held through month before refund, gone in refund month', () => {
+    const r = { ...DEP, refunded_date: '2028-03-10' };
+    assertEqual(Utils.classifyDeposit(r, '2028-02').held, true);
+    assertEqual(cls(r, '2028-03'), J({ held: false, bucket: null, overdue: false }));
+  });
+  test(s2, 'no expected refund date: long-term', () => {
+    assertEqual(cls({ ...DEP, expected_refund_date: null }, '2026-03'), J({ held: true, bucket: 'longterm', overdue: false }));
+  });
+  test(s2, 'year rollover: Nov 2026 + 12 = Nov 2027 boundary', () => {
+    const d = { ...DEP, expected_refund_date: '2027-11-30' };
+    assertEqual(Utils.classifyDeposit(d, '2026-11').bucket, 'current');
+    assertEqual(Utils.classifyDeposit(d, '2026-10').bucket, 'longterm');
+  });
+
   // @@NEXT_SUITE@@
 
   document.getElementById('summary').textContent = `${passed}/${passed + failed} tests passed, ${failed} failed`;

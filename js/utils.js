@@ -612,6 +612,32 @@ const Utils = {
     },
 
     /**
+     * Classify a refundable deposit for a Balance Sheet month.
+     * Held from the paid month until (not including) the refund month.
+     * Current if the expected refund month is within 12 months of asOfMonth
+     * (or already past while still held); otherwise long-term.
+     * @param {Object} deposit - { paid_date, expected_refund_date, refunded_date }
+     * @param {string} asOfMonth - YYYY-MM
+     * @returns {{held: boolean, bucket: 'current'|'longterm'|null, overdue: boolean}}
+     */
+    classifyDeposit(deposit, asOfMonth) {
+        const m = (d) => (d ? String(d).substring(0, 7) : null);
+        const paid = m(deposit.paid_date);
+        const refunded = m(deposit.refunded_date);
+        const held = !!paid && paid <= asOfMonth && (!refunded || refunded > asOfMonth);
+        if (!held) return { held: false, bucket: null, overdue: false };
+
+        const expected = m(deposit.expected_refund_date);
+        // asOfMonth + 12 months = same month, next year
+        const horizon = (parseInt(asOfMonth.substring(0, 4), 10) + 1) + asOfMonth.substring(4);
+        return {
+            held: true,
+            bucket: expected && expected <= horizon ? 'current' : 'longterm',
+            overdue: !!expected && expected < asOfMonth
+        };
+    },
+
+    /**
      * Compute a depreciation schedule for a fixed asset.
      * Returns { [YYYY-MM]: monthlyDeprAmount } for each month in the asset's life.
      * @param {Object} asset - { purchase_cost, salvage_value, useful_life_months, purchase_date, dep_start_date, depreciation_method, is_depreciable }
