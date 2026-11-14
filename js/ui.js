@@ -1579,7 +1579,17 @@ const UI = {
             });
         }
 
-        const totalCurrentAssets = data.cash + data.ar;
+        const depositRows = (list) => (list || []).map(d => {
+            const overdue = d.overdue ? ' <span class="bs-projected-label">Overdue</span>' : '';
+            return `<tr class="bs-detail-indent"><td>${Utils.escapeHtml(d.name)}${overdue}</td><td>${fmtAmt(d.amount)}</td></tr>`;
+        }).join('');
+
+        if (data.currentDeposits > 0) {
+            html += `<tr class="bs-indent"><td>Security Deposits</td><td class="bs-value" data-bs-key="currentDeposits">${fmtAmt(data.currentDeposits)}</td></tr>`;
+            html += depositRows(data.currentDepositDetails);
+        }
+
+        const totalCurrentAssets = data.totalCurrentAssets != null ? data.totalCurrentAssets : data.cash + data.ar;
         html += `<tr class="bs-subtotal"><td>Total Current Assets</td><td class="bs-value" data-bs-key="totalCurrentAssets">${fmtAmt(totalCurrentAssets)}</td></tr>`;
 
         // Fixed Assets
@@ -1595,6 +1605,14 @@ const UI = {
         html += `<tr class="bs-indent"><td>Total Fixed Assets (Cost)</td><td>${fmtAmt(data.totalFixedAssetCost)}</td></tr>`;
         html += `<tr class="bs-indent"><td>Less: Accumulated Depreciation</td><td>(${fmtAmt(data.totalAccumDepr)})</td></tr>`;
         html += `<tr class="bs-subtotal"><td>Net Fixed Assets</td><td class="bs-value" data-bs-key="netFixedAssets">${fmtAmt(data.netFixedAssets)}</td></tr>`;
+
+        // Other Assets (non-current deposits)
+        if (data.longTermDeposits > 0) {
+            html += '<tr class="bs-subsection"><td colspan="2">Other Assets</td></tr>';
+            html += `<tr class="bs-indent"><td>Security Deposits</td><td>${fmtAmt(data.longTermDeposits)}</td></tr>`;
+            html += depositRows(data.longTermDepositDetails);
+            html += `<tr class="bs-subtotal"><td>Total Other Assets</td><td class="bs-value" data-bs-key="totalOtherAssets">${fmtAmt(data.totalOtherAssets)}</td></tr>`;
+        }
 
         // Total Assets
         html += `<tr class="bs-total"><td>Total Assets</td><td class="bs-value" data-bs-key="totalAssets">${fmtAmt(data.totalAssets)}</td></tr>`;
@@ -1678,7 +1696,7 @@ const UI = {
         const totalEquity = data.totalEquity || 0;
         const totalAssets = data.totalAssets || 0;
         const totalLiabilities = data.totalLiabilities || 0;
-        const currentAssets = (data.cash || 0) + (data.ar || 0);
+        const currentAssets = data.totalCurrentAssets != null ? data.totalCurrentAssets : (data.cash || 0) + (data.ar || 0);
         const currentLiabilities = (data.ap || 0) + (data.salesTaxPayable || 0);
 
         const fmtPct = (num, den) => {

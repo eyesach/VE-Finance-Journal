@@ -1871,11 +1871,10 @@ const App = {
         // Working Capital trend (current assets - current liabilities per month)
         const monthlyWorkingCap = [];
         for (const month of months) {
-            const cashAsOf = Database.getCashAsOf(month);
-            const arAsOf = Database.getAccountsReceivableAsOf ? Database.getAccountsReceivableAsOf(month) : 0;
+            const caAsOf = Database.getAssetTotalsAsOf(month).totalCurrentAssets;
             const apAsOf = Database.getAccountsPayableAsOf ? Database.getAccountsPayableAsOf(month) : 0;
             const stpAsOf = Database.getSalesTaxPayableAsOf ? Database.getSalesTaxPayableAsOf(month) : 0;
-            monthlyWorkingCap.push((cashAsOf + arAsOf) - (apAsOf + stpAsOf));
+            monthlyWorkingCap.push(caAsOf - (apAsOf + stpAsOf));
         }
         const currentWC = monthlyWorkingCap[monthlyWorkingCap.length - 1] || 0;
         const prevWC = monthlyWorkingCap.length > 1 ? monthlyWorkingCap[monthlyWorkingCap.length - 2] : 0;
@@ -2530,11 +2529,9 @@ const App = {
 
         let prevWC = null;
         for (const month of months) {
-            const cash = Database.getCashAsOf(month);
-            const ar = Database.getAccountsReceivableAsOf ? Database.getAccountsReceivableAsOf(month) : 0;
+            const { cash, ar, totalCurrentAssets: ca } = Database.getAssetTotalsAsOf(month);
             const ap = Database.getAccountsPayableAsOf ? Database.getAccountsPayableAsOf(month) : 0;
             const stp = Database.getSalesTaxPayableAsOf ? Database.getSalesTaxPayableAsOf(month) : 0;
-            const ca = cash + ar;
             const cl = ap + stp;
             const wc = ca - cl;
             const trend = prevWC !== null && prevWC !== 0 ? ((wc - prevWC) / Math.abs(prevWC) * 100).toFixed(1) : null;
@@ -3286,8 +3283,10 @@ const App = {
             asOfMonth = tlMonths.length > 0 ? tlMonths[tlMonths.length - 1] : Utils.getCurrentMonth();
         }
 
-        const cash = Database.getCashAsOf(asOfMonth);
-        const receivables = Database.getAccountsReceivableAsOf(asOfMonth);
+        const assetTotals = Database.getAssetTotalsAsOf(asOfMonth);
+        const { cash, netFixedAssets, totalAssets, totalCurrentAssets } = assetTotals;
+        const receivables = assetTotals.ar;
+        const deposits = assetTotals.currentDeposits + assetTotals.longTermDeposits;
         const payables = Database.getAccountsPayableAsOf(asOfMonth);
         const salesTaxPayable = Database.getSalesTaxPayableAsOf(asOfMonth);
 
@@ -3313,17 +3312,6 @@ const App = {
             totalLoanBalance = round2(totalLoanBalance + balance);
         });
 
-        // Fixed assets
-        const fixedAssets = Database.getFixedAssets();
-        let netFixedAssets = 0;
-        fixedAssets.forEach(asset => {
-            const deprSchedule = Utils.computeDepreciationSchedule(asset);
-            let accumDepr = 0;
-            Object.entries(deprSchedule).forEach(([m, amt]) => { if (m <= asOfMonth) accumDepr += amt; });
-            netFixedAssets = round2(netFixedAssets + asset.purchase_cost - accumDepr);
-        });
-
-        const totalAssets = round2(cash + receivables + netFixedAssets);
         const totalLiabilities = round2(payables + salesTaxPayable + totalLoanBalance);
 
         // Proper equity from equity config + retained earnings
@@ -3346,6 +3334,7 @@ const App = {
                     { label: 'Cash', data: [cash, 0], backgroundColor: 'rgba(16,185,129,0.7)', borderRadius: 4 },
                     { label: 'Receivables', data: [receivables, 0], backgroundColor: 'rgba(59,130,246,0.7)', borderRadius: 4 },
                     { label: 'Fixed Assets', data: [netFixedAssets, 0], backgroundColor: 'rgba(251,191,36,0.7)', borderRadius: 4 },
+                    { label: 'Deposits', data: [deposits, 0], backgroundColor: 'rgba(20,184,166,0.7)', borderRadius: 4 },
                     { label: 'Liabilities', data: [0, totalLiabilities], backgroundColor: 'rgba(239,68,68,0.7)', borderRadius: 4 },
                     { label: 'Equity', data: [0, Math.max(0, equity)], backgroundColor: 'rgba(168,85,247,0.7)', borderRadius: 4 }
                 ]
@@ -3361,7 +3350,7 @@ const App = {
         // Render gauges
         const gaugesEl = document.getElementById('analyzeGauges');
         if (gaugesEl) {
-            const currentAssets = round2(cash + receivables);
+            const currentAssets = totalCurrentAssets;
             const currentLiabilities = round2(payables + salesTaxPayable);
             const currentRatio = currentLiabilities > 0 ? (currentAssets / currentLiabilities).toFixed(2) : 'N/A';
             const debtToEquity = equity > 0 ? (totalLiabilities / equity).toFixed(2) : 'N/A';
@@ -7585,36 +7574,15 @@ const App = {
         const taxMode = Database.getPLTaxMode();
 
         // Gather all balance sheet data
-        const cash = Database.getCashAsOf(asOfMonth);
-        const ar = Database.getAccountsReceivableAsOf(asOfMonth);
         const ap = Database.getAccountsPayableAsOf(asOfMonth);
         const salesTaxPayable = Database.getSalesTaxPayableAsOf(asOfMonth);
 
-        // Fixed assets and depreciation (using Utils.computeDepreciationSchedule)
-        const fixedAssets = Database.getFixedAssets();
+        // All asset figures (cash, AR, deposits, fixed assets) from the shared calculation
+        const assetTotals = Database.getAssetTotalsAsOf(asOfMonth);
+        const { cash, ar, totalFixedAssetCost, totalAccumDepr, netFixedAssets, totalAssets } = assetTotals;
+        const assetDetails = assetTotals.fixedAssetDetails;
 
         const round2 = (v) => Math.round(v * 100) / 100;
-        let totalFixedAssetCost = 0;
-        let totalAccumDepr = 0;
-        const assetDetails = fixedAssets.map(asset => {
-            const deprSchedule = Utils.computeDepreciationSchedule(asset);
-            let accumDepr = 0;
-            Object.entries(deprSchedule).forEach(([m, amt]) => {
-                if (m <= asOfMonth) accumDepr = round2(accumDepr + amt);
-            });
-
-            totalFixedAssetCost = round2(totalFixedAssetCost + asset.purchase_cost);
-            totalAccumDepr = round2(totalAccumDepr + accumDepr);
-
-            return {
-                ...asset,
-                accum_depreciation: accumDepr,
-                net_book_value: round2(asset.purchase_cost - accumDepr)
-            };
-        });
-
-        const netFixedAssets = round2(totalFixedAssetCost - totalAccumDepr);
-        const totalAssets = round2(cash + ar + netFixedAssets);
 
         // Multi-loan balances
         const loans = Database.getLoans();
@@ -7681,6 +7649,12 @@ const App = {
             asOfMonth,
             cash, ar, arByCategory,
             assetDetails, totalFixedAssetCost, totalAccumDepr, netFixedAssets,
+            currentDeposits: assetTotals.currentDeposits,
+            currentDepositDetails: assetTotals.currentDepositDetails,
+            longTermDeposits: assetTotals.longTermDeposits,
+            longTermDepositDetails: assetTotals.longTermDepositDetails,
+            totalCurrentAssets: assetTotals.totalCurrentAssets,
+            totalOtherAssets: assetTotals.totalOtherAssets,
             totalAssets,
             ap, apByCategory, salesTaxPayable,
             loanDetails, totalLoanBalance,
