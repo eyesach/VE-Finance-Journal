@@ -3742,6 +3742,8 @@ const Database = {
             case 'assets':
                 this.db.run("DELETE FROM transactions WHERE source_type = 'asset_purchase'");
                 this.db.run('DELETE FROM balance_sheet_assets');
+                this.db.run("DELETE FROM transactions WHERE source_type IN ('deposit_payment', 'deposit_refund', 'deposit_withheld')");
+                this.db.run('DELETE FROM deposits');
                 break;
             case 'loan':
                 this.db.run("DELETE FROM transactions WHERE source_type IN ('loan_receivable', 'loan_payment')");

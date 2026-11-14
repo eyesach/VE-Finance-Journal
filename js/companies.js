@@ -265,6 +265,24 @@ const CompanyManager = {
                         copied++;
                     }
                 }
+
+                // Deposits (journal entries are not copied, same as fixed assets)
+                Database.db.run('DELETE FROM deposits');
+                let depRows = [];
+                try {
+                    depRows = tempDb.exec(
+                        'SELECT name, amount, paid_date, expected_refund_date, refunded_date, refunded_amount, notes FROM deposits'
+                    );
+                } catch (e) { /* source company predates the deposits table */ }
+                if (depRows.length) {
+                    for (const row of depRows[0].values) {
+                        Database.db.run(
+                            'INSERT INTO deposits (name, amount, paid_date, expected_refund_date, refunded_date, refunded_amount, notes) VALUES (?,?,?,?,?,?,?)',
+                            row
+                        );
+                        copied++;
+                    }
+                }
             }
         } finally {
             tempDb.close();

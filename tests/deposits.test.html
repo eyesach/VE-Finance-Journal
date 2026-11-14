@@ -353,6 +353,20 @@ const LEASE = { name: 'Lease', amount: 2000, paid_date: '2026-03-01', expected_r
     assertEqual(T('2028-05').currentDepositDetails[0].overdue, true);
   });
 
+  // ===================== Task 6 =====================
+  const s6 = suite('Housekeeping');
+  test(s6, "resetTabData('assets') clears deposits and their entries", () => {
+    reset();
+    const id = Database.addDeposit({ ...LEASE });
+    Database.markDepositRefunded(id, { refund_date: '2027-06-15', refunded_amount: 1700 });
+    const other = Database.addCategory('Rent', false, null, 'payable');
+    Database.addTransaction({ entry_date: '2026-01-01', category_id: other, amount: 50, transaction_type: 'payable', status: 'paid', month_due: '2026-01', month_paid: '2026-01' });
+    Database.resetTabData('assets');
+    assertEqual(Database.getDeposits().length, 0);
+    assertEqual(rows("SELECT * FROM transactions WHERE source_type LIKE 'deposit_%'").length, 0);
+    assertEqual(rows('SELECT * FROM transactions').length, 1, 'unrelated entry kept');
+  });
+
   // @@NEXT_SUITE@@
 
   document.getElementById('summary').textContent = `${passed}/${passed + failed} tests passed, ${failed} failed`;

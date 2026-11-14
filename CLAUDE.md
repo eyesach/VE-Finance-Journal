@@ -63,7 +63,8 @@ Vanilla HTML/CSS/JS accounting app with SQLite (sql.js) in-browser database, mul
 - **HTML**: `index.html:662-705` balancesheetTab, balanceSheetContent, bsRatiosSection
 - **Logic**: `app.js:4954-5200` refreshBalanceSheet
 - **DB**: `database.js:2974-3403` getCashAsOf, getARByCategory, getAPByCategory, getRetainedEarningsAsOf, getPLTotalsThrough
-- **UI render**: `ui.js:1443-1694` renderBalanceSheet, renderFinancialRatios (includes Cash Ratio)
+- **Asset totals (single source)**: `database.js:~2655` getAssetTotalsAsOf(month) — cash, AR, current/long-term deposits, date-aware fixed assets (only those purchased by the month), totalCurrentAssets, totalOtherAssets, totalAssets. Used by refreshBalanceSheet, Analyze BS chart/gauges, working-capital KPI + detail. Don't re-sum assets elsewhere.
+- **UI render**: `ui.js:1443-1694` renderBalanceSheet (Current Assets incl. current deposits; Other Assets section for long-term deposits), renderFinancialRatios (includes Cash Ratio)
 
 ### Fixed Assets & Depreciation
 - **HTML**: `index.html:708-736` assetsTab; `index.html:1805-1876` fixedAssetModal, deleteAssetModal
@@ -71,6 +72,15 @@ Vanilla HTML/CSS/JS accounting app with SQLite (sql.js) in-browser database, mul
 - **DB**: `database.js:1898-2016` getFixedAssets, addFixedAsset, updateFixedAsset, deleteFixedAsset, getAssetDepreciationByMonth
 - **UI render**: `ui.js:1686-1784` renderFixedAssetsTab
 - **Depreciation math**: `utils.js:~600+` computeDepreciationSchedule
+
+### Deposits & Other Assets (refundable security deposits)
+- **HTML**: `index.html:~791` `.deposits-section` on assetsTab (depositsSummaryCards, depositsListPanel); `index.html:~2169-2255` depositModal, depositRefundModal, deleteDepositModal
+- **Logic**: `app.js:~8043-8205` _runDepositAction (undo/redo via snapshotDeposit/restoreDeposit), openDepositModal, handleSaveDeposit, openDepositRefundModal, handleSaveDepositRefund, handleUndoDepositRefund, handleDeleteDeposit, confirmDeleteDeposit; listeners `app.js:~5090`
+- **DB**: `database.js:~2421-2650` getDeposits, addDeposit, updateDeposit (amount/paid date locked while refunded), deleteDeposit, markDepositRefunded, undoDepositRefund, snapshotDeposit, restoreDeposit, getOrCreateSecurityDepositsCategory (hidden from P&L), getOrCreateDepositForfeituresCategory; table `deposits`
+- **Journal entries**: source_type `deposit_payment` (paid payable), `deposit_refund` (received receivable, full amount), `deposit_withheld` (paid expense for the kept portion)
+- **UI render**: `ui.js:~1908` renderDepositsSection
+- **Math**: `utils.js:~623` classifyDeposit(deposit, month) → {held, bucket: current|longterm, overdue}; current = expected refund within 12 months
+- **Tests**: `tests/deposits.test.html`
 
 ### Equity (Stockholders' Equity)
 - **HTML**: `index.html:727-735` equityDisplayPanel; `index.html:1879-1935` equityModal
@@ -224,8 +234,8 @@ Vanilla HTML/CSS/JS accounting app with SQLite (sql.js) in-browser database, mul
 - `768px`: Stack layout, smaller fonts (`styles.css:3008-3052`)
 - `480px`: Mobile-optimized, touch targets (`styles.css:3054-3077`)
 
-## Database Schema (19 tables)
-Defined in `database.js:70-337`. Key tables: `transactions`, `categories`, `category_folders`, `balance_sheet_assets`, `loans`, `budget_expenses`, `budget_groups`, `products`, `b2b_contracts`, `ve_sales`, `ve_sale_items`, `ve_events`, `product_ve_mappings`, `pl_overrides`, `cashflow_overrides`, `app_meta`, `loan_skipped_payments`, `loan_payment_overrides`, `ve_ignored_items`. Migrations: `database.js:342-773`.
+## Database Schema (20 tables)
+Defined in `database.js:70-337`. Key tables: `transactions`, `categories`, `category_folders`, `balance_sheet_assets`, `loans`, `budget_expenses`, `budget_groups`, `products`, `b2b_contracts`, `ve_sales`, `ve_sale_items`, `ve_events`, `product_ve_mappings`, `pl_overrides`, `cashflow_overrides`, `app_meta`, `loan_skipped_payments`, `loan_payment_overrides`, `ve_ignored_items`, `deposits`. Migrations: `database.js:342-773`.
 
 ## Key Utilities (utils.js)
 - Formatting: `formatCurrency`, `formatDate`, `formatMonthDisplay` (lines 11-119)
