@@ -14073,8 +14073,12 @@ const App = {
 
         // Clear data
         document.getElementById('veClearBtn').addEventListener('click', () => {
-            if (!confirm('Clear all VE Sales data? This cannot be undone.')) return;
-            Database.clearVESales();
+            const nManual = Database.getManualSaleCount();
+            const msg = nManual > 0
+                ? `Clear all VE Sales data, including ${nManual} manual sale${nManual !== 1 ? 's' : ''}? This cannot be undone.`
+                : 'Clear all VE Sales data? This cannot be undone.';
+            if (!confirm(msg)) return;
+            Database.clearVESales(null, { includeManual: true });
             Database.setVEImportMeta(null);
             this.refreshVESales();
             UI.showNotification('VE Sales data cleared', 'success');

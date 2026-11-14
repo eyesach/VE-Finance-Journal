@@ -761,6 +761,13 @@ const Database = {
             this.db.run('ALTER TABLE ve_sale_items ADD COLUMN source TEXT');
         }
 
+        // Sales typed in by hand (no export from that POS). Imports never delete these.
+        try {
+            this.db.exec('SELECT is_manual FROM ve_sales LIMIT 1');
+        } catch (e) {
+            this.db.run('ALTER TABLE ve_sales ADD COLUMN is_manual INTEGER DEFAULT 0');
+        }
+
         // === Create products table if missing ===
         this.db.run(`
             CREATE TABLE IF NOT EXISTS products (
@@ -4381,23 +4388,40 @@ const Database = {
 
     // ==================== VE SALES OPERATIONS ====================
 
-    clearVESales(source) {
+    /**
+     * Delete imported VE sales (all, or one source) before a re-import.
+     * Manual sales (is_manual = 1) and their items are kept unless
+     * includeManual is set — only "Clear All Data" passes that.
+     */
+    clearVESales(source = null, { includeManual = false } = {}) {
+        const keepManualItems = includeManual ? '' : `
+            AND NOT EXISTS (SELECT 1 FROM ve_sales m
+                            WHERE m.is_manual = 1
+                              AND m.transaction_no = ve_sale_items.transaction_no
+                              AND m.source = ve_sale_items.source)`;
+        const keepManualSales = includeManual ? '' : ' AND COALESCE(is_manual, 0) = 0';
         if (source) {
             // Items tagged with this source, plus legacy untagged items whose
             // transaction number belongs only to this source.
             this.db.run(`
                 DELETE FROM ve_sale_items
-                WHERE source = ?
+                WHERE (source = ?
                    OR (source IS NULL
                        AND transaction_no IN (SELECT transaction_no FROM ve_sales WHERE source = ?)
-                       AND transaction_no NOT IN (SELECT transaction_no FROM ve_sales WHERE source <> ?))
+                       AND transaction_no NOT IN (SELECT transaction_no FROM ve_sales WHERE source <> ?)))
+                ${keepManualItems}
             `, [source, source, source]);
-            this.db.run('DELETE FROM ve_sales WHERE source = ?', [source]);
+            this.db.run('DELETE FROM ve_sales WHERE source = ?' + keepManualSales, [source]);
         } else {
-            this.db.run('DELETE FROM ve_sale_items');
-            this.db.run('DELETE FROM ve_sales');
+            this.db.run('DELETE FROM ve_sale_items WHERE 1=1' + keepManualItems);
+            this.db.run('DELETE FROM ve_sales WHERE 1=1' + keepManualSales);
         }
         this.autoSave();
+    },
+
+    getManualSaleCount() {
+        const r = this.db.exec('SELECT COUNT(*) FROM ve_sales WHERE is_manual = 1');
+        return r.length ? r[0].values[0][0] : 0;
     },
 
     upsertVESales(salesArray) {
