@@ -327,6 +327,28 @@ function seedImportProtection(d) {
     assertEqual(Utils.veSaleItemsChanged(a, [a[0], { ...a[1], taxable: true }], 7.25, 7.25), true);
   });
 
+  // ============== Sort by entry type ==============
+  const sS = suite('Sort by manual / imported');
+  const salesToSort = () => [
+    { transaction_no: 'T1', date: '2026-11-05', total: 10, is_manual: 0 },
+    { transaction_no: 'MAN-0001', date: '2026-11-04', total: 20, is_manual: 1 },
+    { transaction_no: 'T2', date: '2026-11-07', total: 30, is_manual: 0 },
+    { transaction_no: 'MAN-0002', date: '2026-11-06', total: 40, is_manual: 1 },
+  ];
+  test(sS, 'manual-first: manual sales on top, each group newest first', () => {
+    const r = salesToSort().sort(Utils.veSaleComparator('manual-first')).map(s => s.transaction_no);
+    assertEqual(r.join(','), 'MAN-0002,MAN-0001,T2,T1');
+  });
+  test(sS, 'imported-first: imported sales on top, each group newest first', () => {
+    const r = salesToSort().sort(Utils.veSaleComparator('imported-first')).map(s => s.transaction_no);
+    assertEqual(r.join(','), 'T2,T1,MAN-0002,MAN-0001');
+  });
+  test(sS, 'existing sorts unchanged (date-desc, total-asc, txno)', () => {
+    assertEqual(salesToSort().sort(Utils.veSaleComparator('date-desc')).map(s => s.transaction_no).join(','), 'T2,MAN-0002,T1,MAN-0001');
+    assertEqual(salesToSort().sort(Utils.veSaleComparator('total-asc')).map(s => s.transaction_no).join(','), 'T1,MAN-0001,T2,MAN-0002');
+    assertEqual(salesToSort().sort(Utils.veSaleComparator('txno')).map(s => s.transaction_no).join(','), 'MAN-0001,MAN-0002,T1,T2');
+  });
+
   document.getElementById('summary').textContent = `${passed}/${passed + failed} tests passed, ${failed} failed`;
 })().catch(e => { document.getElementById('summary').textContent = 'CRASH: ' + e.message; });
 </script>

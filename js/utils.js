@@ -1364,6 +1364,28 @@ const Utils = {
     },
 
     /**
+     * Comparator for the VE "Sort by" dropdown. 'manual-first' / 'imported-first'
+     * group by entry type, newest first within each group.
+     */
+    veSaleComparator(sortBy) {
+        const byDateDesc = (a, b) => (b.date || '').localeCompare(a.date || '');
+        const manualRank = (s, manualFirst) => (s.is_manual ? 0 : 1) ^ (manualFirst ? 0 : 1);
+        switch (sortBy) {
+            case 'date-desc': return byDateDesc;
+            case 'date-asc': return (a, b) => (a.date || '').localeCompare(b.date || '');
+            case 'total-desc': return (a, b) => b.total - a.total;
+            case 'total-asc': return (a, b) => a.total - b.total;
+            case 'txno': return (a, b) => String(a.transaction_no).localeCompare(String(b.transaction_no));
+            case 'manual-first':
+            case 'imported-first': {
+                const mf = sortBy === 'manual-first';
+                return (a, b) => (manualRank(a, mf) - manualRank(b, mf)) || byDateDesc(a, b);
+            }
+            default: return () => 0;
+        }
+    },
+
+    /**
      * Did an edit change anything that affects a sale's amounts?
      * Compares items by name, price (to the cent), quantity and taxable,
      * ignoring order, plus the tax rate (beyond 0.005).

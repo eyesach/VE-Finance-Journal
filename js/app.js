@@ -12118,16 +12118,7 @@ const App = {
             return true;
         });
 
-        this._veFiltered.sort((a, b) => {
-            switch (sortBy) {
-                case 'date-desc': return (b.date || '').localeCompare(a.date || '');
-                case 'date-asc': return (a.date || '').localeCompare(b.date || '');
-                case 'total-desc': return b.total - a.total;
-                case 'total-asc': return a.total - b.total;
-                case 'txno': return String(a.transaction_no).localeCompare(String(b.transaction_no));
-                default: return 0;
-            }
-        });
+        this._veFiltered.sort(Utils.veSaleComparator(sortBy));
 
         this.veRenderAll();
     },
