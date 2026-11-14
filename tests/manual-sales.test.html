@@ -286,6 +286,29 @@ function seedImportProtection(d) {
     assertEqual(rows("SELECT event_id FROM ve_sales WHERE transaction_no='MAN-0001'")[0][0], 7);
   });
 
+  // ============== Final review fixes ==============
+  const sF = suite('Shared tx number with untagged legacy items');
+  const seedShared = () => {
+    fresh();
+    Database.db.run(`INSERT INTO ve_sales (transaction_no, date, total, source) VALUES ('X1','2026-11-06',10,'online')`);
+    Database.db.run(`INSERT INTO ve_sales (transaction_no, date, total, source) VALUES ('X1','2026-11-06',10,'tradeshow')`);
+    Database.db.run(`INSERT INTO ve_sale_items (transaction_no, name, price, quantity, amount) VALUES ('X1','Legacy',10,1,10)`);
+  };
+  const itemsFor = src => Database.getAllVESaleItems().get('X1').filter(i => !i.source || i.source === src).map(i => i.name).sort().join(',');
+  test(sF, 'updateVESale on one source does not duplicate shared untagged items', () => {
+    seedShared();
+    Database.updateVESale('X1', 'online', editSale({ transactionNo: 'X1', source: 'online', total: 10 }),
+      [{ name: 'Legacy', price: 10, quantity: 1, taxable: false, amount: 10 }]);
+    assertEqual(itemsFor('online'), 'Legacy', 'online items');
+    assertEqual(itemsFor('tradeshow'), 'Legacy', 'tradeshow items');
+  });
+  test(sF, 'deleteVESale on one source keeps the other source its items and leaves no orphans', () => {
+    seedShared();
+    Database.deleteVESale('X1', 'online');
+    assertEqual(itemsFor('tradeshow'), 'Legacy');
+    assertEqual(rows("SELECT COUNT(*) FROM ve_sale_items WHERE source IS NULL OR source = 'online'")[0][0], 0);
+  });
+
   // ============== Task 5: Edit rules ==============
   const s5 = suite('Edit rules');
   const a = [{ name: 'A', price: 10, quantity: 1, taxable: true }, { name: 'B', price: 5, quantity: 2, taxable: false }];

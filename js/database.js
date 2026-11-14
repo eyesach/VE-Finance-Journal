@@ -4537,15 +4537,21 @@ const Database = {
         stmt.free();
     },
 
-    /** Delete one sale's items: tagged with its source, or legacy untagged when no other source shares the number. */
+    /**
+     * Delete one sale's items. Legacy untagged items shared with a same-numbered
+     * sale from another source are first copied to that source (tagged), so the
+     * other sale keeps them and this sale's rewrite doesn't double-count them.
+     */
     _deleteVEItemsFor(txNo, source) {
-        this.db.run(`
-            DELETE FROM ve_sale_items
-            WHERE transaction_no = ?
-              AND (source = ?
-                   OR (source IS NULL AND NOT EXISTS (
-                       SELECT 1 FROM ve_sales WHERE transaction_no = ? AND source <> ?)))`,
-            [txNo, source, txNo, source]);
+        const others = this.db.exec(
+            'SELECT DISTINCT source FROM ve_sales WHERE transaction_no = ? AND source <> ?', [txNo, source]);
+        for (const [other] of (others.length ? others[0].values : [])) {
+            this.db.run(`
+                INSERT INTO ve_sale_items (transaction_no, name, product_number, price, quantity, taxable, amount, inferred, source)
+                SELECT transaction_no, name, product_number, price, quantity, taxable, amount, inferred, ?
+                FROM ve_sale_items WHERE transaction_no = ? AND source IS NULL`, [other, txNo]);
+        }
+        this.db.run('DELETE FROM ve_sale_items WHERE transaction_no = ? AND (source = ? OR source IS NULL)', [txNo, source]);
     },
 
     /** Insert sales built by Utils.buildManualSales. Returns their transaction numbers. */

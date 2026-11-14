@@ -14142,7 +14142,9 @@ const App = {
             const t = changed
                 ? Utils.computeVESaleTotals(items, rate, { shipping: o.shipping || 0, discount: o.discount || 0 })
                 : { subtotal: o.subtotal || 0, tax: o.tax || 0, total: o.total || 0, items: Utils.computeVESaleTotals(items, rate).items };
-            return { mode: 'edit', count: items.length ? 1 : 0, items: t.items, changed,
+            // A sale imported without item rows can still be re-assigned or renamed.
+            const count = items.length || !st.orig.items.length ? 1 : 0;
+            return { mode: 'edit', count, items: t.items, changed,
                      subtotal: t.subtotal, tax: t.tax, total: t.total,
                      shipping: o.shipping || 0, discount: o.discount || 0,
                      itemCount: items.reduce((n, i) => n + i.quantity, 0) };
@@ -14426,7 +14428,7 @@ const App = {
         UI.hideModal('veAddSalesModal');
         this._veMs = null;
         this.refreshVESales();
-        UI.showNotification(`Added ${sales.length} sale${sales.length !== 1 ? 's' : ''} to ${eventName}`, 'success');
+        UI.showNotification(`Added ${sales.length} sale${sales.length !== 1 ? 's' : ''} to ${Utils.escapeHtml(eventName)}`, 'success');
         this.veMsSyncJournals([eventId]);
     },
 
@@ -14495,7 +14497,7 @@ const App = {
         UI.hideModal('veAddSalesModal');
         this._veMs = null;
         this.refreshVESales();
-        UI.showNotification(`Sale ${o.transaction_no} updated`, 'success');
+        UI.showNotification(`Sale ${Utils.escapeHtml(o.transaction_no)} updated`, 'success');
         if (c.changed || newEventId !== o.event_id || date !== o.date) {
             this.veMsSyncJournals([o.event_id, newEventId]);
         }
@@ -14511,7 +14513,7 @@ const App = {
         if (!confirm(msg)) return;
         Database.deleteVESale(txNo, source);
         this.refreshVESales();
-        UI.showNotification(`Sale ${txNo} deleted`, 'success');
+        UI.showNotification(`Sale ${Utils.escapeHtml(txNo)} deleted`, 'success');
         this.veMsSyncJournals([s.event_id]);
     },
 
