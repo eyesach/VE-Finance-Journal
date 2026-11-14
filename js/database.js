@@ -2643,6 +2643,63 @@ const Database = {
         this.autoSave();
     },
 
+    /**
+     * Single source of truth for Balance Sheet asset figures as of a month.
+     * Fixed assets count from their purchase month; deposits are held from paid
+     * month until refund month and split current / long-term by expected refund date.
+     * @param {string} asOfMonth - YYYY-MM
+     * @returns {Object} { cash, ar, currentDeposits, currentDepositDetails, totalCurrentAssets,
+     *   fixedAssetDetails, totalFixedAssetCost, totalAccumDepr, netFixedAssets,
+     *   longTermDeposits, longTermDepositDetails, totalOtherAssets, totalAssets }
+     */
+    getAssetTotalsAsOf(asOfMonth) {
+        const round2 = (v) => Math.round(v * 100) / 100;
+        const cash = this.getCashAsOf(asOfMonth);
+        const ar = this.getAccountsReceivableAsOf(asOfMonth);
+
+        let totalFixedAssetCost = 0;
+        let totalAccumDepr = 0;
+        const fixedAssetDetails = this.getFixedAssets()
+            .filter(a => a.purchase_date && a.purchase_date.substring(0, 7) <= asOfMonth)
+            .map(asset => {
+                let accumDepr = 0;
+                Object.entries(Utils.computeDepreciationSchedule(asset)).forEach(([m, amt]) => {
+                    if (m <= asOfMonth) accumDepr = round2(accumDepr + amt);
+                });
+                totalFixedAssetCost = round2(totalFixedAssetCost + asset.purchase_cost);
+                totalAccumDepr = round2(totalAccumDepr + accumDepr);
+                return { ...asset, accum_depreciation: accumDepr, net_book_value: round2(asset.purchase_cost - accumDepr) };
+            });
+        const netFixedAssets = round2(totalFixedAssetCost - totalAccumDepr);
+
+        let currentDeposits = 0;
+        let longTermDeposits = 0;
+        const currentDepositDetails = [];
+        const longTermDepositDetails = [];
+        this.getDeposits().forEach(d => {
+            const c = Utils.classifyDeposit(d, asOfMonth);
+            if (!c.held) return;
+            const row = { ...d, overdue: c.overdue };
+            if (c.bucket === 'current') {
+                currentDeposits = round2(currentDeposits + d.amount);
+                currentDepositDetails.push(row);
+            } else {
+                longTermDeposits = round2(longTermDeposits + d.amount);
+                longTermDepositDetails.push(row);
+            }
+        });
+
+        const totalCurrentAssets = round2(cash + ar + currentDeposits);
+        const totalOtherAssets = longTermDeposits;
+        return {
+            cash, ar,
+            currentDeposits, currentDepositDetails, totalCurrentAssets,
+            fixedAssetDetails, totalFixedAssetCost, totalAccumDepr, netFixedAssets,
+            longTermDeposits, longTermDepositDetails, totalOtherAssets,
+            totalAssets: round2(totalCurrentAssets + netFixedAssets + totalOtherAssets)
+        };
+    },
+
     // ==================== LOANS ====================
 
     /**

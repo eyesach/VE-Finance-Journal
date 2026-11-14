@@ -259,6 +259,100 @@ const LEASE = { name: 'Lease', amount: 2000, paid_date: '2026-03-01', expected_r
     assertEqual(Utils.classifyDeposit(d, '2026-10').bucket, 'longterm');
   });
 
+  // ===================== Task 3 =====================
+  const s3 = suite('Asset totals & balance');
+  function seedBase() {
+    reset();
+    Database.setPLTaxMode('passthrough');
+    // isSales = 12th arg → counts as revenue in retained earnings
+    const sales = Database.addCategory('Sales', false, null, 'receivable', null, false, false, false, false, false, null, true);
+    Database.addTransaction({ entry_date: '2026-01-10', category_id: sales, item_description: 'Sale', amount: 10000,
+      transaction_type: 'receivable', status: 'received', month_due: '2026-01', month_paid: '2026-01' });
+  }
+  const T = m => Database.getAssetTotalsAsOf(m);
+  function bsDiff(m) {
+    const liabEq = Database.getAccountsPayableAsOf(m) + Database.getSalesTaxPayableAsOf(m) + Database.getRetainedEarningsAsOf(m, 'passthrough');
+    return Math.round((T(m).totalAssets - liabEq) * 100) / 100;
+  }
+  const allDeposits = t => t.currentDeposits + t.longTermDeposits;
+
+  test(s3, 'deposit paid 2026-03: absent in 2026-02, present in 2026-03, bsDiff 0 in both', () => {
+    seedBase();
+    Database.addDeposit({ ...LEASE });
+    assertEqual(allDeposits(T('2026-02')), 0);
+    assertEqual(T('2026-03').longTermDeposits, 2000);
+    assertEqual(T('2026-03').longTermDepositDetails.length, 1);
+    assertEqual(bsDiff('2026-02'), 0, 'Feb');
+    assertEqual(bsDiff('2026-03'), 0, 'Mar');
+  });
+
+  test(s3, 'classification moves deposit between current and long-term, totalAssets unchanged', () => {
+    seedBase();
+    Database.addDeposit({ ...LEASE });
+    const jan = T('2027-01'), feb = T('2027-02');
+    assertEqual(jan.longTermDeposits, 2000); assertEqual(jan.currentDeposits, 0);
+    assertEqual(feb.currentDeposits, 2000); assertEqual(feb.longTermDeposits, 0);
+    assertEqual(feb.currentDepositDetails.length, 1);
+    assertEqual(jan.totalAssets, feb.totalAssets);
+    assertEqual(jan.totalOtherAssets, 2000);
+    assertEqual(feb.totalCurrentAssets, feb.cash + feb.ar + 2000);
+  });
+
+  test(s3, 'full refund 2028-03: deposit gone, cash +2000 vs 2028-02, bsDiff 0', () => {
+    seedBase();
+    const id = Database.addDeposit({ ...LEASE });
+    Database.markDepositRefunded(id, { refund_date: '2028-03-10', refunded_amount: 2000 });
+    assertEqual(allDeposits(T('2028-03')), 0);
+    assertEqual(T('2028-03').cash - T('2028-02').cash, 2000);
+    assertEqual(bsDiff('2028-02'), 0); assertEqual(bsDiff('2028-03'), 0);
+  });
+
+  test(s3, 'partial refund 1700/2000: cash +1700, bsDiff 0', () => {
+    seedBase();
+    const id = Database.addDeposit({ ...LEASE });
+    Database.markDepositRefunded(id, { refund_date: '2028-03-10', refunded_amount: 1700 });
+    assertEqual(T('2028-03').cash - T('2028-02').cash, 1700);
+    assertEqual(bsDiff('2028-03'), 0);
+  });
+
+  test(s3, 'refund in same month as payment: bsDiff 0, cash net change -300 for 1700/2000', () => {
+    seedBase();
+    const id = Database.addDeposit({ ...LEASE });
+    Database.markDepositRefunded(id, { refund_date: '2026-03-20', refunded_amount: 1700 });
+    assertEqual(allDeposits(T('2026-03')), 0);
+    assertEqual(T('2026-03').cash - T('2026-02').cash, -300);
+    assertEqual(bsDiff('2026-03'), 0);
+  });
+
+  test(s3, 'fixed asset purchased 2026-06 excluded in 2026-05 (cost and accum depr), included in 2026-06', () => {
+    seedBase();
+    Database.addFixedAsset('Laptop', 1200, 12, '2026-06-01', 0, 'straight_line', '2026-06-01', true);
+    const may = T('2026-05'), jun = T('2026-06');
+    assertEqual(may.totalFixedAssetCost, 0); assertEqual(may.totalAccumDepr, 0); assertEqual(may.fixedAssetDetails.length, 0);
+    assertEqual(jun.totalFixedAssetCost, 1200);
+    assertEqual(jun.fixedAssetDetails.length, 1);
+    assertClose(jun.netFixedAssets, 1200 - jun.totalAccumDepr);
+    assertEqual(may.totalAssets, may.cash + may.ar);
+  });
+
+  test(s3, 'totals identities hold', () => {
+    seedBase();
+    Database.addDeposit({ ...LEASE });
+    Database.addDeposit({ ...LEASE, name: 'Utility', amount: 300, expected_refund_date: '2026-12-31' });
+    Database.addFixedAsset('Desk', 600, 24, '2026-02-01', 0, 'straight_line', '2026-02-01', true);
+    const t = T('2026-06');
+    assertEqual(t.currentDeposits, 300); assertEqual(t.longTermDeposits, 2000);
+    assertClose(t.totalCurrentAssets, t.cash + t.ar + t.currentDeposits);
+    assertEqual(t.totalOtherAssets, t.longTermDeposits);
+    assertClose(t.totalAssets, t.totalCurrentAssets + t.netFixedAssets + t.totalOtherAssets);
+  });
+
+  test(s3, 'overdue flag carried on current deposit details', () => {
+    seedBase();
+    Database.addDeposit({ ...LEASE });
+    assertEqual(T('2028-05').currentDepositDetails[0].overdue, true);
+  });
+
   // @@NEXT_SUITE@@
 
   document.getElementById('summary').textContent = `${passed}/${passed + failed} tests passed, ${failed} failed`;
