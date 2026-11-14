@@ -761,6 +761,13 @@ const Database = {
             this.db.run('ALTER TABLE ve_sale_items ADD COLUMN source TEXT');
         }
 
+        // Sales typed in by hand (no export from that POS). Imports never delete these.
+        try {
+            this.db.exec('SELECT is_manual FROM ve_sales LIMIT 1');
+        } catch (e) {
+            this.db.run('ALTER TABLE ve_sales ADD COLUMN is_manual INTEGER DEFAULT 0');
+        }
+
         // === Create products table if missing ===
         this.db.run(`
             CREATE TABLE IF NOT EXISTS products (
@@ -4447,23 +4454,40 @@ const Database = {
 
     // ==================== VE SALES OPERATIONS ====================
 
-    clearVESales(source) {
+    /**
+     * Delete imported VE sales (all, or one source) before a re-import.
+     * Manual sales (is_manual = 1) and their items are kept unless
+     * includeManual is set — only "Clear All Data" passes that.
+     */
+    clearVESales(source = null, { includeManual = false } = {}) {
+        const keepManualItems = includeManual ? '' : `
+            AND NOT EXISTS (SELECT 1 FROM ve_sales m
+                            WHERE m.is_manual = 1
+                              AND m.transaction_no = ve_sale_items.transaction_no
+                              AND m.source = ve_sale_items.source)`;
+        const keepManualSales = includeManual ? '' : ' AND COALESCE(is_manual, 0) = 0';
         if (source) {
             // Items tagged with this source, plus legacy untagged items whose
             // transaction number belongs only to this source.
             this.db.run(`
                 DELETE FROM ve_sale_items
-                WHERE source = ?
+                WHERE (source = ?
                    OR (source IS NULL
                        AND transaction_no IN (SELECT transaction_no FROM ve_sales WHERE source = ?)
-                       AND transaction_no NOT IN (SELECT transaction_no FROM ve_sales WHERE source <> ?))
+                       AND transaction_no NOT IN (SELECT transaction_no FROM ve_sales WHERE source <> ?)))
+                ${keepManualItems}
             `, [source, source, source]);
-            this.db.run('DELETE FROM ve_sales WHERE source = ?', [source]);
+            this.db.run('DELETE FROM ve_sales WHERE source = ?' + keepManualSales, [source]);
         } else {
-            this.db.run('DELETE FROM ve_sale_items');
-            this.db.run('DELETE FROM ve_sales');
+            this.db.run('DELETE FROM ve_sale_items WHERE 1=1' + keepManualItems);
+            this.db.run('DELETE FROM ve_sales WHERE 1=1' + keepManualSales);
         }
         this.autoSave();
+    },
+
+    getManualSaleCount() {
+        const r = this.db.exec('SELECT COUNT(*) FROM ve_sales WHERE is_manual = 1');
+        return r.length ? r[0].values[0][0] : 0;
     },
 
     upsertVESales(salesArray) {
@@ -4543,6 +4567,97 @@ const Database = {
             });
         }
         return map;
+    },
+
+    // ---- Manual sales + per-sale edit/delete ----
+
+    getAllVETxNos() {
+        const r = this.db.exec('SELECT transaction_no FROM ve_sales');
+        return r.length ? r[0].values.map(v => v[0]) : [];
+    },
+
+    /**
+     * Source a new/moved manual sale takes on for an event: the most common
+     * source among the event's imported sales, else the event type
+     * (online_event → online), else tradeshow.
+     */
+    getEventSaleSource(eventId) {
+        if (eventId == null) return 'tradeshow';
+        const r = this.db.exec(`
+            SELECT source, COUNT(*) AS n FROM ve_sales
+            WHERE event_id = ? AND COALESCE(is_manual, 0) = 0
+            GROUP BY source ORDER BY n DESC LIMIT 1`, [eventId]);
+        if (r.length && r[0].values.length) return r[0].values[0][0];
+        const e = this.db.exec('SELECT type FROM ve_events WHERE id = ?', [eventId]);
+        const type = e.length && e[0].values.length ? e[0].values[0][0] : null;
+        return type === 'online_event' ? 'online' : 'tradeshow';
+    },
+
+    _insertVEItems(txNo, items, source) {
+        const stmt = this.db.prepare('INSERT INTO ve_sale_items (transaction_no, name, product_number, price, quantity, taxable, amount, inferred, source) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)');
+        for (const i of items) {
+            const qty = Number(i.quantity) || 0;
+            const amount = i.amount != null ? i.amount : Math.round((Number(i.price) || 0) * qty * 100) / 100;
+            stmt.run([txNo, i.name || 'Unknown', i.productNumber || null, Number(i.price) || 0, qty, i.taxable ? 1 : 0, amount, source]);
+        }
+        stmt.free();
+    },
+
+    /**
+     * Delete one sale's items. Legacy untagged items shared with a same-numbered
+     * sale from another source are first copied to that source (tagged), so the
+     * other sale keeps them and this sale's rewrite doesn't double-count them.
+     */
+    _deleteVEItemsFor(txNo, source) {
+        const others = this.db.exec(
+            'SELECT DISTINCT source FROM ve_sales WHERE transaction_no = ? AND source <> ?', [txNo, source]);
+        for (const [other] of (others.length ? others[0].values : [])) {
+            this.db.run(`
+                INSERT INTO ve_sale_items (transaction_no, name, product_number, price, quantity, taxable, amount, inferred, source)
+                SELECT transaction_no, name, product_number, price, quantity, taxable, amount, inferred, ?
+                FROM ve_sale_items WHERE transaction_no = ? AND source IS NULL`, [other, txNo]);
+        }
+        this.db.run('DELETE FROM ve_sale_items WHERE transaction_no = ? AND (source = ? OR source IS NULL)', [txNo, source]);
+    },
+
+    /** Insert sales built by Utils.buildManualSales. Returns their transaction numbers. */
+    insertManualSales(sales, { eventId = null, source = 'tradeshow' } = {}) {
+        const stmt = this.db.prepare(`INSERT INTO ve_sales
+            (transaction_no, date, billing_name, description, subtotal, tax, shipping, discount, total, source, event_id, is_manual)
+            VALUES (?, ?, ?, 'Manual entry', ?, ?, 0, 0, ?, ?, ?, 1)`);
+        for (const s of sales) {
+            stmt.run([s.transactionNo, s.date, s.billingName || '', s.subtotal || 0, s.tax || 0, s.total || 0, source, eventId]);
+        }
+        stmt.free();
+        for (const s of sales) this._insertVEItems(s.transactionNo, s.items || [], source);
+        this.autoSave();
+        return sales.map(s => s.transactionNo);
+    },
+
+    /**
+     * Update the sale identified by (origTxNo, origSource) and replace its items.
+     * is_manual and description are kept; source may change (items follow).
+     */
+    updateVESale(origTxNo, origSource, sale, items) {
+        this._deleteVEItemsFor(origTxNo, origSource);
+        this.db.run(`UPDATE ve_sales SET transaction_no = ?, date = ?, billing_name = ?, subtotal = ?, tax = ?,
+                     shipping = ?, discount = ?, total = ?, source = ?, event_id = ?
+                     WHERE transaction_no = ? AND source = ?`,
+            [sale.transactionNo || origTxNo, sale.date, sale.billingName || '', sale.subtotal || 0, sale.tax || 0,
+             sale.shipping || 0, sale.discount || 0, sale.total || 0, sale.source || origSource,
+             sale.eventId == null ? null : sale.eventId, origTxNo, origSource]);
+        this._insertVEItems(sale.transactionNo || origTxNo, items || [], sale.source || origSource);
+        this.autoSave();
+    },
+
+    deleteVESale(txNo, source) {
+        this._deleteVEItemsFor(txNo, source);
+        this.db.run('DELETE FROM ve_sales WHERE transaction_no = ? AND source = ?', [txNo, source]);
+        this.autoSave();
+    },
+
+    ensureProductLink(productId, name, price) {
+        this.addProductVeMapping(productId, name, price);
     },
 
     getVEImportMeta() {

@@ -11810,7 +11810,8 @@ const App = {
             'saveDbBtn', 'saveAllDbBtn', 'loadDbBtn', 'shareBtn',
             'veCreateJournalBtn', 'veClearBtn', 'veImportSubmit',
             'veSyncFromServer', 'veAddEventBtn', 'veAddAllToJournalBtn',
-            'veRemoveAllFromJournalBtn', 'sdUseInBreakevenBtn'
+            'veRemoveAllFromJournalBtn', 'sdUseInBreakevenBtn',
+            'veAddSalesBtn', 'veAddSalesEmptyBtn'
         ];
         hideIds.forEach(id => {
             const el = document.getElementById(id);
@@ -12147,16 +12148,7 @@ const App = {
             return true;
         });
 
-        this._veFiltered.sort((a, b) => {
-            switch (sortBy) {
-                case 'date-desc': return (b.date || '').localeCompare(a.date || '');
-                case 'date-asc': return (a.date || '').localeCompare(b.date || '');
-                case 'total-desc': return b.total - a.total;
-                case 'total-asc': return a.total - b.total;
-                case 'txno': return String(a.transaction_no).localeCompare(String(b.transaction_no));
-                default: return 0;
-            }
-        });
+        this._veFiltered.sort(Utils.veSaleComparator(sortBy));
 
         this.veRenderAll();
     },
@@ -12390,7 +12382,7 @@ const App = {
         document.getElementById('ve-txCount').textContent = `(${this._veFiltered.length})`;
 
         if (this._veFiltered.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#6c757d;padding:20px;">No transactions match filters</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:#6c757d;padding:20px;">No transactions match filters</td></tr>';
             return;
         }
 
@@ -12418,13 +12410,14 @@ const App = {
             html += `<tr>
                 <td>${Utils.escapeHtml(s.transaction_no)}</td>
                 <td>${this.veFmtDate(s.date)}</td>
-                <td><span class="ve-source-badge ${s.source}">${s.source === 'online' ? 'Online' : 'Trade Show'}</span></td>
+                <td><span class="ve-source-badge ${s.source}">${s.source === 'online' ? 'Online' : 'Trade Show'}</span>${s.is_manual ? '<span class="ve-source-badge manual">Manual</span>' : ''}</td>
                 <td>${eventBadge}</td>
                 <td>${Utils.escapeHtml(s.billing_name || '')}</td>
                 <td class="num">${this.veFmt(s.subtotal)}</td>
                 <td class="num">${this.veFmt(s.tax)}</td>
                 <td class="num">${this.veFmt(s.total)}</td>
                 <td>${statusHtml}</td>
+                <td class="ve-tx-actions">${this.isViewOnly ? '' : `<button type="button" data-ve-tx-act="edit" data-txno="${Utils.escapeHtml(s.transaction_no)}" data-source="${Utils.escapeHtml(s.source)}" title="Edit sale">&#9998; Edit</button><button type="button" class="ve-tx-del" data-ve-tx-act="delete" data-txno="${Utils.escapeHtml(s.transaction_no)}" data-source="${Utils.escapeHtml(s.source)}" title="Delete sale">Delete</button>`}</td>
             </tr>`;
         }
         tbody.innerHTML = html;
@@ -13970,6 +13963,601 @@ const App = {
         });
     },
 
+    // ==================== VE MANUAL SALES (Add Sales / Edit Sale) ====================
+
+    _veMsLoadProducts() {
+        this._veMsProducts = Database.getProducts()
+            .filter(p => !p.is_discontinued)
+            .map(p => ({
+                id: p.id, name: p.name, price: Number(p.price) || 0,
+                link: Utils.pickProductLink(p, Database.getMappingsForProduct(p.id)),
+            }));
+        this._veMsProductMap = new Map(this._veMsProducts.map(p => [p.id, p]));
+    },
+
+    /** Sheet name/price a product's sales are recorded under, honoring a row's link choice. */
+    _veMsLinkFor(productId, choice) {
+        const p = this._veMsProductMap && this._veMsProductMap.get(productId);
+        if (!p) return null;
+        const opts = p.link.options;
+        if (opts.length > 1 && choice != null && opts[choice]) {
+            return { name: opts[choice].name, price: opts[choice].price, linked: true };
+        }
+        return { name: p.link.name, price: p.link.price, linked: p.link.linked };
+    },
+
+    /** Group/edit row → sale item ({name, price, quantity, taxable}). */
+    _veMsRowItem(r) {
+        if (r.productId != null) {
+            const l = this._veMsLinkFor(r.productId, r.choice);
+            if (l) return { name: l.name, price: l.price, quantity: r.qty, taxable: r.taxable };
+        }
+        return { name: r.name, price: Number(r.price) || 0, quantity: r.qty, taxable: r.taxable };
+    },
+
+    _veMsStepper(qty) {
+        return `<span class="ms-qty">` +
+            `<button type="button" data-ms-step="-1" aria-label="Decrease quantity">&minus;</button>` +
+            `<input type="number" min="0" step="1" inputmode="numeric" value="${qty}" data-ms-role="qty" aria-label="Quantity">` +
+            `<button type="button" data-ms-step="1" aria-label="Increase quantity">+</button></span>`;
+    },
+
+    _veMsLinkSelect(productId, choice) {
+        const p = this._veMsProductMap.get(productId);
+        if (!p || p.link.options.length < 2) return '';
+        const cur = this._veMsLinkFor(productId, choice);
+        return `<select class="ms-link-select" data-ms-role="link" aria-label="Sheet item to record as">` +
+            p.link.options.map((o, i) =>
+                `<option value="${i}"${o.name === cur.name && o.price === cur.price ? ' selected' : ''}>${Utils.escapeHtml(o.name)} · ${this.veFmt(o.price)}</option>`
+            ).join('') + `</select>`;
+    },
+
+    _veMsEventLabel(evt) {
+        return `${evt.name} · ${this.veFmtDate(evt.start_date)}`;
+    },
+
+    /**
+     * Open the Add Sales window, or (with editSale, a ve_sales row) the
+     * single-sale Edit window.
+     */
+    veOpenAddSales({ editSale = null } = {}) {
+        if (this.isViewOnly) return;
+        this._veMsLoadProducts();
+        const events = Database.getAllVEEvents();
+        const lastRate = parseFloat(Database.getMetaValue('ve_manual_tax_rate'));
+        const defaultRate = Number.isFinite(lastRate) && lastRate >= 0 ? lastRate : 7.25;
+
+        if (editSale) {
+            this._veMs = this._veMsStateForEdit(editSale, defaultRate);
+        } else {
+            const filterSel = document.getElementById('ve-filterEvent');
+            const filterVal = filterSel ? filterSel.value : '';
+            const pre = events.find(e => String(e.id) === String(filterVal)) || events[0] || null;
+            this._veMs = {
+                mode: 'add', eventMode: pre ? 'existing' : 'new', eventId: pre ? pre.id : null,
+                date: pre ? pre.start_date : Utils.getTodayDate(), ratePct: defaultRate, search: '',
+                singles: new Map(), groups: [], orig: null,
+            };
+        }
+        const st = this._veMs;
+
+        // Event dropdown
+        const sel = document.getElementById('msEventSelect');
+        sel.innerHTML = (st.mode === 'edit' ? '<option value="">No event</option>' : '') +
+            events.map(e => `<option value="${e.id}">${Utils.escapeHtml(this._veMsEventLabel(e))}</option>`).join('');
+        sel.value = st.eventId != null ? String(st.eventId) : '';
+
+        document.getElementById('msDate').value = st.date || '';
+        document.getElementById('msRate').value = st.ratePct;
+        document.getElementById('msSearch').value = '';
+        document.getElementById('msNewEventName').value = '';
+        document.getElementById('msNewEventStart').value = '';
+        document.getElementById('msNewEventEnd').value = '';
+
+        const isEdit = st.mode === 'edit';
+        document.getElementById('msTitle').textContent = isEdit ? `Edit Sale ${st.orig.transaction_no}` : 'Add Sales';
+        document.getElementById('msHint').style.display = isEdit ? 'none' : '';
+        document.getElementById('msEventSeg').style.display = isEdit ? 'none' : '';
+        document.getElementById('msSinglesSection').style.display = isEdit ? 'none' : '';
+        document.getElementById('msAddGroupBtn').style.display = isEdit ? 'none' : '';
+        document.getElementById('msGroupsTitle').innerHTML = isEdit
+            ? 'Items <small>Add, remove, or change quantities.</small>'
+            : 'Group Sales <small>Several items bought together in one transaction.</small>';
+        document.getElementById('msImportedNote').style.display = isEdit && !st.orig.is_manual ? '' : 'none';
+
+        this.veMsRender();
+        UI.showModal('veAddSalesModal');
+        setTimeout(() => {
+            const focusEl = isEdit ? null : (st.eventMode === 'new' ? document.getElementById('msNewEventName') : document.getElementById('msSearch'));
+            if (focusEl) focusEl.focus();
+        }, 50);
+    },
+
+    /** Full render of the window's dynamic parts from this._veMs. */
+    veMsRender() {
+        const st = this._veMs;
+        document.querySelectorAll('#msEventSeg [data-ms-mode]').forEach(b =>
+            b.classList.toggle('active', b.dataset.msMode === st.eventMode));
+        document.getElementById('msEventExistingWrap').style.display = st.eventMode === 'existing' ? '' : 'none';
+        document.getElementById('msEventNewWrap').style.display = st.eventMode === 'new' ? '' : 'none';
+        if (st.mode === 'add') this.veMsRenderSingles();
+        this.veMsRenderGroups();
+        this.veMsRenderFooter();
+    },
+
+    veMsRenderSingles() {
+        const st = this._veMs;
+        const body = document.getElementById('msSinglesBody');
+        if (!this._veMsProducts.length) {
+            body.innerHTML = '<tr class="ms-empty-row"><td colspan="4">No products yet. Add products in the Products tab to use them here.</td></tr>';
+            return;
+        }
+        const q = (st.search || '').trim().toLowerCase();
+        const list = this._veMsProducts.filter(p => !q || p.name.toLowerCase().includes(q));
+        if (!list.length) {
+            body.innerHTML = '<tr class="ms-empty-row"><td colspan="4">No products match your search.</td></tr>';
+            return;
+        }
+        body.innerHTML = list.map(p => {
+            const s = st.singles.get(p.id) || { qty: 0, choice: null };
+            const l = this._veMsLinkFor(p.id, s.choice);
+            return `<tr data-ms-pid="${p.id}" class="${s.qty > 0 ? 'ms-has' : ''}">
+                <td>${Utils.escapeHtml(p.name)}${l.linked ? '<span class="ms-linked">Linked</span>' : ''}${this._veMsLinkSelect(p.id, s.choice)}</td>
+                <td class="num">${this.veFmt(l.price)}</td>
+                <td class="ms-qty-cell">${this._veMsStepper(s.qty)}</td>
+                <td class="num ms-line">${s.qty > 0 ? this.veFmt(Math.round(l.price * s.qty * 100) / 100) : '&mdash;'}</td>
+            </tr>`;
+        }).join('');
+    },
+
+    _veMsAddListHtml(q) {
+        const qq = (q || '').trim().toLowerCase();
+        const list = this._veMsProducts.filter(p => !qq || p.name.toLowerCase().includes(qq)).slice(0, 8);
+        if (!list.length) return '<div class="pvm-empty-msg">No products match.</div>';
+        return list.map(p => {
+            const l = this._veMsLinkFor(p.id, null);
+            return `<div class="pvm-item" data-ms-act="pick" data-ms-pid="${p.id}"><span class="pvm-item-name">${Utils.escapeHtml(p.name)}</span><span class="pvm-item-price">${this.veFmt(l.price)}</span></div>`;
+        }).join('');
+    },
+
+    veMsRenderGroups() {
+        const st = this._veMs;
+        const isEdit = st.mode === 'edit';
+        document.getElementById('msGroups').innerHTML = st.groups.map((g, gi) => {
+            const rowsHtml = g.rows.length ? g.rows.map((r, ri) => {
+                const item = this._veMsRowItem(r);
+                const linked = r.productId != null && this._veMsLinkFor(r.productId, r.choice)?.linked;
+                const label = r.productId != null ? this._veMsProductMap.get(r.productId)?.name || item.name : item.name;
+                return `<div class="ms-grow" data-ms-ri="${ri}">
+                    <span>${Utils.escapeHtml(label)}${linked ? '<span class="ms-linked">Linked</span>' : ''}${r.productId != null ? this._veMsLinkSelect(r.productId, r.choice) : ''}</span>
+                    <span class="ms-grow-price">${this.veFmt(item.price)}</span>
+                    ${this._veMsStepper(r.qty)}
+                    <button type="button" class="ms-x" data-ms-act="remove-row" aria-label="Remove item">&times;</button>
+                </div>`;
+            }).join('') : '<div class="ms-group-empty">No items yet.</div>';
+            const adder = g.adding
+                ? `<div class="ms-add-wrap"><input type="text" class="pvm-search" data-ms-role="add-search" placeholder="Search products..." value="${Utils.escapeHtml(g.q || '')}" aria-label="Search products to add"><div class="pvm-list-wrap ms-add-list"><div class="pvm-list">${this._veMsAddListHtml(g.q)}</div></div></div>`
+                : `<button type="button" class="ms-link-btn" data-ms-act="add-row">+ Add product</button>`;
+            return `<div class="ve-source-card ms-group" data-ms-gi="${gi}">
+                <div class="ms-group-head">
+                    <strong>${isEdit ? 'Items' : 'Group Sale ' + (gi + 1)}</strong>
+                    <div class="ms-group-tools">
+                        <input type="text" class="ms-buyer" data-ms-role="buyer" placeholder="Buyer (optional)" value="${Utils.escapeHtml(g.buyer || '')}" aria-label="Buyer" maxlength="120">
+                        ${isEdit ? '' : '<button type="button" class="ms-link-btn ms-danger" data-ms-act="remove-group">Remove</button>'}
+                    </div>
+                </div>
+                ${rowsHtml}
+                ${adder}
+            </div>`;
+        }).join('');
+    },
+
+    /** Totals and counts for the current window state. */
+    veMsCompute() {
+        const st = this._veMs;
+        const rate = Number(st.ratePct) || 0;
+        if (st.mode === 'edit') {
+            const items = st.groups[0].rows.map(r => this._veMsRowItem(r)).filter(i => i.quantity > 0);
+            const changed = Utils.veSaleItemsChanged(st.orig.items, items, st.orig.ratePct, rate);
+            const o = st.orig.sale;
+            const t = changed
+                ? Utils.computeVESaleTotals(items, rate, { shipping: o.shipping || 0, discount: o.discount || 0 })
+                : { subtotal: o.subtotal || 0, tax: o.tax || 0, total: o.total || 0, items: Utils.computeVESaleTotals(items, rate).items };
+            // A sale imported without item rows can still be re-assigned or renamed.
+            const count = items.length || !st.orig.items.length ? 1 : 0;
+            return { mode: 'edit', count, items: t.items, changed,
+                     subtotal: t.subtotal, tax: t.tax, total: t.total,
+                     shipping: o.shipping || 0, discount: o.discount || 0,
+                     itemCount: items.reduce((n, i) => n + i.quantity, 0) };
+        }
+        const singles = [];
+        for (const [pid, s] of st.singles) {
+            if (s.qty <= 0) continue;
+            const l = this._veMsLinkFor(pid, s.choice);
+            if (l) singles.push({ name: l.name, price: l.price, quantity: s.qty });
+        }
+        const groups = st.groups.map(g => ({ buyer: g.buyer, items: g.rows.map(r => this._veMsRowItem(r)) }));
+        const input = { singles, groups };
+        const sales = Utils.buildManualSales({ ...input, ratePct: rate, date: st.date, startTxNo: 'MAN-0001' });
+        const singleCount = singles.reduce((n, s) => n + s.quantity, 0);
+        const r2 = x => Math.round(x * 100) / 100;
+        return {
+            mode: 'add', input, sales, count: sales.length, singleCount, groupCount: sales.length - singleCount,
+            itemCount: sales.reduce((n, s) => n + s.items.reduce((m, i) => m + i.quantity, 0), 0),
+            subtotal: r2(sales.reduce((n, s) => n + s.subtotal, 0)),
+            tax: r2(sales.reduce((n, s) => n + s.tax, 0)),
+            total: r2(sales.reduce((n, s) => n + s.total, 0)),
+        };
+    },
+
+    veMsRenderFooter() {
+        const st = this._veMs;
+        const c = this.veMsCompute();
+        const plural = (n, w) => `${n} ${w}${n !== 1 ? 's' : ''}`;
+        document.getElementById('msSummary').innerHTML = c.mode === 'edit'
+            ? `${plural(c.itemCount, 'item')}${c.changed ? '' : ' · amounts unchanged'}`
+            : `Creates <b>${plural(c.count, 'sale')}</b> · ${c.singleCount} single + ${c.groupCount} group · ${plural(c.itemCount, 'item')}`;
+        const rate = Number(st.ratePct) || 0;
+        let rowsHtml = `<div><span>Subtotal</span><span>${this.veFmt(c.subtotal)}</span></div>`;
+        if (c.mode === 'edit' && c.discount) rowsHtml += `<div><span>Discount</span><span>-${this.veFmt(c.discount)}</span></div>`;
+        if (c.mode === 'edit' && c.shipping) rowsHtml += `<div><span>Shipping</span><span>${this.veFmt(c.shipping)}</span></div>`;
+        rowsHtml += `<div class="ms-t-tax"><span>Tax (${rate}%)</span><span>${this.veFmt(c.tax)}</span></div>`;
+        rowsHtml += `<div class="ms-t-total"><span>Total</span><span>${this.veFmt(c.total)}</span></div>`;
+        document.getElementById('msTotals').innerHTML = rowsHtml;
+
+        const saveBtn = document.getElementById('msSaveBtn');
+        saveBtn.textContent = c.mode === 'edit' ? 'Save Changes' : `Add ${plural(c.count, 'Sale')}`;
+        saveBtn.disabled = c.count === 0;
+
+        let evtJournaled = false;
+        if (st.eventMode === 'existing' && st.eventId != null) {
+            const evt = Database.getAllVEEvents().find(e => e.id === st.eventId);
+            evtJournaled = !!evt && evt.journal_added === 1;
+        }
+        document.getElementById('msJournalNote').style.display = evtJournaled ? '' : 'none';
+    },
+
+    /** Apply a quantity typed or stepped into one of the window's qty inputs. */
+    _veMsApplyQty(input, qty) {
+        const st = this._veMs;
+        const tr = input.closest('tr[data-ms-pid]');
+        if (tr) {
+            const pid = Number(tr.dataset.msPid);
+            const s = st.singles.get(pid) || { qty: 0, choice: null };
+            s.qty = qty;
+            st.singles.set(pid, s);
+            tr.classList.toggle('ms-has', qty > 0);
+            const l = this._veMsLinkFor(pid, s.choice);
+            tr.querySelector('.ms-line').innerHTML = qty > 0 ? this.veFmt(Math.round(l.price * qty * 100) / 100) : '&mdash;';
+        }
+        const gr = input.closest('.ms-grow');
+        if (gr) {
+            const g = st.groups[Number(gr.closest('.ms-group').dataset.msGi)];
+            g.rows[Number(gr.dataset.msRi)].qty = qty;
+        }
+        this.veMsRenderFooter();
+    },
+
+    _veMsGroupOf(el) {
+        const card = el.closest('.ms-group');
+        return card ? this._veMs.groups[Number(card.dataset.msGi)] : null;
+    },
+
+    _veMsFocusAddSearch(gi) {
+        const el = document.querySelector(`#msGroups .ms-group[data-ms-gi="${gi}"] [data-ms-role="add-search"]`);
+        if (el) el.focus();
+    },
+
+    veMsBindListeners() {
+        const modal = document.getElementById('veAddSalesModal');
+        if (!modal) return;
+        document.getElementById('veAddSalesBtn').addEventListener('click', () => this.veOpenAddSales());
+        document.getElementById('veAddSalesEmptyBtn').addEventListener('click', () => this.veOpenAddSales());
+        document.getElementById('msCancelBtn').addEventListener('click', () => UI.hideModal('veAddSalesModal'));
+        document.getElementById('msSaveBtn').addEventListener('click', () => this.veMsSave());
+
+        // Transactions list: Edit / Delete per sale
+        document.getElementById('ve-txBody').addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-ve-tx-act]');
+            if (!btn || this.isViewOnly) return;
+            const { txno, source } = btn.dataset;
+            if (btn.dataset.veTxAct === 'delete') { this.veDeleteSale(txno, source); return; }
+            const s = (this._veSales || []).find(x => x.transaction_no === txno && x.source === source);
+            if (s) this.veOpenAddSales({ editSale: s });
+        });
+
+        modal.addEventListener('click', (e) => {
+            if (!this._veMs) return;
+            const st = this._veMs;
+            const modeBtn = e.target.closest('[data-ms-mode]');
+            if (modeBtn) {
+                st.eventMode = modeBtn.dataset.msMode;
+                if (st.eventMode === 'new' && !document.getElementById('msNewEventStart').value) {
+                    document.getElementById('msNewEventStart').value = st.date || Utils.getTodayDate();
+                }
+                this.veMsRender();
+                if (st.eventMode === 'new') document.getElementById('msNewEventName').focus();
+                return;
+            }
+            const stepBtn = e.target.closest('[data-ms-step]');
+            if (stepBtn) {
+                const input = stepBtn.parentElement.querySelector('[data-ms-role="qty"]');
+                const qty = Math.max(0, Utils.sanitizeQty(input.value) + Number(stepBtn.dataset.msStep));
+                input.value = qty;
+                this._veMsApplyQty(input, qty);
+                return;
+            }
+            const actEl = e.target.closest('[data-ms-act]');
+            if (e.target.id === 'msAddGroupBtn') {
+                st.groups.push({ buyer: '', rows: [], adding: true, q: '' });
+                this.veMsRenderGroups();
+                this.veMsRenderFooter();
+                this._veMsFocusAddSearch(st.groups.length - 1);
+                return;
+            }
+            if (!actEl) return;
+            const g = this._veMsGroupOf(actEl);
+            const gi = g ? st.groups.indexOf(g) : -1;
+            switch (actEl.dataset.msAct) {
+                case 'remove-group':
+                    st.groups.splice(gi, 1);
+                    break;
+                case 'remove-row':
+                    g.rows.splice(Number(actEl.closest('.ms-grow').dataset.msRi), 1);
+                    break;
+                case 'add-row':
+                    g.adding = true; g.q = '';
+                    break;
+                case 'pick': {
+                    const pid = Number(actEl.dataset.msPid);
+                    const existing = g.rows.find(r => r.productId === pid && r.choice == null);
+                    if (existing) existing.qty += 1;
+                    else g.rows.push({ productId: pid, choice: null, qty: 1, taxable: (Number(st.ratePct) || 0) > 0 });
+                    g.adding = false; g.q = '';
+                    break;
+                }
+                default: return;
+            }
+            this.veMsRenderGroups();
+            this.veMsRenderFooter();
+            if (actEl.dataset.msAct === 'add-row') this._veMsFocusAddSearch(gi);
+        });
+
+        modal.addEventListener('input', (e) => {
+            if (!this._veMs) return;
+            const st = this._veMs;
+            const t = e.target;
+            if (t.id === 'msDate') { st.date = t.value; return; }
+            if (t.id === 'msRate') {
+                const v = parseFloat(t.value);
+                st.ratePct = Number.isFinite(v) && v >= 0 ? v : 0;
+                this.veMsRenderFooter();
+                return;
+            }
+            if (t.id === 'msSearch') { st.search = t.value; this.veMsRenderSingles(); return; }
+            const role = t.dataset.msRole;
+            if (role === 'qty') { this._veMsApplyQty(t, Utils.sanitizeQty(t.value)); return; }
+            if (role === 'buyer') { const g = this._veMsGroupOf(t); if (g) g.buyer = t.value; return; }
+            if (role === 'add-search') {
+                const g = this._veMsGroupOf(t);
+                if (!g) return;
+                g.q = t.value;
+                t.parentElement.querySelector('.pvm-list').innerHTML = this._veMsAddListHtml(g.q);
+            }
+        });
+
+        modal.addEventListener('change', (e) => {
+            if (!this._veMs) return;
+            const st = this._veMs;
+            const t = e.target;
+            if (t.id === 'msEventSelect') {
+                st.eventId = t.value === '' ? null : Number(t.value);
+                if (st.mode === 'add') {
+                    const evt = Database.getAllVEEvents().find(ev => ev.id === st.eventId);
+                    if (evt) { st.date = evt.start_date; document.getElementById('msDate').value = evt.start_date; }
+                }
+                this.veMsRenderFooter();
+                return;
+            }
+            if (t.dataset.msRole === 'qty') { t.value = Utils.sanitizeQty(t.value); return; }
+            if (t.dataset.msRole === 'link') {
+                const choice = Number(t.value);
+                const tr = t.closest('tr[data-ms-pid]');
+                if (tr) {
+                    const pid = Number(tr.dataset.msPid);
+                    const s = st.singles.get(pid) || { qty: 0, choice: null };
+                    s.choice = choice;
+                    st.singles.set(pid, s);
+                    this.veMsRenderSingles();
+                } else {
+                    const g = this._veMsGroupOf(t);
+                    const gr = t.closest('.ms-grow');
+                    if (g && gr) g.rows[Number(gr.dataset.msRi)].choice = choice;
+                    this.veMsRenderGroups();
+                }
+                this.veMsRenderFooter();
+            }
+        });
+
+        modal.addEventListener('keydown', (e) => {
+            if (!this._veMs) return;
+            const t = e.target;
+            if (e.key === 'Escape' && t.dataset.msRole === 'add-search') {
+                e.stopPropagation();
+                const g = this._veMsGroupOf(t);
+                if (g) { g.adding = false; g.q = ''; this.veMsRenderGroups(); }
+                return;
+            }
+            if (e.key === 'Enter' && t.dataset.msRole === 'add-search') {
+                e.preventDefault();
+                const first = t.parentElement.querySelector('[data-ms-act="pick"]');
+                if (first) first.click();
+                return;
+            }
+            if (e.key === 'Enter' && t.dataset.msRole === 'qty') {
+                e.preventDefault();
+                const all = [...document.querySelectorAll('#veAddSalesModal [data-ms-role="qty"]')];
+                const next = all[all.indexOf(t) + 1];
+                if (next) { next.focus(); next.select(); }
+            }
+        });
+    },
+
+    /** Save the Add Sales window (add mode) or the Edit Sale window. */
+    veMsSave() {
+        const st = this._veMs;
+        if (!st || this.isViewOnly) return;
+        if (st.mode === 'edit') return this._veMsSaveEdit();
+        const c = this.veMsCompute();
+
+        let eventId = st.eventId;
+        let eventName = '';
+        if (st.eventMode === 'new') {
+            const nameEl = document.getElementById('msNewEventName');
+            const name = nameEl.value.trim();
+            if (!name) { UI.showNotification('Enter an event name.', 'error'); nameEl.focus(); return; }
+            if (c.count === 0) return;
+            const start = document.getElementById('msNewEventStart').value || st.date || Utils.getTodayDate();
+            let end = document.getElementById('msNewEventEnd').value || start;
+            if (end < start) end = start;
+            eventId = Database.createVEEvent({ name, type: 'tradeshow', start_date: start, end_date: end });
+            eventName = name;
+        } else {
+            const evt = Database.getAllVEEvents().find(e => e.id === eventId);
+            if (!evt) { UI.showNotification('Choose an event.', 'error'); return; }
+            eventName = evt.name;
+        }
+        if (c.count === 0) return;
+
+        const date = st.date || Utils.getTodayDate();
+        const rate = Number(st.ratePct) || 0;
+        const source = Database.getEventSaleSource(eventId);
+        const startTxNo = Utils.nextManualTxNo(Database.getAllVETxNos());
+        const sales = Utils.buildManualSales({ ...c.input, ratePct: rate, date, startTxNo });
+        Database.insertManualSales(sales, { eventId, source });
+
+        // Products with no sheet link get one now, so their sales count in Product Breakdown.
+        const usedPids = new Set();
+        for (const [pid, s] of st.singles) if (s.qty > 0) usedPids.add(pid);
+        for (const g of st.groups) for (const r of g.rows) if (r.qty > 0 && r.productId != null) usedPids.add(r.productId);
+        for (const pid of usedPids) {
+            const p = this._veMsProductMap.get(pid);
+            if (p && !p.link.linked) Database.ensureProductLink(pid, p.name, p.price);
+        }
+        Database.setMetaValue('ve_manual_tax_rate', rate);
+
+        UI.hideModal('veAddSalesModal');
+        this._veMs = null;
+        this.refreshVESales();
+        UI.showNotification(`Added ${sales.length} sale${sales.length !== 1 ? 's' : ''} to ${Utils.escapeHtml(eventName)}`, 'success');
+        this.veMsSyncJournals([eventId]);
+    },
+
+    /** Window state for editing one existing sale (a ve_sales row). */
+    _veMsStateForEdit(s, defaultRate) {
+        const raw = this.veItemsForSale(s);
+        // Sheets often leave "taxable" blank even when the sale was taxed:
+        // then treat every item as taxable so an edit doesn't silently drop tax.
+        const noneFlagged = !raw.some(i => i.taxable);
+        const treatAllTaxable = noneFlagged && (Number(s.tax) || 0) > 0;
+        const items = raw.map(i => ({
+            name: i.name, price: Number(i.price) || 0, quantity: Number(i.quantity) || 0,
+            taxable: treatAllTaxable ? true : !!i.taxable,
+        }));
+        const taxableSub = items.reduce((n, i) => n + (i.taxable ? i.price * i.quantity : 0), 0);
+        const ratePct = taxableSub > 0 && (Number(s.tax) || 0) > 0
+            ? Math.round((s.tax / taxableSub) * 10000) / 100
+            : defaultRate;
+
+        const priceKey = p => Math.round((Number(p) || 0) * 100);
+        const rows = items.map(i => {
+            for (const p of this._veMsProducts) {
+                const idx = p.link.options.findIndex(o => o.name === i.name && priceKey(o.price) === priceKey(i.price));
+                if (idx >= 0) return { productId: p.id, choice: p.link.options.length > 1 ? idx : null, qty: i.quantity, taxable: i.taxable };
+                if (!p.link.options.length && p.name === i.name && priceKey(p.price) === priceKey(i.price)) {
+                    return { productId: p.id, choice: null, qty: i.quantity, taxable: i.taxable };
+                }
+            }
+            return { productId: null, name: i.name, price: i.price, qty: i.quantity, taxable: i.taxable };
+        });
+
+        return {
+            mode: 'edit', eventMode: 'existing', eventId: s.event_id != null ? s.event_id : null,
+            date: s.date, ratePct, search: '', singles: new Map(),
+            groups: [{ buyer: s.billing_name || '', rows, adding: false, q: '' }],
+            orig: {
+                transaction_no: s.transaction_no, source: s.source, is_manual: !!s.is_manual,
+                event_id: s.event_id != null ? s.event_id : null, date: s.date,
+                sale: s, items, rawItems: raw, ratePct,
+            },
+        };
+    },
+
+    _veMsSaveEdit() {
+        const st = this._veMs;
+        const o = st.orig;
+        const c = this.veMsCompute();
+        if (c.count === 0) return;
+        const newEventId = st.eventId;
+        const date = st.date || o.date;
+        // Imported sales keep their sheet's source; manual sales follow their event.
+        const source = o.is_manual ? Database.getEventSaleSource(newEventId) : o.source;
+        const items = c.changed ? c.items : o.rawItems;
+        Database.updateVESale(o.transaction_no, o.source, {
+            transactionNo: o.transaction_no, date, billingName: st.groups[0].buyer || '',
+            subtotal: c.subtotal, tax: c.tax, shipping: c.shipping, discount: c.discount, total: c.total,
+            source, eventId: newEventId,
+        }, items);
+
+        for (const r of st.groups[0].rows) {
+            if (r.productId == null || r.qty <= 0) continue;
+            const p = this._veMsProductMap.get(r.productId);
+            if (p && !p.link.linked) Database.ensureProductLink(p.id, p.name, p.price);
+        }
+
+        UI.hideModal('veAddSalesModal');
+        this._veMs = null;
+        this.refreshVESales();
+        UI.showNotification(`Sale ${Utils.escapeHtml(o.transaction_no)} updated`, 'success');
+        if (c.changed || newEventId !== o.event_id || date !== o.date) {
+            this.veMsSyncJournals([o.event_id, newEventId]);
+        }
+    },
+
+    veDeleteSale(txNo, source) {
+        if (this.isViewOnly) return;
+        const s = (this._veSales || []).find(x => x.transaction_no === txNo && x.source === source);
+        if (!s) return;
+        const msg = `Delete sale ${txNo}? ` + (s.is_manual
+            ? 'This cannot be undone.'
+            : 'It will come back if you re-import that sheet.');
+        if (!confirm(msg)) return;
+        Database.deleteVESale(txNo, source);
+        this.refreshVESales();
+        UI.showNotification(`Sale ${Utils.escapeHtml(txNo)} deleted`, 'success');
+        this.veMsSyncJournals([s.event_id]);
+    },
+
+    /**
+     * After sales change, offer to update the journal entry of each affected
+     * event that already has one. Call after refreshVESales().
+     */
+    veMsSyncJournals(eventIds) {
+        const ids = [...new Set((eventIds || []).filter(id => id != null))];
+        if (!ids.length) return;
+        const events = Database.getAllVEEvents();
+        let changed = false;
+        for (const id of ids) {
+            const evt = events.find(e => e.id === id);
+            if (!evt || evt.journal_added !== 1) continue;
+            if (confirm(`This event's journal entry is out of date (${evt.name}). Update it now?`)) {
+                this.veUpdateJournalForEvent(id, evt);
+                changed = true;
+            }
+        }
+        if (changed) this.refreshAll();
+    },
+
     setupVESalesListeners() {
         // Filter controls
         document.getElementById('ve-filterSource').addEventListener('change', () => this.veApplyFilters());
@@ -14103,12 +14691,19 @@ const App = {
 
         // Clear data
         document.getElementById('veClearBtn').addEventListener('click', () => {
-            if (!confirm('Clear all VE Sales data? This cannot be undone.')) return;
-            Database.clearVESales();
+            const nManual = Database.getManualSaleCount();
+            const msg = nManual > 0
+                ? `Clear all VE Sales data, including ${nManual} manual sale${nManual !== 1 ? 's' : ''}? This cannot be undone.`
+                : 'Clear all VE Sales data? This cannot be undone.';
+            if (!confirm(msg)) return;
+            Database.clearVESales(null, { includeManual: true });
             Database.setVEImportMeta(null);
             this.refreshVESales();
             UI.showNotification('VE Sales data cleared', 'success');
         });
+
+        // Manual sales: Add Sales / Edit Sale window
+        this.veMsBindListeners();
 
         // Create Journal Entry button
         document.getElementById('veCreateJournalBtn').addEventListener('click', () => {
@@ -14956,6 +15551,16 @@ const App = {
     // ==================== CHANGE LOG ====================
 
     changelogData: [
+        {
+            version: '2.4',
+            date: '2026-11-14',
+            title: 'Manual Sales',
+            changes: [
+                { type: 'feature', text: 'VE Sales: "+ Add Sales" for sales that are not in your import sheets: count products into single sales or group sales, add to an existing event or a new one' },
+                { type: 'feature', text: 'Manual sales are kept when you re-import sheets, and show a "Manual" badge' },
+                { type: 'feature', text: 'Edit and Delete for any VE sale in the Transactions list, with an offer to update the event journal entry' }
+            ]
+        },
         {
             version: '2.3',
             date: '2026-11-07',

@@ -1252,8 +1252,11 @@
                             <option value="total-desc">Total (high)</option>
                             <option value="total-asc">Total (low)</option>
                             <option value="txno">Transaction No</option>
+                            <option value="manual-first">Manual first</option>
+                            <option value="imported-first">Imported first</option>
                         </select>
                     </div>
+                    <button type="button" class="btn btn-primary btn-sm ms-open-btn" id="veAddSalesBtn" title="Add sales that aren't in your import sheets">+ Add Sales</button>
                 </div>
 
                 <!-- Sub-tabs -->
@@ -1270,6 +1273,7 @@
                     </div>
                     <p class="ve-empty-title">No sales data yet</p>
                     <p class="ve-empty-hint">Open the import panel above to load Store Manager or Trade Show POS spreadsheets, or import a JSON export from the VE Dashboard app.</p>
+                    <button type="button" class="btn btn-primary btn-sm ms-empty-btn" id="veAddSalesEmptyBtn">+ Add Sales by Hand</button>
                 </div>
 
                 <!-- Dashboard (hidden until data loaded) -->
@@ -1355,6 +1359,7 @@
                                         <th class="num" data-vetxsort="tax">Tax <span class="ve-sort-arrow"></span></th>
                                         <th class="num" data-vetxsort="total">Total <span class="ve-sort-arrow"></span></th>
                                         <th>Items</th>
+                                        <th class="ve-tx-actions-head"><span class="sr-only">Actions</span></th>
                                     </tr>
                                 </thead>
                                 <tbody id="ve-txBody"></tbody>
@@ -1642,6 +1647,81 @@
                 </div>
                 <div class="modal-actions" style="margin-top:12px;">
                     <button type="button" class="btn btn-secondary" id="sdLpCancelBtn">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- VE Add Sales / Edit Sale Modal (manual sales) -->
+        <div id="veAddSalesModal" class="modal">
+            <div class="modal-content ms-modal" role="dialog" aria-labelledby="msTitle">
+                <h3 id="msTitle">Add Sales</h3>
+                <p class="ms-hint" id="msHint">For sales that aren't in your import sheets. Re-imports never remove these.</p>
+
+                <div class="ms-top">
+                    <div class="form-group ms-event-mode">
+                        <label>Event</label>
+                        <div class="ve-subtabs ms-seg" id="msEventSeg">
+                            <button type="button" class="ve-subtab active" data-ms-mode="existing">Existing</button>
+                            <button type="button" class="ve-subtab" data-ms-mode="new">+ New</button>
+                        </div>
+                    </div>
+                    <div class="form-group ms-event-pick" id="msEventExistingWrap">
+                        <label for="msEventSelect">Which event</label>
+                        <select id="msEventSelect"></select>
+                    </div>
+                    <div class="form-group">
+                        <label for="msDate">Sale date</label>
+                        <input type="date" id="msDate">
+                    </div>
+                    <div class="form-group ms-rate">
+                        <label for="msRate">Tax rate %</label>
+                        <input type="number" id="msRate" min="0" step="0.01" inputmode="decimal">
+                    </div>
+                </div>
+                <div class="ms-new-event" id="msEventNewWrap" style="display:none;">
+                    <div class="form-group">
+                        <label for="msNewEventName">Event name</label>
+                        <input type="text" id="msNewEventName" placeholder="e.g. OC Trade Show" maxlength="120">
+                    </div>
+                    <div class="form-group">
+                        <label for="msNewEventStart">Start date</label>
+                        <input type="date" id="msNewEventStart">
+                    </div>
+                    <div class="form-group">
+                        <label for="msNewEventEnd">End date</label>
+                        <input type="date" id="msNewEventEnd">
+                    </div>
+                </div>
+
+                <div class="ve-table-section ms-section" id="msSinglesSection">
+                    <h4 class="ms-section-title">Single Sales <small>Each item is its own sale. Qty 2 = 2 sales.</small></h4>
+                    <input type="text" class="pvm-search ms-search" id="msSearch" placeholder="Search products..." aria-label="Search products">
+                    <div class="ve-table-wrapper ms-table-wrap">
+                        <table class="ve-table ms-table">
+                            <thead>
+                                <tr><th>Product</th><th class="num">Price</th><th class="ms-th-qty">Qty</th><th class="num">Line Total</th></tr>
+                            </thead>
+                            <tbody id="msSinglesBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="ve-table-section ms-section" id="msGroupsSection">
+                    <h4 class="ms-section-title" id="msGroupsTitle">Group Sales <small>Several items bought together in one transaction.</small></h4>
+                    <div id="msGroups"></div>
+                    <button type="button" class="ms-add-group" id="msAddGroupBtn">+ Add Group Sale</button>
+                </div>
+
+                <div class="ms-foot">
+                    <div class="ms-summary" id="msSummary"></div>
+                    <div class="ms-totals" id="msTotals"></div>
+                </div>
+                <div class="ms-note" id="msJournalNote" style="display:none;">This event's journal entry has already been created. Saving will ask whether to update it.</div>
+                <div class="ms-note ms-note-muted" id="msImportedNote" style="display:none;">Changes to imported sales are replaced the next time you re-import that sheet.</div>
+
+                <div class="ms-actions">
+                    <button type="button" class="btn btn-secondary" id="msCancelBtn">Cancel</button>
+                    <button type="button" class="btn btn-primary" id="msSaveBtn" disabled>Add 0 Sales</button>
                 </div>
             </div>
         </div>
