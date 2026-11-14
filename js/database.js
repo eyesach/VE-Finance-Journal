@@ -4503,6 +4503,91 @@ const Database = {
         return map;
     },
 
+    // ---- Manual sales + per-sale edit/delete ----
+
+    getAllVETxNos() {
+        const r = this.db.exec('SELECT transaction_no FROM ve_sales');
+        return r.length ? r[0].values.map(v => v[0]) : [];
+    },
+
+    /**
+     * Source a new/moved manual sale takes on for an event: the most common
+     * source among the event's imported sales, else the event type
+     * (online_event → online), else tradeshow.
+     */
+    getEventSaleSource(eventId) {
+        if (eventId == null) return 'tradeshow';
+        const r = this.db.exec(`
+            SELECT source, COUNT(*) AS n FROM ve_sales
+            WHERE event_id = ? AND COALESCE(is_manual, 0) = 0
+            GROUP BY source ORDER BY n DESC LIMIT 1`, [eventId]);
+        if (r.length && r[0].values.length) return r[0].values[0][0];
+        const e = this.db.exec('SELECT type FROM ve_events WHERE id = ?', [eventId]);
+        const type = e.length && e[0].values.length ? e[0].values[0][0] : null;
+        return type === 'online_event' ? 'online' : 'tradeshow';
+    },
+
+    _insertVEItems(txNo, items, source) {
+        const stmt = this.db.prepare('INSERT INTO ve_sale_items (transaction_no, name, product_number, price, quantity, taxable, amount, inferred, source) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)');
+        for (const i of items) {
+            const qty = Number(i.quantity) || 0;
+            const amount = i.amount != null ? i.amount : Math.round((Number(i.price) || 0) * qty * 100) / 100;
+            stmt.run([txNo, i.name || 'Unknown', i.productNumber || null, Number(i.price) || 0, qty, i.taxable ? 1 : 0, amount, source]);
+        }
+        stmt.free();
+    },
+
+    /** Delete one sale's items: tagged with its source, or legacy untagged when no other source shares the number. */
+    _deleteVEItemsFor(txNo, source) {
+        this.db.run(`
+            DELETE FROM ve_sale_items
+            WHERE transaction_no = ?
+              AND (source = ?
+                   OR (source IS NULL AND NOT EXISTS (
+                       SELECT 1 FROM ve_sales WHERE transaction_no = ? AND source <> ?)))`,
+            [txNo, source, txNo, source]);
+    },
+
+    /** Insert sales built by Utils.buildManualSales. Returns their transaction numbers. */
+    insertManualSales(sales, { eventId = null, source = 'tradeshow' } = {}) {
+        const stmt = this.db.prepare(`INSERT INTO ve_sales
+            (transaction_no, date, billing_name, description, subtotal, tax, shipping, discount, total, source, event_id, is_manual)
+            VALUES (?, ?, ?, 'Manual entry', ?, ?, 0, 0, ?, ?, ?, 1)`);
+        for (const s of sales) {
+            stmt.run([s.transactionNo, s.date, s.billingName || '', s.subtotal || 0, s.tax || 0, s.total || 0, source, eventId]);
+        }
+        stmt.free();
+        for (const s of sales) this._insertVEItems(s.transactionNo, s.items || [], source);
+        this.autoSave();
+        return sales.map(s => s.transactionNo);
+    },
+
+    /**
+     * Update the sale identified by (origTxNo, origSource) and replace its items.
+     * is_manual and description are kept; source may change (items follow).
+     */
+    updateVESale(origTxNo, origSource, sale, items) {
+        this._deleteVEItemsFor(origTxNo, origSource);
+        this.db.run(`UPDATE ve_sales SET transaction_no = ?, date = ?, billing_name = ?, subtotal = ?, tax = ?,
+                     shipping = ?, discount = ?, total = ?, source = ?, event_id = ?
+                     WHERE transaction_no = ? AND source = ?`,
+            [sale.transactionNo || origTxNo, sale.date, sale.billingName || '', sale.subtotal || 0, sale.tax || 0,
+             sale.shipping || 0, sale.discount || 0, sale.total || 0, sale.source || origSource,
+             sale.eventId == null ? null : sale.eventId, origTxNo, origSource]);
+        this._insertVEItems(sale.transactionNo || origTxNo, items || [], sale.source || origSource);
+        this.autoSave();
+    },
+
+    deleteVESale(txNo, source) {
+        this._deleteVEItemsFor(txNo, source);
+        this.db.run('DELETE FROM ve_sales WHERE transaction_no = ? AND source = ?', [txNo, source]);
+        this.autoSave();
+    },
+
+    ensureProductLink(productId, name, price) {
+        this.addProductVeMapping(productId, name, price);
+    },
+
     getVEImportMeta() {
         const result = this.db.exec("SELECT value FROM app_meta WHERE key = 've_import_meta'");
         if (result.length === 0 || result[0].values.length === 0) return null;
