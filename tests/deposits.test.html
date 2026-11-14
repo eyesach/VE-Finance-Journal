@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Deposits — Unit Tests</title>
+<style>
+  body { font-family: 'DM Sans', system-ui, sans-serif; padding: 24px; background: #f3f4f6; }
+  h1 { font-size: 1.4rem; margin-bottom: 16px; }
+  .suite { margin-bottom: 20px; }
+  .suite h2 { font-size: 1rem; margin-bottom: 8px; border-bottom: 2px solid #3b82f6; padding-bottom: 4px; }
+  .test { padding: 6px 12px; margin: 2px 0; border-radius: 4px; font-size: 0.85rem; }
+  .test.pass { background: #d1fae5; color: #065f46; }
+  .test.fail { background: #fee2e2; color: #991b1b; }
+  .summary { margin-top: 20px; padding: 16px; background: #fff; border-radius: 8px; font-weight: 600; }
+  .error-detail { font-size: 0.78rem; color: #991b1b; margin-top: 2px; font-family: monospace; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<h1>Deposits — Unit Tests</h1>
+<div id="results"></div>
+<div id="summary" class="summary"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/sql-wasm.js"></script>
+<script src="../js/utils.js"></script>
+<script>window.CompanyManager = {};</script>
+<script src="../js/database.js"></script>
+
+<script>
+let passed = 0, failed = 0;
+const resultsEl = document.getElementById('results');
+
+function suite(name) {
+  const div = document.createElement('div');
+  div.className = 'suite';
+  div.innerHTML = `<h2>${name}</h2>`;
+  resultsEl.appendChild(div);
+  return div;
+}
+function test(suiteEl, name, fn) {
+  const div = document.createElement('div');
+  div.className = 'test';
+  try { fn(); div.className = 'test pass'; div.textContent = '✔ ' + name; passed++; }
+  catch (e) { div.className = 'test fail'; div.innerHTML = '✘ ' + name + `<div class="error-detail">${e.message || e}</div>`; failed++; }
+  suiteEl.appendChild(div);
+}
+function assert(cond, msg) { if (!cond) throw new Error(msg || 'Assertion failed'); }
+function assertEqual(a, b, msg) { if (a !== b) throw new Error((msg || 'Not equal') + `: got ${JSON.stringify(a)}, expected ${JSON.stringify(b)}`); }
+function assertClose(a, b, eps, msg) { if (Math.abs(a - b) > (eps === undefined ? 0.005 : eps)) throw new Error((msg || 'Not close') + `: got ${a}, expected ${b}`); }
+function assertThrows(fn, msgPart) {
+  let threw = false;
+  try { fn(); } catch (e) { threw = true; if (msgPart && !String(e.message).includes(msgPart)) throw new Error(`Threw "${e.message}", expected to include "${msgPart}"`); }
+  if (!threw) throw new Error('Expected to throw');
+}
+
+function reset() { Database.db = new Database.SQL.Database(); Database.createSchema(); return Database; }
+function rows(sql, params) { const r = Database.db.exec(sql, params || []); return r.length ? Database.rowsToObjects(r[0]) : []; }
+function txOf(type, depId) {
+  return depId === undefined
+    ? rows('SELECT * FROM transactions WHERE source_type = ?', [type])
+    : rows('SELECT * FROM transactions WHERE source_type = ? AND source_id = ?', [type, depId]);
+}
+function catOf(tx) { return rows('SELECT * FROM categories WHERE id = ?', [tx.category_id])[0]; }
+const LEASE = { name: 'Lease', amount: 2000, paid_date: '2026-03-01', expected_refund_date: '2028-02-28' };
+
+(async () => {
+  Database.SQL = await initSqlJs({ locateFile: f => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/${f}` });
+  Database.autoSave = () => {};
+
+  // ===================== Task 1 =====================
+  const s1 = suite('Deposits CRUD & entries');
+
+  test(s1, 'addDeposit creates paid deposit_payment in hidden Security Deposits category', () => {
+    reset();
+    const id = Database.addDeposit({ ...LEASE });
+    const t = txOf('deposit_payment', id);
+    assertEqual(t.length, 1, 'payment rows');
+    assertEqual(t[0].transaction_type, 'payable');
+    assertEqual(t[0].status, 'paid');
+    assertEqual(t[0].amount, 2000);
+    assertEqual(t[0].month_paid, '2026-03');
+    assertEqual(t[0].month_due, '2026-03');
+    assertEqual(t[0].item_description, 'Deposit: Lease');
+    const c = catOf(t[0]);
+    assertEqual(c.name, 'Security Deposits');
+    assertEqual(c.show_on_pl, 1);
+    assertEqual(Database.getDeposits().length, 1);
+    assertEqual(Database.getDepositById(id).name, 'Lease');
+  });
+
+  test(s1, 'addDeposit with createEntry=false creates no transaction', () => {
+    reset();
+    Database.addDeposit({ ...LEASE, createEntry: false });
+    assertEqual(rows('SELECT * FROM transactions').length, 0);
+  });
+
+  test(s1, 'updateDeposit syncs payment entry', () => {
+    reset();
+    const id = Database.addDeposit({ ...LEASE });
+    Database.updateDeposit(id, { ...LEASE, amount: 2500, paid_date: '2026-04-02', name: 'Office' });
+    const t = txOf('deposit_payment', id)[0];
+    assertEqual(t.amount, 2500);
+    assertEqual(t.month_paid, '2026-04');
+    assertEqual(t.entry_date, '2026-04-02');
+    assertEqual(t.item_description, 'Deposit: Office');
+    assertEqual(Database.getDepositById(id).amount, 2500);
+  });
+
+  test(s1, 'full refund creates received receivable for full amount, no withheld', () => {
+    reset();
+    const id = Database.addDeposit({ ...LEASE });
+    Database.markDepositRefunded(id, { refund_date: '2027-06-15', refunded_amount: 2000 });
+    const r = txOf('deposit_refund', id);
+    assertEqual(r.length, 1);
+    assertEqual(r[0].transaction_type, 'receivable');
+    assertEqual(r[0].status, 'received');
+    assertEqual(r[0].amount, 2000);
+    assertEqual(r[0].month_paid, '2027-06');
+    assertEqual(catOf(r[0]).name, 'Security Deposits');
+    assertEqual(txOf('deposit_withheld', id).length, 0);
+    const d = Database.getDepositById(id);
+    assertEqual(d.refunded_amount, 2000);
+    assertEqual(d.refunded_date, '2027-06-15');
+  });
+
+  test(s1, 'partial refund creates withheld expense in Deposit Forfeitures', () => {
+    reset();
+    const id = Database.addDeposit({ ...LEASE });
+    Database.markDepositRefunded(id, { refund_date: '2027-06-15', refunded_amount: 1700 });
+    assertEqual(txOf('deposit_refund', id)[0].amount, 2000, 'refund is full amount');
+    const w = txOf('deposit_withheld', id);
+    assertEqual(w.length, 1);
+    assertEqual(w[0].amount, 300);
+    assertEqual(w[0].status, 'paid');
+    assertEqual(w[0].transaction_type, 'payable');
+    assertEqual(w[0].month_paid, '2027-06');
+    const c = catOf(w[0]);
+    assertEqual(c.name, 'Deposit Forfeitures');
+    assertEqual(c.show_on_pl, 0);
+  });
+
+  test(s1, 'partial refund uses a chosen withheld category', () => {
+    reset();
+    const catId = Database.addCategory('Repairs', false, null, 'payable');
+    const id = Database.addDeposit({ ...LEASE });
+    Database.markDepositRefunded(id, { refund_date: '2027-06-15', refunded_amount: 1500, withheld_category_id: catId });
+    assertEqual(txOf('deposit_withheld', id)[0].category_id, catId);
+  });
+
+  test(s1, 'refund rejects date before paid_date and amount out of range', () => {
+    reset();
+    const id = Database.addDeposit({ ...LEASE });
+    assertThrows(() => Database.markDepositRefunded(id, { refund_date: '2026-02-28', refunded_amount: 2000 }));
+    assertThrows(() => Database.markDepositRefunded(id, { refund_date: '2027-01-01', refunded_amount: -1 }));
+    assertThrows(() => Database.markDepositRefunded(id, { refund_date: '2027-01-01', refunded_amount: 2000.01 }));
+    assertEqual(rows("SELECT * FROM transactions WHERE source_type IN ('deposit_refund','deposit_withheld')").length, 0);
+  });
+
+  test(s1, "updateDeposit on refunded deposit with amount change throws 'Undo refund first'", () => {
+    reset();
+    const id = Database.addDeposit({ ...LEASE });
+    Database.markDepositRefunded(id, { refund_date: '2027-06-15', refunded_amount: 2000 });
+    assertThrows(() => Database.updateDeposit(id, { ...LEASE, amount: 2100 }), 'Undo refund first');
+    assertThrows(() => Database.updateDeposit(id, { ...LEASE, paid_date: '2026-04-01' }), 'Undo refund first');
+    Database.updateDeposit(id, { ...LEASE, name: 'Renamed' });
+    assertEqual(Database.getDepositById(id).name, 'Renamed');
+    assertEqual(Database.getDepositById(id).refunded_amount, 2000, 'refund kept');
+  });
+
+  test(s1, 'undoDepositRefund removes refund rows and clears fields', () => {
+    reset();
+    const id = Database.addDeposit({ ...LEASE });
+    Database.markDepositRefunded(id, { refund_date: '2027-06-15', refunded_amount: 1700 });
+    Database.undoDepositRefund(id);
+    assertEqual(txOf('deposit_refund', id).length, 0);
+    assertEqual(txOf('deposit_withheld', id).length, 0);
+    assertEqual(txOf('deposit_payment', id).length, 1, 'payment kept');
+    const d = Database.getDepositById(id);
+    assertEqual(d.refunded_date, null);
+    assertEqual(d.refunded_amount, null);
+  });
+
+  test(s1, 'refund + undo on deposit without payment entry works, never creates deposit_payment', () => {
+    reset();
+    const id = Database.addDeposit({ ...LEASE, createEntry: false });
+    Database.markDepositRefunded(id, { refund_date: '2027-06-15', refunded_amount: 2000 });
+    Database.undoDepositRefund(id);
+    Database.updateDeposit(id, { ...LEASE, amount: 1800 });
+    assertEqual(txOf('deposit_payment').length, 0);
+    assertEqual(rows('SELECT * FROM transactions').length, 0);
+  });
+
+  test(s1, 'deleteDeposit removes row and all three entry types', () => {
+    reset();
+    const keep = Database.addDeposit({ ...LEASE, name: 'Other' });
+    const id = Database.addDeposit({ ...LEASE });
+    Database.markDepositRefunded(id, { refund_date: '2027-06-15', refunded_amount: 1700 });
+    Database.deleteDeposit(id);
+    assertEqual(Database.getDepositById(id), null);
+    assertEqual(rows('SELECT * FROM transactions WHERE source_id = ? AND source_type LIKE ?', [id, 'deposit_%']).length, 0);
+    assertEqual(txOf('deposit_payment', keep).length, 1, 'other deposit untouched');
+  });
+
+  test(s1, 'snapshot/restore round-trips a refunded deposit', () => {
+    reset();
+    const id = Database.addDeposit({ ...LEASE });
+    Database.markDepositRefunded(id, { refund_date: '2027-06-15', refunded_amount: 1700 });
+    const before = rows("SELECT id FROM transactions WHERE source_id = ? AND source_type LIKE 'deposit_%' ORDER BY id", [id]).map(r => r.id);
+    const snap = Database.snapshotDeposit(id);
+    assertEqual(snap.id, id);
+    Database.deleteDeposit(id);
+    Database.restoreDeposit(snap);
+    const d = Database.getDepositById(id);
+    assert(d, 'deposit back');
+    assertEqual(d.refunded_amount, 1700);
+    const after = rows("SELECT id FROM transactions WHERE source_id = ? AND source_type LIKE 'deposit_%' ORDER BY id", [id]).map(r => r.id);
+    assertEqual(JSON.stringify(after), JSON.stringify(before));
+  });
+
+  test(s1, 'restoreDeposit of an empty (pre-add) snapshot deletes the deposit', () => {
+    reset();
+    const id = Database.addDeposit({ ...LEASE });
+    Database.restoreDeposit({ id, deposit: null, transactions: [] });
+    assertEqual(Database.getDepositById(id), null);
+    assertEqual(txOf('deposit_payment', id).length, 0);
+  });
+
+  // @@NEXT_SUITE@@
+
+  document.getElementById('summary').textContent = `${passed}/${passed + failed} tests passed, ${failed} failed`;
+})().catch(e => { document.getElementById('summary').textContent = 'CRASH: ' + e.message; });
+</script>
+</body>
+</html>

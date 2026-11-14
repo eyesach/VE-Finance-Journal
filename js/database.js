@@ -171,6 +171,8 @@ const Database = {
             )
         `);
 
+        this.db.run(this.DEPOSITS_TABLE_SQL);
+
         this.db.run(`
             CREATE TABLE IF NOT EXISTS loans (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -547,6 +549,9 @@ const Database = {
 
         try { this.db.exec('SELECT notes FROM balance_sheet_assets LIMIT 1'); }
         catch (e) { this.db.run('ALTER TABLE balance_sheet_assets ADD COLUMN notes TEXT'); }
+
+        // === deposits table ===
+        this.db.run(this.DEPOSITS_TABLE_SQL);
 
         // === source_type and source_id on transactions ===
         try { this.db.exec('SELECT source_type FROM transactions LIMIT 1'); }
@@ -2411,6 +2416,231 @@ const Database = {
         });
 
         return result;
+    },
+
+    // ==================== DEPOSITS ====================
+
+    DEPOSIT_SOURCE_TYPES: ['deposit_payment', 'deposit_refund', 'deposit_withheld'],
+
+    DEPOSITS_TABLE_SQL: `
+        CREATE TABLE IF NOT EXISTS deposits (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            amount DECIMAL(10,2) NOT NULL,
+            paid_date DATE NOT NULL,
+            expected_refund_date DATE,
+            refunded_date DATE,
+            refunded_amount DECIMAL(10,2),
+            notes TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    `,
+
+    /**
+     * Get all deposits
+     * @returns {Array} Deposit rows ordered by paid date, then name
+     */
+    getDeposits() {
+        return this._depositRows('SELECT * FROM deposits ORDER BY paid_date ASC, name ASC');
+    },
+
+    /**
+     * Get a deposit by ID
+     * @param {number} id
+     * @returns {Object|null}
+     */
+    getDepositById(id) {
+        return this._depositRows('SELECT * FROM deposits WHERE id = ?', [id])[0] || null;
+    },
+
+    _depositRows(sql, params = []) {
+        const r = this.db.exec(sql, params);
+        return r.length ? this.rowsToObjects(r[0]) : [];
+    },
+
+    _depositTx(depositId, sourceType) {
+        return this._depositRows('SELECT * FROM transactions WHERE source_id = ? AND source_type = ?', [depositId, sourceType])[0] || null;
+    },
+
+    _deleteDepositTx(id, types) {
+        const ph = types.map(() => '?').join(', ');
+        this.db.run(`DELETE FROM transactions WHERE source_id = ? AND source_type IN (${ph})`, [id, ...types]);
+    },
+
+    /**
+     * Get or create the hidden-from-P&L "Security Deposits" category
+     * @returns {number} Category ID
+     */
+    getOrCreateSecurityDepositsCategory() {
+        const r = this.db.exec("SELECT id FROM categories WHERE name = 'Security Deposits' LIMIT 1");
+        if (r.length && r[0].values.length) return r[0].values[0][0];
+        // show_on_pl=true means hidden from P&L (inverted semantics)
+        return this.addCategory('Security Deposits', false, null, 'payable', null, true);
+    },
+
+    /**
+     * Get or create the P&L-visible "Deposit Forfeitures" expense category
+     * @returns {number} Category ID
+     */
+    getOrCreateDepositForfeituresCategory() {
+        const r = this.db.exec("SELECT id FROM categories WHERE name = 'Deposit Forfeitures' LIMIT 1");
+        if (r.length && r[0].values.length) return r[0].values[0][0];
+        return this.addCategory('Deposit Forfeitures', false, null, 'payable', null, false);
+    },
+
+    /**
+     * Add a deposit, optionally creating its paid "deposit_payment" journal entry
+     * @param {Object} d - { name, amount, paid_date, expected_refund_date, notes, createEntry }
+     * @returns {number} New deposit ID
+     */
+    addDeposit({ name, amount, paid_date, expected_refund_date = null, notes = null, createEntry = true }) {
+        this.db.run(
+            'INSERT INTO deposits (name, amount, paid_date, expected_refund_date, notes) VALUES (?, ?, ?, ?, ?)',
+            [name.trim(), amount, paid_date, expected_refund_date || null, notes || null]
+        );
+        const id = this.db.exec('SELECT last_insert_rowid() as id')[0].values[0][0];
+        if (createEntry) {
+            const month = paid_date.substring(0, 7);
+            this.addTransaction({
+                entry_date: paid_date,
+                category_id: this.getOrCreateSecurityDepositsCategory(),
+                item_description: `Deposit: ${name.trim()}`,
+                amount,
+                transaction_type: 'payable',
+                status: 'paid',
+                month_due: month,
+                month_paid: month,
+                date_processed: paid_date,
+                source_type: 'deposit_payment',
+                source_id: id
+            });
+        }
+        this.autoSave();
+        return id;
+    },
+
+    /**
+     * Update a deposit and its payment entry (if any).
+     * Amount and paid date are locked while the deposit is refunded.
+     * @param {number} id
+     * @param {Object} d - { name, amount, paid_date, expected_refund_date, notes }
+     */
+    updateDeposit(id, { name, amount, paid_date, expected_refund_date = null, notes = null }) {
+        const cur = this.getDepositById(id);
+        if (!cur) throw new Error('Deposit not found');
+        if (cur.refunded_date && (Number(amount) !== Number(cur.amount) || paid_date !== cur.paid_date)) {
+            throw new Error('Undo refund first');
+        }
+        this.db.run(
+            'UPDATE deposits SET name = ?, amount = ?, paid_date = ?, expected_refund_date = ?, notes = ? WHERE id = ?',
+            [name.trim(), amount, paid_date, expected_refund_date || null, notes || null, id]
+        );
+        const pay = this._depositTx(id, 'deposit_payment');
+        if (pay) {
+            const month = paid_date.substring(0, 7);
+            this.db.run(
+                'UPDATE transactions SET amount = ?, entry_date = ?, date_processed = ?, month_due = ?, month_paid = ?, item_description = ? WHERE id = ?',
+                [amount, paid_date, paid_date, month, month, `Deposit: ${name.trim()}`, pay.id]
+            );
+        }
+        this.autoSave();
+    },
+
+    /**
+     * Delete a deposit and all of its journal entries
+     * @param {number} id
+     */
+    deleteDeposit(id) {
+        this._deleteDepositTx(id, this.DEPOSIT_SOURCE_TYPES);
+        this.db.run('DELETE FROM deposits WHERE id = ?', [id]);
+        this.autoSave();
+    },
+
+    /**
+     * Mark a deposit refunded. Records the full amount coming back (received receivable)
+     * and, if part was withheld, a paid expense for the withheld portion.
+     * Net cash effect = refunded_amount; withheld portion hits the P&L.
+     * @param {number} id
+     * @param {Object} r - { refund_date, refunded_amount, withheld_category_id }
+     */
+    markDepositRefunded(id, { refund_date, refunded_amount, withheld_category_id = null }) {
+        const d = this.getDepositById(id);
+        if (!d) throw new Error('Deposit not found');
+        if (d.refunded_date) throw new Error('Deposit is already refunded');
+        if (!refund_date || refund_date < d.paid_date) throw new Error('Refund date cannot be before the paid date');
+        const returned = Math.round(Number(refunded_amount) * 100) / 100;
+        if (!(returned >= 0) || returned > Number(d.amount)) throw new Error('Amount returned must be between 0 and the deposit amount');
+
+        const month = refund_date.substring(0, 7);
+        const base = { entry_date: refund_date, month_due: month, month_paid: month, date_processed: refund_date, source_id: id };
+        this.addTransaction({
+            ...base,
+            category_id: this.getOrCreateSecurityDepositsCategory(),
+            item_description: `Deposit refund: ${d.name}`,
+            amount: d.amount,
+            transaction_type: 'receivable',
+            status: 'received',
+            source_type: 'deposit_refund'
+        });
+        const withheld = Math.round((Number(d.amount) - returned) * 100) / 100;
+        if (withheld > 0) {
+            this.addTransaction({
+                ...base,
+                category_id: withheld_category_id || this.getOrCreateDepositForfeituresCategory(),
+                item_description: `Deposit withheld: ${d.name}`,
+                amount: withheld,
+                transaction_type: 'payable',
+                status: 'paid',
+                source_type: 'deposit_withheld'
+            });
+        }
+        this.db.run('UPDATE deposits SET refunded_date = ?, refunded_amount = ? WHERE id = ?', [refund_date, returned, id]);
+        this.autoSave();
+    },
+
+    /**
+     * Reverse a refund: remove refund/withheld entries and clear refund fields
+     * @param {number} id
+     */
+    undoDepositRefund(id) {
+        this._deleteDepositTx(id, ['deposit_refund', 'deposit_withheld']);
+        this.db.run('UPDATE deposits SET refunded_date = NULL, refunded_amount = NULL WHERE id = ?', [id]);
+        this.autoSave();
+    },
+
+    /**
+     * Capture a deposit and its journal entries for undo/redo
+     * @param {number} id
+     * @returns {{id: number, deposit: Object|null, transactions: Array<Object>}}
+     */
+    snapshotDeposit(id) {
+        const ph = this.DEPOSIT_SOURCE_TYPES.map(() => '?').join(', ');
+        return {
+            id,
+            deposit: this.getDepositById(id),
+            transactions: this._depositRows(
+                `SELECT * FROM transactions WHERE source_id = ? AND source_type IN (${ph}) ORDER BY id`,
+                [id, ...this.DEPOSIT_SOURCE_TYPES]
+            )
+        };
+    },
+
+    /**
+     * Restore a snapshot from snapshotDeposit (a null deposit means "should not exist")
+     * @param {{id: number, deposit: Object|null, transactions: Array<Object>}} snap
+     */
+    restoreDeposit(snap) {
+        this._deleteDepositTx(snap.id, this.DEPOSIT_SOURCE_TYPES);
+        this.db.run('DELETE FROM deposits WHERE id = ?', [snap.id]);
+        if (snap.deposit) {
+            const cols = Object.keys(snap.deposit);
+            this.db.run(
+                `INSERT INTO deposits (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`,
+                cols.map(c => snap.deposit[c])
+            );
+            this.restoreTransactionRows(snap.transactions);
+        }
+        this.autoSave();
     },
 
     // ==================== LOANS ====================
