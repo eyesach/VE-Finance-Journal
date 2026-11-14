@@ -2389,6 +2389,39 @@ body.edit-mode .pnl-overridden::after { content: ' *'; color: var(--text-muted);
 .asset-depr-table th:first-child, .asset-depr-table td:first-child { text-align: left; }
 .asset-depr-table tbody tr:hover { background: var(--surface-hover); }
 .asset-detail-notes { margin-top: 10px; font-size: var(--font-xs); color: var(--text-muted); font-style: italic; }
+/* ===== Deposits & Other Assets ===== */
+.deposits-section .deposits-subtitle { margin: 2px 0 0; font-size: var(--font-xs); color: var(--text-muted); }
+.deposits-list-panel { padding: 4px 0 6px; }
+.deposits-list-panel .empty-state { padding: 18px; }
+.deposits-table-wrapper { overflow-x: auto; }
+.deposits-table { width: 100%; border-collapse: collapse; font-size: var(--font-sm); }
+.deposits-table th, .deposits-table td { padding: 9px 14px; text-align: left; border-bottom: 1px solid var(--border-light); vertical-align: middle; }
+.deposits-table th { background: var(--surface-alt); font-weight: 700; text-transform: uppercase; font-size: var(--font-xs); letter-spacing: 0.4px; color: var(--text-muted); }
+.deposits-table tbody tr { transition: background var(--transition-fast); }
+.deposits-table tbody tr:hover { background: var(--surface-hover); }
+.deposits-table tbody tr:last-child td { border-bottom: none; }
+.deposits-table .deposit-num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.deposits-table td:nth-child(3), .deposits-table td:nth-child(4) { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.deposit-name-cell { font-weight: 500; }
+.deposit-sub { font-size: var(--font-xs); color: var(--text-muted); font-weight: 400; margin-top: 2px; font-family: inherit; }
+.deposit-actions { white-space: nowrap; text-align: right; }
+.deposit-actions .btn-icon { opacity: 0.55; transition: opacity var(--transition-fast); }
+.deposits-table tbody tr:hover .deposit-actions .btn-icon, .deposit-actions .btn-icon:focus-visible { opacity: 1; }
+.deposit-actions-head .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.deposit-status { display: inline-flex; align-items: center; gap: 5px; font-size: var(--font-xs); font-weight: 600; padding: 3px 10px; border-radius: 999px; white-space: nowrap; border: 1px solid transparent; }
+.deposit-status::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.deposit-status-current { background: var(--green-bg); color: var(--green); }
+.deposit-status-longterm { background: rgba(var(--color-primary-rgb), 0.1); color: var(--c2, var(--primary)); }
+.deposit-status-overdue { background: var(--amber-bg); color: var(--amber); border-color: var(--amber); }
+.deposit-status-refunded, .deposit-status-upcoming { background: var(--surface-alt); color: var(--text-muted); }
+.deposit-optional { font-weight: 400; color: var(--text-muted); font-size: var(--font-xs); }
+.deposit-refund-summary { margin: -4px 0 14px; font-size: var(--font-sm); color: var(--text-muted); }
+body.view-only-mode .deposit-actions { display: none; }
+@media (max-width: 768px) {
+    .deposits-table th:nth-child(3), .deposits-table td:nth-child(3) { display: none; }
+    .deposits-table th, .deposits-table td { padding: 8px 10px; }
+}
+
 .equity-section { margin: 20px 22px 18px; padding-top: 20px; border-top: 2px solid var(--c5, var(--border)); }
 .equity-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
 .equity-header h3 { margin: 0; font-size: var(--font-md); font-weight: 600; }

@@ -75,6 +75,7 @@ const App = {
     deleteCategoryTargetId: null,
     deleteFolderTargetId: null,
     deleteAssetTargetId: null,
+    deleteDepositTargetId: null,
     deleteLoanTargetId: null,
     deleteB2BContractTargetId: null,
     selectedB2BContractId: null,
@@ -5085,6 +5086,30 @@ const App = {
 
         document.getElementById('addAssetTabBtn').addEventListener('click', () => this.openFixedAssetModal());
 
+        // ==================== DEPOSITS ====================
+        document.getElementById('addDepositBtn').addEventListener('click', () => this.openDepositModal());
+        document.getElementById('depositForm').addEventListener('submit', (e) => { e.preventDefault(); this.handleSaveDeposit(); });
+        document.getElementById('cancelDepositBtn').addEventListener('click', () => UI.hideModal('depositModal'));
+        document.getElementById('depositRefundForm').addEventListener('submit', (e) => { e.preventDefault(); this.handleSaveDepositRefund(); });
+        document.getElementById('cancelDepositRefundBtn').addEventListener('click', () => UI.hideModal('depositRefundModal'));
+        document.getElementById('refundAmount').addEventListener('input', () => this._updateRefundWithheldRow());
+        document.getElementById('confirmDeleteDepositBtn').addEventListener('click', () => this.confirmDeleteDeposit());
+        document.getElementById('cancelDeleteDepositBtn').addEventListener('click', () => {
+            UI.hideModal('deleteDepositModal');
+            this.deleteDepositTargetId = null;
+        });
+        document.getElementById('depositsListPanel').addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-deposit-action]');
+            if (!btn) return;
+            const id = parseInt(btn.dataset.depositId, 10);
+            switch (btn.dataset.depositAction) {
+                case 'edit': this.openDepositModal(id); break;
+                case 'refund': this.openDepositRefundModal(id); break;
+                case 'undo-refund': this.handleUndoDepositRefund(id); break;
+                case 'delete': this.handleDeleteDeposit(id); break;
+            }
+        });
+
         // Assets list panel click delegation
         document.getElementById('assetsListPanel').addEventListener('click', (e) => {
             const editBtn = e.target.closest('.edit-asset-btn');
@@ -7710,6 +7735,7 @@ const App = {
     refreshFixedAssets() {
         const assets = Database.getFixedAssets();
         UI.renderFixedAssetsTab(assets, this.selectedAssetId);
+        UI.renderDepositsSection(Database.getDeposits(), Utils.getCurrentMonth());
         // Also render equity section
         const equityConfig = Database.getEquityConfig();
         UI.renderEquitySection(equityConfig);
@@ -8003,6 +8029,175 @@ const App = {
         }
         UI.hideModal('deleteAssetModal');
         this.deleteAssetTargetId = null;
+    },
+
+    // ==================== DEPOSITS HANDLERS ====================
+
+    /**
+     * Run a deposit mutation with undo/redo snapshots, then refresh everything
+     * (deposit actions create/remove journal entries, so all views can change).
+     * @param {number|null} id - Deposit ID (null for add; fn must return the new ID)
+     * @param {string} label - Undo label, e.g. 'Add deposit "Lease"'
+     * @param {Function} fn - Performs the mutation; returns the deposit ID
+     */
+    _runDepositAction(id, label, fn) {
+        const before = id ? Database.snapshotDeposit(id) : null;
+        const resultId = fn();
+        const depId = id || resultId;
+        const beforeSnap = before || { id: depId, deposit: null, transactions: [] };
+        const after = Database.snapshotDeposit(depId);
+        this.pushUndo({
+            type: 'deposit',
+            label,
+            undo: () => Database.restoreDeposit(beforeSnap),
+            redo: () => Database.restoreDeposit(after)
+        });
+        this.refreshAll();
+        return depId;
+    },
+
+    openDepositModal(id = null) {
+        if (this._guardViewOnly()) return;
+        const form = document.getElementById('depositForm');
+        form.reset();
+        const dep = id ? Database.getDepositById(id) : null;
+        document.getElementById('editingDepositId').value = dep ? dep.id : '';
+        document.getElementById('depositModalTitle').textContent = dep ? 'Edit Deposit' : 'Add Deposit';
+        document.getElementById('saveDepositBtn').textContent = dep ? 'Save Changes' : 'Add Deposit';
+        document.getElementById('depositName').value = dep ? dep.name : '';
+        document.getElementById('depositAmount').value = dep ? dep.amount : '';
+        document.getElementById('depositPaidDate').value = dep ? dep.paid_date : Utils.getTodayDate();
+        document.getElementById('depositExpectedRefundDate').value = dep && dep.expected_refund_date ? dep.expected_refund_date : '';
+        document.getElementById('depositNotes').value = dep && dep.notes ? dep.notes : '';
+        document.getElementById('depositAutoTransaction').checked = true;
+        document.getElementById('depositAutoTransactionRow').style.display = dep ? 'none' : '';
+        // Amount and paid date are locked while refunded (refund entries depend on them)
+        const locked = !!(dep && dep.refunded_date);
+        document.getElementById('depositAmount').disabled = locked;
+        document.getElementById('depositPaidDate').disabled = locked;
+        document.getElementById('depositAmount').title = locked ? 'Undo refund first to change the amount' : '';
+        document.getElementById('depositPaidDate').title = locked ? 'Undo refund first to change the date' : '';
+        UI.showModal('depositModal');
+        document.getElementById('depositName').focus();
+    },
+
+    handleSaveDeposit() {
+        if (this._guardViewOnly()) return;
+        const id = parseInt(document.getElementById('editingDepositId').value, 10) || null;
+        const data = {
+            name: document.getElementById('depositName').value.trim(),
+            amount: Math.round(parseFloat(document.getElementById('depositAmount').value) * 100) / 100,
+            paid_date: document.getElementById('depositPaidDate').value,
+            expected_refund_date: document.getElementById('depositExpectedRefundDate').value || null,
+            notes: document.getElementById('depositNotes').value.trim() || null
+        };
+        if (!data.name) return UI.showNotification('Please enter a name', 'error');
+        if (!(data.amount > 0)) return UI.showNotification('Amount must be greater than 0', 'error');
+        if (!data.paid_date) return UI.showNotification('Please enter the date paid', 'error');
+        if (data.expected_refund_date && data.expected_refund_date < data.paid_date) {
+            return UI.showNotification('Expected refund date cannot be before the date paid', 'error');
+        }
+        try {
+            if (id) {
+                this._runDepositAction(id, `Edit deposit "${data.name}"`, () => { Database.updateDeposit(id, data); return id; });
+                UI.showNotification('Deposit updated', 'success');
+            } else {
+                const createEntry = document.getElementById('depositAutoTransaction').checked;
+                this._runDepositAction(null, `Add deposit "${data.name}"`, () => Database.addDeposit({ ...data, createEntry }));
+                UI.showNotification(createEntry ? 'Deposit added with a journal entry' : 'Deposit added', 'success');
+            }
+            UI.hideModal('depositModal');
+        } catch (err) {
+            console.error('Error saving deposit:', err);
+            UI.showNotification(err.message || 'Failed to save deposit', 'error');
+        }
+    },
+
+    openDepositRefundModal(id) {
+        if (this._guardViewOnly()) return;
+        const dep = Database.getDepositById(id);
+        if (!dep) return;
+        document.getElementById('depositRefundForm').reset();
+        document.getElementById('refundDepositId').value = dep.id;
+        document.getElementById('depositRefundSummary').textContent =
+            `${dep.name} · ${Utils.formatCurrency(dep.amount)} paid ${Utils.formatDate(dep.paid_date)}`;
+        const today = Utils.getTodayDate();
+        document.getElementById('refundDate').value = today < dep.paid_date ? dep.paid_date : today;
+        document.getElementById('refundDate').min = dep.paid_date;
+        const amt = document.getElementById('refundAmount');
+        amt.value = dep.amount;
+        amt.max = dep.amount;
+
+        // Withheld category options: P&L-visible payable categories; default Deposit Forfeitures
+        // Empty value = "Deposit Forfeitures", created on save only if needed
+        const cats = Database.getCategories().filter(c =>
+            c.show_on_pl != 1 && !c.is_sales_tax && !c.is_sales && !c.is_b2b && c.default_type !== 'receivable'
+            && c.name !== 'Deposit Forfeitures');
+        const sel = document.getElementById('refundWithheldCategory');
+        sel.innerHTML = '<option value="" selected>Deposit Forfeitures</option>' + cats.map(c =>
+            `<option value="${c.id}">${Utils.escapeHtml(c.name)}</option>`).join('');
+        this._updateRefundWithheldRow();
+        UI.showModal('depositRefundModal');
+        amt.focus();
+    },
+
+    _updateRefundWithheldRow() {
+        const dep = Database.getDepositById(parseInt(document.getElementById('refundDepositId').value, 10));
+        if (!dep) return;
+        const returned = parseFloat(document.getElementById('refundAmount').value);
+        const withheld = isNaN(returned) ? 0 : Math.round((dep.amount - returned) * 100) / 100;
+        document.getElementById('refundWithheldRow').style.display = withheld > 0 && returned >= 0 ? '' : 'none';
+        document.getElementById('refundWithheldAmount').textContent = withheld > 0 ? Utils.formatCurrency(withheld) : '';
+    },
+
+    handleSaveDepositRefund() {
+        if (this._guardViewOnly()) return;
+        const id = parseInt(document.getElementById('refundDepositId').value, 10);
+        const dep = Database.getDepositById(id);
+        if (!dep) return;
+        const refund_date = document.getElementById('refundDate').value;
+        const refunded_amount = parseFloat(document.getElementById('refundAmount').value);
+        if (!refund_date) return UI.showNotification('Please enter the refund date', 'error');
+        if (isNaN(refunded_amount)) return UI.showNotification('Please enter the amount returned', 'error');
+        const withheld_category_id = parseInt(document.getElementById('refundWithheldCategory').value, 10) || null;
+        try {
+            this._runDepositAction(id, `Refund deposit "${dep.name}"`, () => {
+                Database.markDepositRefunded(id, { refund_date, refunded_amount, withheld_category_id });
+                return id;
+            });
+            UI.hideModal('depositRefundModal');
+            UI.showNotification('Deposit marked refunded', 'success');
+        } catch (err) {
+            UI.showNotification(err.message || 'Failed to record refund', 'error');
+        }
+    },
+
+    handleUndoDepositRefund(id) {
+        if (this._guardViewOnly()) return;
+        const dep = Database.getDepositById(id);
+        if (!dep) return;
+        this._runDepositAction(id, `Undo refund of "${dep.name}"`, () => { Database.undoDepositRefund(id); return id; });
+        UI.showNotification('Refund removed', 'success');
+    },
+
+    handleDeleteDeposit(id) {
+        if (this._guardViewOnly()) return;
+        const dep = Database.getDepositById(id);
+        if (!dep) return;
+        this.deleteDepositTargetId = id;
+        document.getElementById('deleteDepositMessage').textContent =
+            `Delete "${dep.name}"? This also removes its journal entries (payment${dep.refunded_date ? ' and refund' : ''}).`;
+        UI.showModal('deleteDepositModal');
+    },
+
+    confirmDeleteDeposit() {
+        const id = this.deleteDepositTargetId;
+        this.deleteDepositTargetId = null;
+        UI.hideModal('deleteDepositModal');
+        if (!id || this._guardViewOnly()) return;
+        const dep = Database.getDepositById(id);
+        this._runDepositAction(id, `Delete deposit "${dep ? dep.name : ''}"`, () => { Database.deleteDeposit(id); return id; });
+        UI.showNotification('Deposit deleted', 'success');
     },
 
     // ==================== EQUITY CONFIG HANDLERS ====================
@@ -11785,7 +11980,7 @@ const App = {
             'veCreateJournalBtn', 'veClearBtn', 'veImportSubmit',
             'veSyncFromServer', 'veAddEventBtn', 'veAddAllToJournalBtn',
             'veRemoveAllFromJournalBtn', 'sdUseInBreakevenBtn',
-            'veAddSalesBtn', 'veAddSalesEmptyBtn'
+            'veAddSalesBtn', 'veAddSalesEmptyBtn', 'addDepositBtn'
         ];
         hideIds.forEach(id => {
             const el = document.getElementById(id);

@@ -1900,6 +1900,76 @@ const UI = {
      * @param {Array} assets - Array of asset objects
      * @param {number|null} selectedAssetId - Currently selected asset ID
      */
+    /**
+     * Render the Deposits & Other Assets panel on the Fixed Assets tab
+     * @param {Array} deposits - Deposit rows from Database.getDeposits()
+     * @param {string} todayMonth - YYYY-MM used for status pills and summary
+     */
+    renderDepositsSection(deposits, todayMonth) {
+        const fmtAmt = (amt) => Utils.formatCurrency(amt);
+        const fmtDate = (d) => (d ? Utils.formatDate(d) : '—');
+        const round2 = (v) => Math.round(v * 100) / 100;
+
+        let held = 0, current = 0, longTerm = 0;
+        const rowsData = deposits.map(d => {
+            const c = Utils.classifyDeposit(d, todayMonth);
+            let status;
+            if (d.refunded_date) status = { cls: 'refunded', label: 'Refunded' };
+            else if (!c.held) status = { cls: 'upcoming', label: 'Not yet paid' };
+            else if (c.overdue) status = { cls: 'overdue', label: 'Overdue' };
+            else if (c.bucket === 'current') status = { cls: 'current', label: 'Held · Current' };
+            else status = { cls: 'longterm', label: 'Held · Long-term' };
+            if (c.held) {
+                held = round2(held + d.amount);
+                if (c.bucket === 'current') current = round2(current + d.amount);
+                else longTerm = round2(longTerm + d.amount);
+            }
+            return { d, status };
+        });
+
+        const summary = document.getElementById('depositsSummaryCards');
+        if (summary) {
+            summary.innerHTML = `
+                <div class="assets-summary-card"><span class="assets-summary-label">Held Now</span><span class="assets-summary-value">${fmtAmt(held)}</span></div>
+                <div class="assets-summary-card"><span class="assets-summary-label">Current (≤ 12 mo)</span><span class="assets-summary-value">${fmtAmt(current)}</span></div>
+                <div class="assets-summary-card"><span class="assets-summary-label">Long-term</span><span class="assets-summary-value">${fmtAmt(longTerm)}</span></div>
+            `;
+        }
+
+        const panel = document.getElementById('depositsListPanel');
+        if (!panel) return;
+        if (deposits.length === 0) {
+            panel.innerHTML = '<p class="empty-state">No deposits yet. Add a rent or utility deposit you expect to get back.</p>';
+            return;
+        }
+
+        const body = rowsData.map(({ d, status }) => {
+            const refundCell = d.refunded_date
+                ? `${fmtDate(d.refunded_date)}<div class="deposit-sub">${fmtAmt(d.refunded_amount)} returned${d.refunded_amount < d.amount ? ` · ${fmtAmt(round2(d.amount - d.refunded_amount))} withheld` : ''}</div>`
+                : fmtDate(d.expected_refund_date);
+            const refundAction = d.refunded_date
+                ? `<button class="btn btn-secondary btn-small" data-deposit-action="undo-refund" data-deposit-id="${d.id}">Undo refund</button>`
+                : `<button class="btn btn-secondary btn-small" data-deposit-action="refund" data-deposit-id="${d.id}">Mark refunded</button>`;
+            return `<tr>
+                <td class="deposit-name-cell">${Utils.escapeHtml(d.name)}${d.notes ? `<div class="deposit-sub">${Utils.escapeHtml(d.notes)}</div>` : ''}</td>
+                <td class="deposit-num">${fmtAmt(d.amount)}</td>
+                <td>${fmtDate(d.paid_date)}</td>
+                <td>${refundCell}</td>
+                <td><span class="deposit-status deposit-status-${status.cls}">${status.label}</span></td>
+                <td class="deposit-actions">
+                    ${refundAction}
+                    <button class="btn-icon" data-deposit-action="edit" data-deposit-id="${d.id}" title="Edit" aria-label="Edit ${Utils.escapeHtml(d.name)}">&#9998;</button>
+                    <button class="btn-icon" data-deposit-action="delete" data-deposit-id="${d.id}" title="Delete" aria-label="Delete ${Utils.escapeHtml(d.name)}">&times;</button>
+                </td>
+            </tr>`;
+        }).join('');
+
+        panel.innerHTML = `<div class="deposits-table-wrapper"><table class="deposits-table">
+            <thead><tr><th>Name</th><th class="deposit-num">Amount</th><th>Paid</th><th>Refund</th><th>Status</th><th class="deposit-actions-head"><span class="sr-only">Actions</span></th></tr></thead>
+            <tbody>${body}</tbody>
+        </table></div>`;
+    },
+
     renderFixedAssetsTab(assets, selectedAssetId) {
         const fmtAmt = (amt) => Utils.formatCurrency(amt);
 
