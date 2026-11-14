@@ -3210,6 +3210,8 @@ body.edit-mode .pnl-overridden::after { content: ' *'; color: var(--text-muted);
 .ms-actions .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
 .ve-source-badge.manual { background: var(--amber-bg); color: var(--amber); margin-left: 4px; }
 .ve-tx-actions { white-space: nowrap; text-align: right; }
+.ve-table th.ve-tx-actions-head { cursor: default; }
+.ve-tx-actions-head .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .ve-tx-actions button { border: none; background: none; cursor: pointer; font-size: var(--font-xs); font-weight: 600; color: var(--text-secondary); padding: 2px 6px; border-radius: 4px; font-family: inherit; }
 .ve-tx-actions button:hover { background: var(--surface-hover); color: var(--c2, var(--primary)); }
 .ve-tx-actions button.ve-tx-del:hover { background: var(--red-bg); color: var(--red); }

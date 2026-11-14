@@ -1364,6 +1364,19 @@ const Utils = {
     },
 
     /**
+     * Did an edit change anything that affects a sale's amounts?
+     * Compares items by name, price (to the cent), quantity and taxable,
+     * ignoring order, plus the tax rate (beyond 0.005).
+     */
+    veSaleItemsChanged(origItems, newItems, origRate, newRate) {
+        if (Math.abs((Number(origRate) || 0) - (Number(newRate) || 0)) > 0.005) return true;
+        const key = i => [i.name, Math.round((Number(i.price) || 0) * 100), Number(i.quantity) || 0, i.taxable ? 1 : 0].join('|');
+        const a = (origItems || []).map(key).sort();
+        const b = (newItems || []).map(key).sort();
+        return a.length !== b.length || a.some((k, idx) => k !== b[idx]);
+    },
+
+    /**
      * Turn the Add Sales window's counts into sale records.
      * Each single-sale unit becomes its own one-item sale (in input order), then
      * one sale per non-empty group. Transaction numbers count up from startTxNo.

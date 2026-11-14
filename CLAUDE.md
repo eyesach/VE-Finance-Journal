@@ -120,6 +120,15 @@ Vanilla HTML/CSS/JS accounting app with SQLite (sql.js) in-browser database, mul
 - **Math**: `utils.js` computeSalesData (~872), getLastMonthsRange (~854)
 - **Tests**: `tests/sales-data.test.html`
 
+### Manual Sales + Sale Edit/Delete (VE Sales)
+- **HTML**: `index.html` `#veAddSalesBtn` (end of `#veControls`), `#veAddSalesEmptyBtn` (in `#veEmptyState`), `#veAddSalesModal` (add mode + single-sale edit mode); Transactions table gets an actions column
+- **Logic**: `app.js` "VE MANUAL SALES" section before `setupVESalesListeners`: veOpenAddSales, veMsRender/RenderSingles/RenderGroups/RenderFooter, veMsCompute, veMsSave, _veMsStateForEdit, _veMsSaveEdit, veDeleteSale, veMsSyncJournals, veMsBindListeners; `veRenderTransactions` renders the Manual badge + Edit/Delete
+- **DB**: `ve_sales.is_manual` (migration); `clearVESales(source, { includeManual })` keeps manual sales on import; getManualSaleCount, getAllVETxNos, getEventSaleSource, insertManualSales, updateVESale, deleteVESale, ensureProductLink
+- **Math**: `utils.js` "VE manual sales": sanitizeQty, nextManualTxNo (MAN-0001), pickProductLink, computeVESaleTotals, veSaleItemsChanged, buildManualSales
+- **CSS**: `styles.css` `/* ===== VE MANUAL SALES ===== */` (ms-* classes, `.ve-source-badge.manual`, `.ve-tx-actions`)
+- **Tests**: `tests/manual-sales.test.html`
+- **Spec/plan**: `docs/superpowers/specs/2026-11-13-manual-ve-sales-design.md`, `docs/superpowers/plans/2026-11-14-manual-ve-sales.md`
+
 ### B2B Contracts
 - **HTML**: `index.html:1327-1352` b2bcontractTab; `index.html:2004-2084` b2bContractModal
 - **Logic**: `app.js:10363-11099` B2B contract CRUD, sync journal entries, finalize/unfinalize

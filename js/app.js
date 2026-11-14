@@ -12361,7 +12361,7 @@ const App = {
         document.getElementById('ve-txCount').textContent = `(${this._veFiltered.length})`;
 
         if (this._veFiltered.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#6c757d;padding:20px;">No transactions match filters</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:#6c757d;padding:20px;">No transactions match filters</td></tr>';
             return;
         }
 
@@ -12389,13 +12389,14 @@ const App = {
             html += `<tr>
                 <td>${Utils.escapeHtml(s.transaction_no)}</td>
                 <td>${this.veFmtDate(s.date)}</td>
-                <td><span class="ve-source-badge ${s.source}">${s.source === 'online' ? 'Online' : 'Trade Show'}</span></td>
+                <td><span class="ve-source-badge ${s.source}">${s.source === 'online' ? 'Online' : 'Trade Show'}</span>${s.is_manual ? '<span class="ve-source-badge manual">Manual</span>' : ''}</td>
                 <td>${eventBadge}</td>
                 <td>${Utils.escapeHtml(s.billing_name || '')}</td>
                 <td class="num">${this.veFmt(s.subtotal)}</td>
                 <td class="num">${this.veFmt(s.tax)}</td>
                 <td class="num">${this.veFmt(s.total)}</td>
                 <td>${statusHtml}</td>
+                <td class="ve-tx-actions">${this.isViewOnly ? '' : `<button type="button" data-ve-tx-act="edit" data-txno="${Utils.escapeHtml(s.transaction_no)}" data-source="${Utils.escapeHtml(s.source)}" title="Edit sale">&#9998; Edit</button><button type="button" class="ve-tx-del" data-ve-tx-act="delete" data-txno="${Utils.escapeHtml(s.transaction_no)}" data-source="${Utils.escapeHtml(s.source)}" title="Delete sale">Delete</button>`}</td>
             </tr>`;
         }
         tbody.innerHTML = html;
@@ -14232,6 +14233,16 @@ const App = {
         document.getElementById('msCancelBtn').addEventListener('click', () => UI.hideModal('veAddSalesModal'));
         document.getElementById('msSaveBtn').addEventListener('click', () => this.veMsSave());
 
+        // Transactions list: Edit / Delete per sale
+        document.getElementById('ve-txBody').addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-ve-tx-act]');
+            if (!btn || this.isViewOnly) return;
+            const { txno, source } = btn.dataset;
+            if (btn.dataset.veTxAct === 'delete') { this.veDeleteSale(txno, source); return; }
+            const s = (this._veSales || []).find(x => x.transaction_no === txno && x.source === source);
+            if (s) this.veOpenAddSales({ editSale: s });
+        });
+
         modal.addEventListener('click', (e) => {
             if (!this._veMs) return;
             const st = this._veMs;
@@ -14417,6 +14428,91 @@ const App = {
         this.refreshVESales();
         UI.showNotification(`Added ${sales.length} sale${sales.length !== 1 ? 's' : ''} to ${eventName}`, 'success');
         this.veMsSyncJournals([eventId]);
+    },
+
+    /** Window state for editing one existing sale (a ve_sales row). */
+    _veMsStateForEdit(s, defaultRate) {
+        const raw = this.veItemsForSale(s);
+        // Sheets often leave "taxable" blank even when the sale was taxed:
+        // then treat every item as taxable so an edit doesn't silently drop tax.
+        const noneFlagged = !raw.some(i => i.taxable);
+        const treatAllTaxable = noneFlagged && (Number(s.tax) || 0) > 0;
+        const items = raw.map(i => ({
+            name: i.name, price: Number(i.price) || 0, quantity: Number(i.quantity) || 0,
+            taxable: treatAllTaxable ? true : !!i.taxable,
+        }));
+        const taxableSub = items.reduce((n, i) => n + (i.taxable ? i.price * i.quantity : 0), 0);
+        const ratePct = taxableSub > 0 && (Number(s.tax) || 0) > 0
+            ? Math.round((s.tax / taxableSub) * 10000) / 100
+            : defaultRate;
+
+        const priceKey = p => Math.round((Number(p) || 0) * 100);
+        const rows = items.map(i => {
+            for (const p of this._veMsProducts) {
+                const idx = p.link.options.findIndex(o => o.name === i.name && priceKey(o.price) === priceKey(i.price));
+                if (idx >= 0) return { productId: p.id, choice: p.link.options.length > 1 ? idx : null, qty: i.quantity, taxable: i.taxable };
+                if (!p.link.options.length && p.name === i.name && priceKey(p.price) === priceKey(i.price)) {
+                    return { productId: p.id, choice: null, qty: i.quantity, taxable: i.taxable };
+                }
+            }
+            return { productId: null, name: i.name, price: i.price, qty: i.quantity, taxable: i.taxable };
+        });
+
+        return {
+            mode: 'edit', eventMode: 'existing', eventId: s.event_id != null ? s.event_id : null,
+            date: s.date, ratePct, search: '', singles: new Map(),
+            groups: [{ buyer: s.billing_name || '', rows, adding: false, q: '' }],
+            orig: {
+                transaction_no: s.transaction_no, source: s.source, is_manual: !!s.is_manual,
+                event_id: s.event_id != null ? s.event_id : null, date: s.date,
+                sale: s, items, rawItems: raw, ratePct,
+            },
+        };
+    },
+
+    _veMsSaveEdit() {
+        const st = this._veMs;
+        const o = st.orig;
+        const c = this.veMsCompute();
+        if (c.count === 0) return;
+        const newEventId = st.eventId;
+        const date = st.date || o.date;
+        // Imported sales keep their sheet's source; manual sales follow their event.
+        const source = o.is_manual ? Database.getEventSaleSource(newEventId) : o.source;
+        const items = c.changed ? c.items : o.rawItems;
+        Database.updateVESale(o.transaction_no, o.source, {
+            transactionNo: o.transaction_no, date, billingName: st.groups[0].buyer || '',
+            subtotal: c.subtotal, tax: c.tax, shipping: c.shipping, discount: c.discount, total: c.total,
+            source, eventId: newEventId,
+        }, items);
+
+        for (const r of st.groups[0].rows) {
+            if (r.productId == null || r.qty <= 0) continue;
+            const p = this._veMsProductMap.get(r.productId);
+            if (p && !p.link.linked) Database.ensureProductLink(p.id, p.name, p.price);
+        }
+
+        UI.hideModal('veAddSalesModal');
+        this._veMs = null;
+        this.refreshVESales();
+        UI.showNotification(`Sale ${o.transaction_no} updated`, 'success');
+        if (c.changed || newEventId !== o.event_id || date !== o.date) {
+            this.veMsSyncJournals([o.event_id, newEventId]);
+        }
+    },
+
+    veDeleteSale(txNo, source) {
+        if (this.isViewOnly) return;
+        const s = (this._veSales || []).find(x => x.transaction_no === txNo && x.source === source);
+        if (!s) return;
+        const msg = `Delete sale ${txNo}? ` + (s.is_manual
+            ? 'This cannot be undone.'
+            : 'It will come back if you re-import that sheet.');
+        if (!confirm(msg)) return;
+        Database.deleteVESale(txNo, source);
+        this.refreshVESales();
+        UI.showNotification(`Sale ${txNo} deleted`, 'success');
+        this.veMsSyncJournals([s.event_id]);
     },
 
     /**
@@ -15432,6 +15528,16 @@ const App = {
     // ==================== CHANGE LOG ====================
 
     changelogData: [
+        {
+            version: '2.4',
+            date: '2026-11-14',
+            title: 'Manual Sales',
+            changes: [
+                { type: 'feature', text: 'VE Sales: "+ Add Sales" for sales that are not in your import sheets: count products into single sales or group sales, add to an existing event or a new one' },
+                { type: 'feature', text: 'Manual sales are kept when you re-import sheets, and show a "Manual" badge' },
+                { type: 'feature', text: 'Edit and Delete for any VE sale in the Transactions list, with an offer to update the event journal entry' }
+            ]
+        },
         {
             version: '2.3',
             date: '2026-11-07',

@@ -286,6 +286,24 @@ function seedImportProtection(d) {
     assertEqual(rows("SELECT event_id FROM ve_sales WHERE transaction_no='MAN-0001'")[0][0], 7);
   });
 
+  // ============== Task 5: Edit rules ==============
+  const s5 = suite('Edit rules');
+  const a = [{ name: 'A', price: 10, quantity: 1, taxable: true }, { name: 'B', price: 5, quantity: 2, taxable: false }];
+  test(s5, 'veSaleItemsChanged: same items, different order, same rate → false', () => {
+    assertEqual(Utils.veSaleItemsChanged(a, [a[1], a[0]], 7.25, 7.25), false);
+  });
+  test(s5, 'veSaleItemsChanged: quantity changed → true', () => {
+    assertEqual(Utils.veSaleItemsChanged(a, [a[0], { ...a[1], quantity: 3 }], 7.25, 7.25), true);
+  });
+  test(s5, 'veSaleItemsChanged: rate changed beyond 0.005 → true; tiny drift → false', () => {
+    assertEqual(Utils.veSaleItemsChanged(a, a, 7.25, 7.3), true);
+    assertEqual(Utils.veSaleItemsChanged(a, a, 7.25, 7.252), false);
+  });
+  test(s5, 'veSaleItemsChanged: item removed or taxable flipped → true', () => {
+    assertEqual(Utils.veSaleItemsChanged(a, [a[0]], 7.25, 7.25), true);
+    assertEqual(Utils.veSaleItemsChanged(a, [a[0], { ...a[1], taxable: true }], 7.25, 7.25), true);
+  });
+
   document.getElementById('summary').textContent = `${passed}/${passed + failed} tests passed, ${failed} failed`;
 })().catch(e => { document.getElementById('summary').textContent = 'CRASH: ' + e.message; });
 </script>
