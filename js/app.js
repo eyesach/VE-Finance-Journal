@@ -3762,6 +3762,7 @@ const App = {
         const rows = tbody.querySelectorAll('tr:not(.qe-expand-row)');
         let errors = 0;
         let saved = 0;
+        const savedIds = [];
 
         // Clear previous errors
         tbody.querySelectorAll('.qe-error').forEach(el => el.classList.remove('qe-error'));
@@ -3800,6 +3801,7 @@ const App = {
             const id = Database.addTransaction(data);
             this._manageSalesTaxEntry(id, data);
             this._manageInventoryCostEntry(id, data);
+            savedIds.push(id);
 
             saved++;
         }
@@ -3812,11 +3814,12 @@ const App = {
         }
 
         if (saved > 0) {
+            const snapshots = savedIds.map(id => Database.snapshotTransactionWithChildren(id));
             this.pushUndo({
                 type: 'quick-entry',
                 label: 'Quick add ' + saved + ' transactions',
-                undo: () => { /* Complex multi-add undo — not practical for bulk quick entry */ },
-                redo: () => {}
+                undo: () => { savedIds.forEach(id => Database.deleteTransactionWithChildren(id)); },
+                redo: () => { snapshots.forEach(rows => Database.restoreTransactionRows(rows)); }
             });
 
             if (errors === 0) {
@@ -5643,6 +5646,7 @@ const App = {
         document.querySelectorAll('.modal').forEach(modal => {
             modal.addEventListener('click', (e) => {
                 if (e.target === modal) {
+                    if (modal.id === 'syncConflictModal') return; // must be answered
                     if (modal.id === 'entryModal') {
                         UI.resetForm();
                     } else {
@@ -5668,6 +5672,9 @@ const App = {
             if (e.key === 'Escape') {
                 const activeModals = document.querySelectorAll('.modal.active');
                 activeModals.forEach(modal => {
+                    // The sync conflict dialog must be answered; dismissing it would
+                    // leave syncing paused with no visible prompt.
+                    if (modal.id === 'syncConflictModal') return;
                     if (modal.id === 'entryModal') {
                         UI.resetForm();
                     } else {
@@ -5866,36 +5873,8 @@ const App = {
         const editingId = document.getElementById('editingId').value;
 
         try {
-            let parentId;
-            if (editingId) {
-                parentId = parseInt(editingId);
-                const beforeTx = Database.getTransactionById(parentId);
-                Database.updateTransaction(parentId, data);
-                const afterData = Object.assign({}, data);
-                this.pushUndo({
-                    type: 'transaction-edit',
-                    label: 'Edit "' + (data.item_description || 'transaction') + '"',
-                    undo: () => { if (beforeTx) Database.updateTransaction(parentId, beforeTx); },
-                    redo: () => { Database.updateTransaction(parentId, afterData); }
-                });
-                UI.showNotification('Transaction updated successfully', 'success');
-            } else {
-                parentId = Database.addTransaction(data);
-                const addedData = Object.assign({}, data);
-                this.pushUndo({
-                    type: 'transaction-create',
-                    label: 'Add "' + (data.item_description || 'transaction') + '"',
-                    undo: () => { Database.deleteTransaction(parentId); },
-                    redo: () => { Database.addTransaction(addedData); }
-                });
-                UI.showNotification('Transaction added successfully', 'success');
-            }
-
-            // Auto-manage linked sales tax entry
-            this._manageSalesTaxEntry(parentId, data);
-
-            // Auto-manage linked inventory cost entry
-            this._manageInventoryCostEntry(parentId, data);
+            this._saveTransactionWithUndo(editingId, data);
+            UI.showNotification(editingId ? 'Transaction updated successfully' : 'Transaction added successfully', 'success');
 
             UI.resetForm(); // This also closes the entry modal
             this.refreshAll();
@@ -5903,6 +5882,54 @@ const App = {
             console.error('Error saving transaction:', error);
             UI.showNotification('Failed to save transaction', 'error');
         }
+    },
+
+    /**
+     * Save a journal entry (add or edit) together with its auto-created children
+     * (sales tax, inventory cost), and push one undo step covering all of them.
+     * Undo/redo restore full row snapshots with their original IDs, so the
+     * child → parent links stay intact. If any step throws, the change is rolled
+     * back so the parent can't be left saved without its children.
+     * @param {string} editingId - ID from the form ('' when adding)
+     * @param {Object} data - Form data
+     * @returns {number} Parent transaction ID
+     */
+    _saveTransactionWithUndo(editingId, data) {
+        const isEdit = !!editingId;
+        let parentId = isEdit ? parseInt(editingId) : null;
+        const before = isEdit ? Database.snapshotTransactionWithChildren(parentId) : [];
+
+        try {
+            if (isEdit) {
+                Database.updateTransaction(parentId, data);
+            } else {
+                parentId = Database.addTransaction(data);
+            }
+            this._manageSalesTaxEntry(parentId, data);
+            this._manageInventoryCostEntry(parentId, data);
+        } catch (err) {
+            if (parentId !== null) {
+                Database.deleteTransactionWithChildren(parentId);
+                Database.restoreTransactionRows(before);
+            }
+            throw err;
+        }
+
+        const after = Database.snapshotTransactionWithChildren(parentId);
+        const label = (isEdit ? 'Edit "' : 'Add "') + (data.item_description || 'transaction') + '"';
+        this.pushUndo({
+            type: isEdit ? 'transaction-edit' : 'transaction-create',
+            label,
+            undo: () => {
+                Database.deleteTransactionWithChildren(parentId);
+                Database.restoreTransactionRows(before);
+            },
+            redo: () => {
+                Database.deleteTransactionWithChildren(parentId);
+                Database.restoreTransactionRows(after);
+            }
+        });
+        return parentId;
     },
 
     /**
@@ -5921,36 +5948,8 @@ const App = {
         const editingId = document.getElementById('editingId').value;
 
         try {
-            let parentId;
-            if (editingId) {
-                parentId = parseInt(editingId);
-                const beforeTx = Database.getTransactionById(parentId);
-                Database.updateTransaction(parentId, data);
-                const afterData = Object.assign({}, data);
-                this.pushUndo({
-                    type: 'transaction-edit',
-                    label: 'Edit "' + (data.item_description || 'transaction') + '"',
-                    undo: () => { if (beforeTx) Database.updateTransaction(parentId, beforeTx); },
-                    redo: () => { Database.updateTransaction(parentId, afterData); }
-                });
-                UI.showNotification('Transaction updated — ready for next entry', 'success');
-            } else {
-                parentId = Database.addTransaction(data);
-                const addedData = Object.assign({}, data);
-                this.pushUndo({
-                    type: 'transaction-create',
-                    label: 'Add "' + (data.item_description || 'transaction') + '"',
-                    undo: () => { Database.deleteTransaction(parentId); },
-                    redo: () => { Database.addTransaction(addedData); }
-                });
-                UI.showNotification('Transaction added — ready for next entry', 'success');
-            }
-
-            // Auto-manage linked sales tax entry
-            this._manageSalesTaxEntry(parentId, data);
-
-            // Auto-manage linked inventory cost entry
-            this._manageInventoryCostEntry(parentId, data);
+            this._saveTransactionWithUndo(editingId, data);
+            UI.showNotification(editingId ? 'Transaction updated — ready for next entry' : 'Transaction added — ready for next entry', 'success');
 
             // Remember category and date for the next entry
             const keepCategoryId = data.category_id;
@@ -6597,8 +6596,11 @@ const App = {
 
         try {
             if (editingId) {
-                // Update existing category
-                Database.updateCategory(parseInt(editingId), name, isMonthly, defaultAmount, defaultType, folderId, showOnPl, isCogs, isDepreciation, isSalesTax, isB2b, defaultStatus, isSales);
+                // Update existing category. is_inventory_cost has no checkbox in the modal,
+                // so carry the stored value through instead of resetting it to 0.
+                const existingCat = Database.getCategoryById(parseInt(editingId));
+                const isInventoryCost = !!(existingCat && existingCat.is_inventory_cost);
+                Database.updateCategory(parseInt(editingId), name, isMonthly, defaultAmount, defaultType, folderId, showOnPl, isCogs, isDepreciation, isSalesTax, isB2b, defaultStatus, isSales, isInventoryCost);
                 UI.showNotification('Category updated successfully', 'success');
             } else {
                 // Add new category
@@ -7303,53 +7305,19 @@ const App = {
     confirmDelete() {
         if (this.deleteTargetId) {
             try {
-                // Snapshot for undo before deleting
-                const deletedTx = Database.getTransactionById(this.deleteTargetId);
-                const childId = Database.getLinkedSalesTaxTransaction(this.deleteTargetId);
-                const deletedChild = childId ? Database.getTransactionById(childId) : null;
-                const invCostChildId = Database.getLinkedInventoryCostTransaction(this.deleteTargetId);
-                const deletedInvCost = invCostChildId ? Database.getTransactionById(invCostChildId) : null;
-                const shippingChildId = Database.getLinkedShippingTransaction(this.deleteTargetId);
-                const deletedShipping = shippingChildId ? Database.getTransactionById(shippingChildId) : null;
+                // Snapshot raw rows (parent + linked children, original IDs) for undo
+                const targetId = this.deleteTargetId;
+                const snapshot = Database.snapshotTransactionWithChildren(targetId);
 
-                // Cascade-delete linked sales tax entry if present
-                if (childId) {
-                    Database.deleteTransaction(childId);
-                }
-                // Cascade-delete linked inventory cost entry if present
-                if (invCostChildId) {
-                    Database.deleteTransaction(invCostChildId);
-                }
-                // Cascade-delete linked shipping fee entry if present
-                if (shippingChildId) {
-                    Database.deleteTransaction(shippingChildId);
-                }
-                Database.deleteTransaction(this.deleteTargetId);
+                // Deletes the parent and cascades to its sales tax / inventory cost / shipping children
+                Database.deleteTransactionWithChildren(targetId);
 
-                // Push undo action
-                if (deletedTx) {
-                    const label = 'Delete "' + (deletedTx.item_description || 'transaction') + '"';
+                if (snapshot.length) {
+                    const label = 'Delete "' + (snapshot[0].item_description || 'transaction') + '"';
                     this.pushUndo({
                         type: 'transaction-delete', label,
-                        undo: () => {
-                            Database.addTransaction(deletedTx);
-                            if (deletedChild) Database.addTransaction(deletedChild);
-                            if (deletedInvCost) Database.addTransaction(deletedInvCost);
-                        },
-                        redo: () => {
-                            // Re-delete by description match since IDs may change
-                            const all = Database.getTransactions();
-                            const match = all.find(t => t.entry_date === deletedTx.entry_date && t.amount === deletedTx.amount && t.item_description === deletedTx.item_description);
-                            if (match) Database.deleteTransaction(match.id);
-                            if (deletedChild) {
-                                const cm = all.find(t => t.entry_date === deletedChild.entry_date && t.amount === deletedChild.amount);
-                                if (cm) Database.deleteTransaction(cm.id);
-                            }
-                            if (deletedInvCost) {
-                                const im = all.find(t => t.entry_date === deletedInvCost.entry_date && t.amount === deletedInvCost.amount);
-                                if (im) Database.deleteTransaction(im.id);
-                            }
-                        }
+                        undo: () => { Database.restoreTransactionRows(snapshot); },
+                        redo: () => { Database.deleteTransactionWithChildren(targetId); }
                     });
                 }
 
@@ -8367,7 +8335,7 @@ const App = {
         let cat = categories.find(c => c.id === linked.category_id);
         let catId = linked.category_id;
         if (cat && cat.name !== params.name) {
-            Database.updateCategory(cat.id, params.name, cat.is_monthly, cat.default_amount, cat.transaction_type, cat.folder_id, cat.show_on_pl, cat.is_cogs, cat.is_depreciation, cat.is_sales_tax, cat.is_b2b, cat.default_status, cat.is_sales, cat.is_inventory_cost);
+            Database.updateCategory(cat.id, params.name, cat.is_monthly, cat.default_amount, cat.default_type, cat.folder_id, cat.show_on_pl, cat.is_cogs, cat.is_depreciation, cat.is_sales_tax, cat.is_b2b, cat.default_status, cat.is_sales, cat.is_inventory_cost);
         } else if (!cat) {
             catId = Database.addCategory(params.name, true, monthlyPayment, 'payable', null, true);
         }
@@ -8717,7 +8685,7 @@ const App = {
                             // Update the loan's category name too
                             if (existing.category_id) {
                                 const cat = Database.getCategories().find(c => c.id === existing.category_id);
-                                if (cat) Database.updateCategory(cat.id, newLoanName, cat.is_monthly, cat.default_amount, cat.transaction_type, cat.folder_id, cat.show_on_pl, cat.is_cogs, cat.is_depreciation, cat.is_sales_tax, cat.is_b2b, cat.default_status, cat.is_sales, cat.is_inventory_cost);
+                                if (cat) Database.updateCategory(cat.id, newLoanName, cat.is_monthly, cat.default_amount, cat.default_type, cat.folder_id, cat.show_on_pl, cat.is_cogs, cat.is_depreciation, cat.is_sales_tax, cat.is_b2b, cat.default_status, cat.is_sales, cat.is_inventory_cost);
                             }
                             didSyncLoan = true;
                         }
@@ -10821,6 +10789,8 @@ const App = {
      */
     _reloadUI() {
         this.savedFileHandle = null;
+        // The in-memory DB was swapped; undo closures refer to rows in the old one.
+        this.clearUndoHistory();
 
         const owner = Database.getJournalOwner();
         document.getElementById('journalOwner').value = owner;
@@ -11225,6 +11195,7 @@ const App = {
         SyncService.onStatusChange = (info) => this.handleSyncStatusChange(info);
         SyncService.onRemoteUpdate = (info) => this.handleSyncRemoteUpdate(info);
         SyncService.onConflict = (err) => this.handleSyncConflict(err);
+        SyncService.shouldDeferPull = () => this._isUserEditing();
 
         const syncConfig = Database.getSyncConfig();
         if (syncConfig && syncConfig.groupId && syncConfig.userName && syncConfig.memberId) {
@@ -11275,6 +11246,7 @@ const App = {
         SyncService.onStatusChange = (info) => this.handleSyncStatusChange(info);
         SyncService.onRemoteUpdate = (info) => this.handleSyncRemoteUpdate(info);
         SyncService.onConflict = (err) => this.handleSyncConflict(err);
+        SyncService.shouldDeferPull = () => this._isUserEditing();
     },
 
     openSyncMenu() {
@@ -11437,12 +11409,11 @@ const App = {
     async handleSyncPull() {
         try {
             const result = await SyncService.pull();
-            if (result.updated && result.data) {
-                Database.db = new Database.SQL.Database(result.data);
-                Database.migrateSchema();
-                await Database.saveToIndexedDB();
-                this.refreshAll();
-                UI.showNotification('Updated to v' + result.version + ' (by ' + result.savedBy + ')', 'success');
+            if (result.conflict) {
+                // pull() raised a conflict (we have unpushed edits); the dialog handles it
+            } else if (result.updated && result.data) {
+                await this._applyRemoteDb(result.data);
+                UI.showNotification('Updated to v' + result.version + ' (by ' + Utils.escapeHtml(result.savedBy) + ')', 'success');
             } else {
                 UI.showNotification('Already up to date', 'info');
             }
@@ -11488,20 +11459,82 @@ const App = {
         if (text) text.textContent = info.message || info.status;
     },
 
-    handleSyncRemoteUpdate(info) {
+    async handleSyncRemoteUpdate(info) {
         if (info.data) {
-            Database.db = new Database.SQL.Database(info.data);
-            Database.migrateSchema();
-            Database.saveToIndexedDB();
-            this.refreshAll();
-            UI.showNotification('Updated to v' + info.version + ' (by ' + info.savedBy + ')', 'info');
+            await this._applyRemoteDb(info.data);
+            UI.showNotification('Updated to v' + info.version + ' (by ' + Utils.escapeHtml(info.savedBy) + ')', 'info');
         }
         this.updateSyncUI();
     },
 
-    handleSyncConflict(err) {
-        UI.showNotification('Conflict: someone else saved. Pulling their changes...', 'error');
-        this.handleSyncPull();
+    /**
+     * Load a pulled database into the app. Saves locally only (never pushes the
+     * copy we just received back up) and refreshes all tabs.
+     * @param {Uint8Array} data
+     */
+    async _applyRemoteDb(data) {
+        await SyncService.applyingRemote(async () => {
+            this.clearUndoHistory();
+            if (Database.db) Database.db.close();
+            Database.db = new Database.SQL.Database(data);
+            Database.migrateSchema();
+            await (Database.saveLocalOnly || Database.saveToIndexedDB).call(Database);
+            this.refreshAll();
+        });
+    },
+
+    /** True while a modal is open or a field has focus — background pulls wait. */
+    _isUserEditing() {
+        if (document.querySelector('.modal.active')) return true;
+        const el = document.activeElement;
+        return !!(el && el.matches && el.matches('input, textarea, select, [contenteditable="true"]'));
+    },
+
+    /**
+     * Someone else saved a newer version while we have unsaved-to-server edits.
+     * Pushing and polling are paused until the user picks a side.
+     */
+    handleSyncConflict(info) {
+        const msg = document.getElementById('syncConflictMessage');
+        if (msg) {
+            const v = info && info.remoteVersion ? 'v' + info.remoteVersion : 'a newer version';
+            msg.textContent = `Someone else saved ${v} while you had unsynced changes. ` +
+                'Keep yours (their version stays in Version History) or take theirs (your unsynced changes are discarded).';
+        }
+        UI.showModal('syncConflictModal');
+    },
+
+    async handleSyncKeepMine() {
+        UI.hideModal('syncConflictModal');
+        try {
+            const blob = new Uint8Array(Database.db.export());
+            const result = await SyncService.resolveKeepLocal(blob);
+            if (!result.conflict) {
+                UI.showNotification('Your version saved as v' + result.version, 'success');
+            }
+            // If it conflicted again, onConflict has re-opened the dialog.
+        } catch (err) {
+            console.error('Keep-mine failed:', err);
+            UI.showNotification('Failed to save your version: ' + err.message, 'error');
+            UI.showModal('syncConflictModal');
+        }
+        this.updateSyncUI();
+    },
+
+    async handleSyncTakeTheirs() {
+        UI.hideModal('syncConflictModal');
+        try {
+            const result = await SyncService.resolveTakeRemote();
+            if (result && result.data) {
+                await this._applyRemoteDb(result.data);
+                UI.showNotification('Loaded v' + result.version + ' (by ' + Utils.escapeHtml(result.savedBy) + ')', 'success');
+            }
+        } catch (err) {
+            console.error('Take-theirs failed:', err);
+            UI.showNotification('Failed to load their version: ' + err.message, 'error');
+            UI.showModal('syncConflictModal');
+        }
+        this.updateSyncUI();
     },
 
     updateSyncUI() {
@@ -11887,12 +11920,9 @@ const App = {
 
         try {
             const result = await SyncService.pullVersion(this._rollbackTargetVersion);
-            Database.db = new Database.SQL.Database(result.data);
-            Database.migrateSchema();
-            await Database.saveToIndexedDB();
-            SyncService.localVersion = result.version;
-
-            this.refreshAll();
+            // Load the old snapshot locally, then push it as a NEW version on top of
+            // the latest. (Rewinding localVersion to the old number made the push conflict.)
+            await this._applyRemoteDb(result.data);
             UI.hideModal('rollbackModal');
             UI.hideModal('versionHistoryModal');
             UI.showNotification('Rolled back to v' + result.version, 'success');

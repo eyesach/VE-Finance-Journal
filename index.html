@@ -2516,6 +2516,19 @@
             </div>
         </div>
 
+        <!-- Sync Conflict Modal: shown when the server has a newer version while
+             we hold unsynced edits. No close button: syncing stays paused until a side is picked. -->
+        <div id="syncConflictModal" class="modal">
+            <div class="modal-content">
+                <h3>Sync Conflict</h3>
+                <p id="syncConflictMessage">Someone else saved a newer version while you had unsynced changes.</p>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="App.handleSyncTakeTheirs()">Take theirs</button>
+                    <button type="button" class="btn btn-primary" onclick="App.handleSyncKeepMine()">Keep mine</button>
+                </div>
+            </div>
+        </div>
+
         <!-- KPI Detail Modal -->
         <div id="kpiDetailModal" class="modal">
             <div class="modal-content kpi-detail-modal">

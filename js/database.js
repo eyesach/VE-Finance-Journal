@@ -1081,6 +1081,15 @@ const Database = {
         if (result.length > 0 && result[0].values.length > 0) {
             return result[0].values[0][0];
         }
+        // Repair: a category named "Inventory Cost" may exist with its flag cleared
+        // (older builds reset it when the category was edited). Re-flag and reuse it
+        // rather than inserting a duplicate, which would violate UNIQUE(name).
+        const byName = this.db.exec("SELECT id FROM categories WHERE name = 'Inventory Cost' LIMIT 1");
+        if (byName.length > 0 && byName[0].values.length > 0) {
+            const id = byName[0].values[0][0];
+            this.db.run('UPDATE categories SET is_inventory_cost = 1 WHERE id = ?', [id]);
+            return id;
+        }
         return this.addCategory('Inventory Cost', false, null, 'payable', null, false, true, false, false, false, 'pending', false, true);
     },
 
@@ -1497,6 +1506,63 @@ const Database = {
      */
     deleteTransaction(id) {
         this.db.run('DELETE FROM transactions WHERE id = ?', [id]);
+        this.autoSave();
+    },
+
+    // ==================== UNDO SNAPSHOTS ====================
+    // Undo/redo works on raw rows with their original IDs so the links between a
+    // sale and its auto-created children (source_id → parent id) survive a round trip.
+
+    /** Source types of auto-created entries that hang off a parent journal entry. */
+    LINKED_CHILD_SOURCE_TYPES: ['sales_tax', 'inventory_cost', 'inventory_shipping'],
+
+    /**
+     * Raw rows (all columns, no joins) for a transaction and its linked children.
+     * @param {number} id - Parent transaction ID
+     * @returns {Array<Object>} Parent row first, then children; empty if not found
+     */
+    snapshotTransactionWithChildren(id) {
+        const placeholders = this.LINKED_CHILD_SOURCE_TYPES.map(() => '?').join(', ');
+        const parent = this.db.exec('SELECT * FROM transactions WHERE id = ?', [id]);
+        if (!parent.length || !parent[0].values.length) return [];
+        const children = this.db.exec(
+            `SELECT * FROM transactions WHERE source_id = ? AND source_type IN (${placeholders}) ORDER BY id`,
+            [id, ...this.LINKED_CHILD_SOURCE_TYPES]
+        );
+        return [
+            ...this.rowsToObjects(parent[0]),
+            ...(children.length ? this.rowsToObjects(children[0]) : [])
+        ];
+    },
+
+    /**
+     * Delete a transaction and its linked children.
+     * @param {number} id - Parent transaction ID
+     */
+    deleteTransactionWithChildren(id) {
+        const placeholders = this.LINKED_CHILD_SOURCE_TYPES.map(() => '?').join(', ');
+        this.db.run(
+            `DELETE FROM transactions WHERE source_id = ? AND source_type IN (${placeholders})`,
+            [id, ...this.LINKED_CHILD_SOURCE_TYPES]
+        );
+        this.db.run('DELETE FROM transactions WHERE id = ?', [id]);
+        this.autoSave();
+    },
+
+    /**
+     * Re-insert rows captured by snapshotTransactionWithChildren, keeping their IDs.
+     * Rows whose ID is currently taken are replaced.
+     * @param {Array<Object>} rows
+     */
+    restoreTransactionRows(rows) {
+        if (!rows || !rows.length) return;
+        const info = this.db.exec('PRAGMA table_info(transactions)');
+        const columns = info[0].values.map(r => r[1]);
+        const placeholders = columns.map(() => '?').join(', ');
+        const sql = `INSERT OR REPLACE INTO transactions (${columns.join(', ')}) VALUES (${placeholders})`;
+        rows.forEach(row => {
+            this.db.run(sql, columns.map(c => (row[c] === undefined ? null : row[c])));
+        });
         this.autoSave();
     },
 

@@ -60,6 +60,51 @@ const SyncService = {
     /** @type {Function|null} Callback for status changes */
     onStatusChange: null,
 
+    /** @type {number} Increments on every local edit (see wrapAutoSave) */
+    _editSeq: 0,
+
+    /** @type {Promise|null} The push currently in flight, if any */
+    _pushInFlight: null,
+
+    /** @type {boolean} A save arrived while a push was in flight */
+    _pushQueued: false,
+
+    /** @type {boolean} True while a pulled version is being loaded into the app */
+    _applyingRemote: false,
+
+    /**
+     * Run fn() while a pulled version is being applied, so writes it triggers
+     * aren't treated as local edits.
+     * @param {Function} fn - May be async
+     */
+    async applyingRemote(fn) {
+        this._applyingRemote = true;
+        try {
+            return await fn();
+        } finally {
+            this._applyingRemote = false;
+            this.hasUnpushedChanges = false;
+        }
+    },
+
+    /** @type {Function|null} Returns true to skip a background poll (e.g. a form is open) */
+    shouldDeferPull: null,
+
+    /**
+     * True while local edits exist that haven't reached the server (a push is in
+     * flight, failed, or is blocked by a conflict). A pull must never silently
+     * overwrite these.
+     * @type {boolean}
+     */
+    hasUnpushedChanges: false,
+
+    /**
+     * Set when the server has a newer version than ours AND we have unpushed edits.
+     * Pushing and polling pause until resolveKeepLocal() or resolveTakeRemote().
+     * @type {{remoteVersion: number|null}|null}
+     */
+    pendingConflict: null,
+
     // ==================== GROUP MANAGEMENT ====================
 
     /**
@@ -113,6 +158,8 @@ const SyncService = {
         this.memberId = null;
         this.memberRole = 'member';
         this.isConnected = false;
+        this.pendingConflict = null;
+        this.hasUnpushedChanges = false;
         this._emitStatus('disconnected', 'Left group');
     },
 
@@ -134,17 +181,18 @@ const SyncService = {
             user: this.currentUser
         };
 
+        this.hasUnpushedChanges = true;
+        const seqAtStart = this._editSeq;
         try {
             const result = await this.api.pushVersion(this.groupId, payload);
             this.localVersion = result.version;
+            // Edits made while this push was in flight aren't in its blob.
+            this.hasUnpushedChanges = this._editSeq !== seqAtStart;
             this._emitStatus('saved', `v${result.version} saved by ${this.currentUser}`);
             return { version: result.version, conflict: false };
         } catch (err) {
             if (err.name === 'ConflictError' || err.code === 'VERSION_CONFLICT') {
-                this._emitStatus('conflict', 'Save conflict — someone else saved first');
-                if (this.onConflict) {
-                    this.onConflict(err);
-                }
+                this._raiseConflict(err.remoteVersion != null ? err.remoteVersion : null);
                 return { version: this.localVersion, conflict: true };
             }
             throw err;
@@ -165,6 +213,13 @@ const SyncService = {
             return { updated: false, version: this.localVersion, data: null, savedBy: null };
         }
 
+        if (result.version > this.localVersion && this.hasUnpushedChanges) {
+            // Remote moved on while we have edits the server hasn't seen —
+            // applying it would silently discard them. Ask the user instead.
+            this._raiseConflict(result.version);
+            return { updated: false, conflict: true, version: this.localVersion, data: null, savedBy: null };
+        }
+
         if (result.version > this.localVersion) {
             const prevVersion = this.localVersion;
             this.localVersion = result.version;
@@ -182,6 +237,77 @@ const SyncService = {
         }
 
         return { updated: false, version: this.localVersion, data: null, savedBy: null };
+    },
+
+    /**
+     * Push the current DB, one push at a time. Overlapping pushes would share a
+     * baseVersion and the second would always conflict, so a save that arrives
+     * mid-push is queued and pushed (with a fresh export) when the first finishes.
+     */
+    async _pushLatest(database) {
+        if (this._pushInFlight) {
+            this._pushQueued = true;
+            return this._pushInFlight;
+        }
+        this._pushInFlight = (async () => {
+            try {
+                do {
+                    this._pushQueued = false;
+                    const blob = new Uint8Array(database.db.export());
+                    const result = await this.push(blob);
+                    if (result.conflict) break;
+                } while (this._pushQueued && this.hasUnpushedChanges && !this.pendingConflict);
+            } catch (err) {
+                console.error('Remote sync failed (local save succeeded):', err);
+            } finally {
+                this._pushInFlight = null;
+            }
+        })();
+        return this._pushInFlight;
+    },
+
+    // ==================== CONFLICT RESOLUTION ====================
+
+    /**
+     * Keep the local copy: push it on top of the server's latest version.
+     * The overwritten remote version stays in version history.
+     * @param {Uint8Array} dbBlob - Exported local database
+     * @returns {Promise<{version: number, conflict: boolean}>}
+     */
+    async resolveKeepLocal(dbBlob) {
+        this._requireApi();
+        this._requireGroup();
+        const history = await this.api.getHistory(this.groupId, 1);
+        const latest = history && history.length ? history[0].version : this.localVersion;
+        this.pendingConflict = null;
+        this.localVersion = latest;
+        // If someone saved again in the meantime this raises a fresh conflict.
+        return this.push(dbBlob);
+    },
+
+    /**
+     * Take the server copy: discard local unpushed edits.
+     * @returns {Promise<{version: number, data: Uint8Array, savedBy: string}|null>}
+     */
+    async resolveTakeRemote() {
+        this._requireApi();
+        this._requireGroup();
+        const result = await this.api.pullLatest(this.groupId);
+        this.pendingConflict = null;
+        this.hasUnpushedChanges = false;
+        if (!result) return null;
+        this.localVersion = result.version;
+        this._emitStatus('updated', `Pulled v${result.version} (saved by ${result.savedBy})`);
+        return { version: result.version, data: result.data, savedBy: result.savedBy };
+    },
+
+    _raiseConflict(remoteVersion) {
+        const first = !this.pendingConflict;
+        this.pendingConflict = { remoteVersion };
+        this._emitStatus('conflict', 'Save conflict — someone else saved first');
+        if (first && this.onConflict) {
+            this.onConflict({ remoteVersion });
+        }
     },
 
     // ==================== VERSION HISTORY ====================
@@ -216,6 +342,8 @@ const SyncService = {
     startPolling() {
         this.stopPolling();
         this._pollInterval = setInterval(() => {
+            if (this.pendingConflict) return;
+            if (this.shouldDeferPull && this.shouldDeferPull()) return;
             this.pull().catch(err => {
                 console.error('Sync poll error:', err);
                 this._emitStatus('error', 'Failed to check for updates');
@@ -241,25 +369,42 @@ const SyncService = {
      * @param {Object} database - The Database module
      */
     wrapAutoSave(database) {
+        // Idempotent: this is called on every connect. Wrapping twice would push
+        // each save twice (the second push conflicting with the first).
+        if (database._syncWrapped) return;
+        database._syncWrapped = true;
+
         const originalSave = database.saveToIndexedDB.bind(database);
         const sync = this;
+
+        // Local-only save, for applying a pulled version. Using the wrapped save
+        // there would push the copy we just received back as a new version, and
+        // two polling clients would ping-pong new versions forever.
+        database.saveLocalOnly = originalSave;
+
+        // Mark edits as unpushed the moment they happen, not 500ms later when the
+        // debounced save fires, so a poll in that window can't overwrite them.
+        const originalAutoSave = database.autoSave;
+        database.autoSave = function(...args) {
+            // Writes made while applying a pulled version (derived-entry re-sync in
+            // refreshAll) aren't user edits — don't push them back.
+            if (sync.isConnected && !sync._applyingRemote) {
+                sync.hasUnpushedChanges = true;
+                sync._editSeq++;
+            }
+            return originalAutoSave.apply(this, args);
+        };
 
         database.saveToIndexedDB = async function() {
             // Always save locally first
             await originalSave();
 
-            // If connected to a group, also push remotely
-            if (sync.isConnected && sync.groupId) {
-                try {
-                    const blob = new Uint8Array(database.db.export());
-                    const result = await sync.push(blob);
-                    if (result.conflict) {
-                        console.warn('Sync conflict detected — remote version is newer');
-                    }
-                } catch (err) {
-                    console.error('Remote sync failed (local save succeeded):', err);
-                }
-            }
+            // If connected to a group, also push remotely — but only real local
+            // edits, and never while a conflict is waiting on the user.
+            if (!sync.isConnected || !sync.groupId) return;
+            if (sync.pendingConflict) { sync.hasUnpushedChanges = true; return; }
+            if (!sync.hasUnpushedChanges) return;
+            await sync._pushLatest(database);
         };
     },
 
@@ -273,7 +418,7 @@ const SyncService = {
         if (result.updated && result.data) {
             database.db = new database.SQL.Database(result.data);
             database.migrateSchema();
-            await database.saveToIndexedDB();
+            await (database.saveLocalOnly || database.saveToIndexedDB).call(database);
             return true;
         }
         return false;
@@ -314,5 +459,8 @@ const SyncService = {
         this.onRemoteUpdate = null;
         this.onConflict = null;
         this.onStatusChange = null;
+        this.shouldDeferPull = null;
+        this.pendingConflict = null;
+        this.hasUnpushedChanges = false;
     }
 };

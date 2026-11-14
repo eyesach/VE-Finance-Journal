@@ -66,7 +66,24 @@ const Utils = {
      * @returns {string} Today's date
      */
     getTodayDate() {
-        return new Date().toISOString().split('T')[0];
+        // Local date, not UTC: toISOString() returns tomorrow during US evenings,
+        // which put "Paid Today" on the last day of a month into the next month.
+        const d = new Date();
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    },
+
+    /**
+     * Add whole months to a Date and return the resulting month as YYYY-MM.
+     * Works on year/month only, so day-of-month overflow can't skip a month.
+     * @param {Date} date
+     * @param {number} n - Months to add (may be negative)
+     * @returns {string} YYYY-MM
+     */
+    addMonthsToDate(date, n) {
+        const total = date.getFullYear() * 12 + date.getMonth() + n;
+        const y = Math.floor(total / 12);
+        const m = total - y * 12 + 1;
+        return `${y}-${String(m).padStart(2, '0')}`;
     },
 
     /**
@@ -548,16 +565,12 @@ const Utils = {
             const interest = round2(balance * periodicRate);
             const isSkipped = skippedPayments && skippedPayments.has(i);
 
-            let paymentDate;
-            if (baseDate) {
-                // First payment at first_payment_date, subsequent payments spaced from there
-                paymentDate = new Date(baseDate);
-                paymentDate.setMonth(paymentDate.getMonth() + Math.round(monthsBetween * (i - 1)));
-            } else {
-                paymentDate = new Date(startDate);
-                paymentDate.setMonth(paymentDate.getMonth() + Math.round(monthsBetween * i));
-            }
-            const month = `${paymentDate.getFullYear()}-${String(paymentDate.getMonth() + 1).padStart(2, '0')}`;
+            // Month arithmetic on (year, month) only. Date.setMonth() overflows on the
+            // 29th-31st (Jan 31 + 1 month = Mar 3), which skipped February and put two
+            // payments in March.
+            const month = baseDate
+                ? this.addMonthsToDate(baseDate, Math.round(monthsBetween * (i - 1)))
+                : this.addMonthsToDate(startDate, Math.round(monthsBetween * i));
 
             if (isSkipped) {
                 // Skipped: interest accrues but no payment made
@@ -630,9 +643,7 @@ const Utils = {
             let bookValue = cost;
 
             for (let i = 0; i < lifeMonths; i++) {
-                const d = new Date(startDate);
-                d.setMonth(d.getMonth() + i);
-                const month = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+                const month = this.addMonthsToDate(startDate, i);
 
                 let depr = round2(bookValue * monthlyRate);
                 // Don't depreciate below salvage
@@ -649,9 +660,7 @@ const Utils = {
             const monthlyDepr = round2((cost - salvage) / lifeMonths);
 
             for (let i = 0; i < lifeMonths; i++) {
-                const d = new Date(startDate);
-                d.setMonth(d.getMonth() + i);
-                const month = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+                const month = this.addMonthsToDate(startDate, i);
                 schedule[month] = (schedule[month] || 0) + monthlyDepr;
             }
         }
