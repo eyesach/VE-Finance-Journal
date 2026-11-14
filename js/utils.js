@@ -1310,6 +1310,88 @@ const Utils = {
             }
         }
         return null;
+    },
+
+    // ===== VE manual sales =====
+
+    /** Whole, non-negative quantity from any input ('' / '-3' / 'abc' → 0, '2.7' → 2). */
+    sanitizeQty(v) {
+        const n = Math.floor(Number(v));
+        return Number.isFinite(n) && n > 0 ? n : 0;
+    },
+
+    /** Next MAN-#### transaction number after the highest existing one. */
+    nextManualTxNo(existingTxNos) {
+        let max = 0;
+        for (const t of existingTxNos || []) {
+            const m = /^MAN-(\d+)$/.exec(String(t));
+            if (m) max = Math.max(max, parseInt(m[1], 10));
+        }
+        return 'MAN-' + String(max + 1).padStart(4, '0');
+    },
+
+    /**
+     * Which sheet name/price a product's manual sales are recorded under.
+     * Prefers the link whose price equals the product price, else the first link;
+     * with no links, the product's own name and price (linked: false).
+     */
+    pickProductLink(product, mappings) {
+        const options = (mappings || []).map(m => ({ name: m.name, price: Number(m.price) || 0 }));
+        if (!options.length) {
+            return { name: product.name, price: Number(product.price) || 0, linked: false, options };
+        }
+        const price = Math.round((Number(product.price) || 0) * 100);
+        const pick = options.find(o => Math.round(o.price * 100) === price) || options[0];
+        return { name: pick.name, price: pick.price, linked: true, options };
+    },
+
+    /**
+     * Totals for one VE sale. Tax applies only to taxable items.
+     * total = subtotal − discount + shipping + tax, all rounded to cents.
+     */
+    computeVESaleTotals(items, ratePct, { shipping = 0, discount = 0 } = {}) {
+        const r2 = x => Math.round(x * 100) / 100;
+        let subtotal = 0, taxable = 0;
+        const out = (items || []).map(i => {
+            const amount = r2((Number(i.price) || 0) * (Number(i.quantity) || 0));
+            subtotal = r2(subtotal + amount);
+            if (i.taxable) taxable = r2(taxable + amount);
+            return { ...i, amount };
+        });
+        const tax = r2(taxable * (Number(ratePct) || 0) / 100);
+        const total = r2(subtotal - (Number(discount) || 0) + (Number(shipping) || 0) + tax);
+        return { subtotal, tax, total, items: out };
+    },
+
+    /**
+     * Turn the Add Sales window's counts into sale records.
+     * Each single-sale unit becomes its own one-item sale (in input order), then
+     * one sale per non-empty group. Transaction numbers count up from startTxNo.
+     */
+    buildManualSales({ singles = [], groups = [], ratePct = 0, date, startTxNo = 'MAN-0001' }) {
+        const taxable = (Number(ratePct) || 0) > 0;
+        let n = parseInt(String(startTxNo).replace(/^MAN-/, ''), 10) || 1;
+        const sales = [];
+        const make = (billingName, rawItems) => {
+            const items = rawItems.map(i => ({ name: i.name, price: Number(i.price) || 0, quantity: i.quantity, taxable }));
+            const t = this.computeVESaleTotals(items, ratePct);
+            sales.push({
+                transactionNo: 'MAN-' + String(n++).padStart(4, '0'),
+                date, billingName: billingName || '',
+                subtotal: t.subtotal, tax: t.tax, total: t.total, items: t.items,
+            });
+        };
+        for (const s of singles) {
+            const q = this.sanitizeQty(s.quantity);
+            for (let k = 0; k < q; k++) make('', [{ ...s, quantity: 1 }]);
+        }
+        for (const g of groups) {
+            const items = (g.items || [])
+                .map(i => ({ ...i, quantity: this.sanitizeQty(i.quantity) }))
+                .filter(i => i.quantity > 0);
+            if (items.length) make(g.buyer, items);
+        }
+        return sales;
     }
 };
 

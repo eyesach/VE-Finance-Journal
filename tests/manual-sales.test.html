@@ -114,6 +114,77 @@ function seedImportProtection(d) {
     assertEqual(Database.getManualSaleCount(), 1);
   });
 
+  // ============== Task 2: Manual sale maths ==============
+  const s2 = suite('Manual sale maths');
+  test(s2, 'sanitizeQty', () => {
+    assertEqual(Utils.sanitizeQty(''), 0);
+    assertEqual(Utils.sanitizeQty('-3'), 0);
+    assertEqual(Utils.sanitizeQty('2.7'), 2);
+    assertEqual(Utils.sanitizeQty('abc'), 0);
+    assertEqual(Utils.sanitizeQty(5), 5);
+  });
+  test(s2, 'nextManualTxNo', () => {
+    assertEqual(Utils.nextManualTxNo([]), 'MAN-0001');
+    assertEqual(Utils.nextManualTxNo(['MAN-0002', 'T9', 'MAN-0010']), 'MAN-0011');
+  });
+  test(s2, 'pickProductLink: no mappings uses product', () => {
+    const r = Utils.pickProductLink({ name: 'Small Fall', price: 309.99 }, []);
+    assertEqual(r.name, 'Small Fall'); assertEqual(r.price, 309.99); assertEqual(r.linked, false);
+  });
+  test(s2, 'pickProductLink: one mapping', () => {
+    const r = Utils.pickProductLink({ name: 'Small Fall', price: 309.99 }, [{ name: 'Small Fall Arrangement', price: 309.99 }]);
+    assertEqual(r.name, 'Small Fall Arrangement'); assertEqual(r.linked, true);
+  });
+  test(s2, 'pickProductLink: prefers mapping matching product price', () => {
+    const r = Utils.pickProductLink({ name: 'Small Fall', price: 309.99 },
+      [{ name: 'SF old', price: 300 }, { name: 'SF new', price: 309.99 }]);
+    assertEqual(r.name, 'SF new'); assertEqual(r.options.length, 2);
+  });
+  test(s2, 'pickProductLink: no price match falls back to first', () => {
+    const r = Utils.pickProductLink({ name: 'Small Fall', price: 309.99 },
+      [{ name: 'SF a', price: 1 }, { name: 'SF b', price: 2 }]);
+    assertEqual(r.name, 'SF a');
+  });
+  test(s2, 'computeVESaleTotals matches receipt (309.99 @ 7.25%)', () => {
+    const t = Utils.computeVESaleTotals([{ price: 309.99, quantity: 1, taxable: true }], 7.25);
+    assertClose(t.subtotal, 309.99); assertClose(t.tax, 22.47); assertClose(t.total, 332.46);
+  });
+  test(s2, 'computeVESaleTotals: mixed taxable, shipping, discount', () => {
+    const t = Utils.computeVESaleTotals([
+      { price: 100, quantity: 1, taxable: true },
+      { price: 50, quantity: 1, taxable: false },
+    ], 10, { shipping: 5, discount: 20 });
+    assertClose(t.subtotal, 150); assertClose(t.tax, 10); assertClose(t.total, 145);
+    assertClose(t.items[1].amount, 50);
+  });
+  test(s2, 'buildManualSales: singles expand per unit, groups stay together', () => {
+    const sales = Utils.buildManualSales({
+      singles: [{ name: 'Large', price: 850, quantity: 2 }, { name: 'Medium', price: 410, quantity: 1 }],
+      groups: [{ buyer: 'Booth 14', items: [{ name: 'Small', price: 309.99, quantity: 1 }, { name: 'Tulip', price: 95, quantity: 2 }] }],
+      ratePct: 7.25, date: '2026-11-06', startTxNo: 'MAN-0001',
+    });
+    assertEqual(sales.length, 4);
+    assertEqual(sales.map(s => s.transactionNo).join(','), 'MAN-0001,MAN-0002,MAN-0003,MAN-0004');
+    assertEqual(sales[0].items.length, 1); assertEqual(sales[0].items[0].quantity, 1);
+    assertClose(sales[0].total, 911.63);
+    assertEqual(sales[3].billingName, 'Booth 14');
+    assertEqual(sales[3].items.length, 2);
+    assertClose(sales[3].subtotal, 499.99);
+    assert(sales.every(s => s.items.every(i => i.taxable === true)), 'taxable when rate > 0');
+    assertEqual(sales[0].date, '2026-11-06');
+  });
+  test(s2, 'buildManualSales: rate 0 means untaxed; empty groups dropped', () => {
+    const sales = Utils.buildManualSales({
+      singles: [{ name: 'A', price: 10, quantity: 1 }, { name: 'B', price: 5, quantity: 0 }],
+      groups: [{ buyer: '', items: [{ name: 'C', price: 1, quantity: 0 }] }],
+      ratePct: 0, date: '2026-11-06', startTxNo: 'MAN-0005',
+    });
+    assertEqual(sales.length, 1);
+    assertEqual(sales[0].transactionNo, 'MAN-0005');
+    assertEqual(sales[0].items[0].taxable, false);
+    assertClose(sales[0].tax, 0);
+  });
+
   document.getElementById('summary').textContent = `${passed}/${passed + failed} tests passed, ${failed} failed`;
 })().catch(e => { document.getElementById('summary').textContent = 'CRASH: ' + e.message; });
 </script>
