@@ -638,6 +638,22 @@ const Utils = {
     },
 
     /**
+     * Display status for a deposit as of a month.
+     * @param {Object} deposit - { paid_date, expected_refund_date, refunded_date }
+     * @param {string} month - YYYY-MM
+     * @returns {'refunded'|'scheduled'|'upcoming'|'overdue'|'current'|'longterm'}
+     */
+    depositStatus(deposit, month) {
+        if (deposit.refunded_date) {
+            return deposit.refunded_date.substring(0, 7) <= month ? 'refunded' : 'scheduled';
+        }
+        const c = this.classifyDeposit(deposit, month);
+        if (!c.held) return 'upcoming';
+        if (c.overdue) return 'overdue';
+        return c.bucket;
+    },
+
+    /**
      * Compute a depreciation schedule for a fixed asset.
      * Returns { [YYYY-MM]: monthlyDeprAmount } for each month in the asset's life.
      * @param {Object} asset - { purchase_cost, salvage_value, useful_life_months, purchase_date, dep_start_date, depreciation_method, is_depreciable }

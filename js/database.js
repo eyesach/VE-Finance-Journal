@@ -2660,7 +2660,12 @@ const Database = {
         let totalFixedAssetCost = 0;
         let totalAccumDepr = 0;
         const fixedAssetDetails = this.getFixedAssets()
-            .filter(a => a.purchase_date && a.purchase_date.substring(0, 7) <= asOfMonth)
+            .filter(a => {
+                // Count from the earlier of purchase / depreciation start: depreciation (P&L) and the
+                // purchase payable (AP, due at dep-start month) both begin there, so the BS stays balanced.
+                const starts = [a.purchase_date, a.dep_start_date].filter(Boolean).map(d => d.substring(0, 7));
+                return starts.length > 0 && starts.sort()[0] <= asOfMonth;
+            })
             .map(asset => {
                 let accumDepr = 0;
                 Object.entries(Utils.computeDepreciationSchedule(asset)).forEach(([m, amt]) => {

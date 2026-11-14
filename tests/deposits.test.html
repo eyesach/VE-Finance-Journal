@@ -367,6 +367,32 @@ const LEASE = { name: 'Lease', amount: 2000, paid_date: '2026-03-01', expected_r
     assertEqual(rows('SELECT * FROM transactions').length, 1, 'unrelated entry kept');
   });
 
+  // ===================== Final review fixes =====================
+  const sf = suite('Final review fixes');
+  test(sf, 'fixed asset with depreciation start before purchase: BS balances in the gap months', () => {
+    seedBase();
+    const cat = Database.addCategory('Asset Purchases', false, null, 'payable', null, true);
+    const aid = Database.addFixedAsset('Van', 1200, 12, '2026-06-15', 0, 'straight_line', '2026-03-01', true);
+    // Mirrors _autoCreateAssetTransaction: due at dep-start month, paid at purchase month
+    Database.addTransaction({ entry_date: '2026-06-15', category_id: cat, item_description: 'Purchase: Van', amount: 1200,
+      transaction_type: 'payable', status: 'paid', month_due: '2026-03', month_paid: '2026-06', source_type: 'asset_purchase', source_id: aid });
+    assertEqual(bsDiff('2026-04'), 0, 'Apr (between dep start and purchase)');
+    assertEqual(bsDiff('2026-07'), 0, 'Jul');
+    assertEqual(T('2026-02').totalFixedAssetCost, 0, 'not counted before dep start');
+  });
+  test(sf, 'depositStatus: future-dated refund is "scheduled", not refunded', () => {
+    const d = { paid_date: '2026-03-01', expected_refund_date: '2028-02-28', refunded_date: '2027-01-10' };
+    assertEqual(Utils.depositStatus(d, '2026-11'), 'scheduled');
+    assertEqual(Utils.depositStatus(d, '2027-01'), 'refunded');
+  });
+  test(sf, 'depositStatus: other states', () => {
+    const d = { paid_date: '2026-03-01', expected_refund_date: '2027-08-31', refunded_date: null };
+    assertEqual(Utils.depositStatus(d, '2026-02'), 'upcoming');
+    assertEqual(Utils.depositStatus(d, '2026-07'), 'longterm');
+    assertEqual(Utils.depositStatus(d, '2026-11'), 'current');
+    assertEqual(Utils.depositStatus(d, '2027-10'), 'overdue');
+  });
+
   // @@NEXT_SUITE@@
 
   document.getElementById('summary').textContent = `${passed}/${passed + failed} tests passed, ${failed} failed`;

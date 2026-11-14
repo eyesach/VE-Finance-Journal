@@ -1913,12 +1913,12 @@ const UI = {
         let held = 0, current = 0, longTerm = 0;
         const rowsData = deposits.map(d => {
             const c = Utils.classifyDeposit(d, todayMonth);
-            let status;
-            if (d.refunded_date) status = { cls: 'refunded', label: 'Refunded' };
-            else if (!c.held) status = { cls: 'upcoming', label: 'Not yet paid' };
-            else if (c.overdue) status = { cls: 'overdue', label: 'Overdue' };
-            else if (c.bucket === 'current') status = { cls: 'current', label: 'Held · Current' };
-            else status = { cls: 'longterm', label: 'Held · Long-term' };
+            const labels = {
+                refunded: 'Refunded', scheduled: 'Refund scheduled', upcoming: 'Not yet paid',
+                overdue: 'Overdue', current: 'Held · Current', longterm: 'Held · Long-term'
+            };
+            const key = Utils.depositStatus(d, todayMonth);
+            const status = { cls: key, label: labels[key] };
             if (c.held) {
                 held = round2(held + d.amount);
                 if (c.bucket === 'current') current = round2(current + d.amount);

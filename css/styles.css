@@ -2414,6 +2414,7 @@ body.edit-mode .pnl-overridden::after { content: ' *'; color: var(--text-muted);
 .deposit-status-longterm { background: rgba(var(--color-primary-rgb), 0.1); color: var(--c2, var(--primary)); }
 .deposit-status-overdue { background: var(--amber-bg); color: var(--amber); border-color: var(--amber); }
 .deposit-status-refunded, .deposit-status-upcoming { background: var(--surface-alt); color: var(--text-muted); }
+.deposit-status-scheduled { background: var(--surface-alt); color: var(--c2, var(--primary)); border-color: rgba(var(--color-primary-rgb), 0.35); border-style: dashed; }
 .deposit-optional { font-weight: 400; color: var(--text-muted); font-size: var(--font-xs); }
 .deposit-refund-summary { margin: -4px 0 14px; font-size: var(--font-sm); color: var(--text-muted); }
 body.view-only-mode .deposit-actions { display: none; }
