@@ -19,11 +19,13 @@
 <h1>Deposits — Unit Tests</h1>
 <div id="results"></div>
 <div id="summary" class="summary"></div>
+<div id="balanceSheetContent" hidden></div><div id="bsRatiosContent" hidden></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/sql-wasm.js"></script>
 <script src="../js/utils.js"></script>
 <script>window.CompanyManager = {};</script>
 <script src="../js/database.js"></script>
+<script src="../js/ui.js"></script>
 
 <script>
 let passed = 0, failed = 0;
@@ -426,6 +428,28 @@ const LEASE = { name: 'Lease', amount: 2000, paid_date: '2026-03-01', expected_r
     ['Repairs', 'Rent'].forEach(n => assert(names.includes(n), `${n} should be offered`));
     ['Hidden', 'Deprec', 'COGS', 'SalesTax', 'B2B', 'Sales', 'InvCost', 'Ship', 'Income', 'Deposit Forfeitures']
       .forEach(n => assert(!names.includes(n), `${n} should not be offered`));
+  });
+
+  test(sm, 'Balance Sheet: current and long-term deposit amounts are Calc-clickable (bs-value)', () => {
+    seedBase();
+    Database.addDeposit({ ...LEASE });                                                            // long-term in 2026-06
+    Database.addDeposit({ ...LEASE, name: 'Utility', amount: 300, expected_refund_date: '2026-12-31' }); // current
+    const m = '2026-06', t = T(m);
+    UI.renderBalanceSheet({
+      asOfMonth: m, cash: t.cash, ar: t.ar, arByCategory: [],
+      assetDetails: t.fixedAssetDetails, totalFixedAssetCost: t.totalFixedAssetCost, totalAccumDepr: t.totalAccumDepr, netFixedAssets: t.netFixedAssets,
+      currentDeposits: t.currentDeposits, currentDepositDetails: t.currentDepositDetails,
+      longTermDeposits: t.longTermDeposits, longTermDepositDetails: t.longTermDepositDetails,
+      totalCurrentAssets: t.totalCurrentAssets, totalOtherAssets: t.totalOtherAssets, totalAssets: t.totalAssets,
+      ap: 0, apByCategory: [], salesTaxPayable: 0, loanDetails: [], totalLoanBalance: 0, totalLiabilities: 0,
+      commonStock: 0, apic: 0, retainedEarnings: 10000, totalEquity: 10000, totalLiabilitiesAndEquity: 10000, isBalanced: true,
+      plTotals: {}
+    });
+    const el = document.getElementById('balanceSheetContent');
+    const cur = el.querySelector('.bs-value[data-bs-key="currentDeposits"]');
+    const lt = el.querySelector('.bs-value[data-bs-key="longTermDeposits"]');
+    assert(cur, 'current deposits cell'); assert(lt, 'long-term deposits cell');
+    assertEqual(lt.textContent.trim(), Utils.formatCurrency(2000));
   });
 
   // @@NEXT_SUITE@@

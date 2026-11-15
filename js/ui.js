@@ -1609,7 +1609,7 @@ const UI = {
         // Other Assets (non-current deposits)
         if (data.longTermDeposits > 0) {
             html += '<tr class="bs-subsection"><td colspan="2">Other Assets</td></tr>';
-            html += `<tr class="bs-indent"><td>Security Deposits</td><td>${fmtAmt(data.longTermDeposits)}</td></tr>`;
+            html += `<tr class="bs-indent"><td>Security Deposits</td><td class="bs-value" data-bs-key="longTermDeposits">${fmtAmt(data.longTermDeposits)}</td></tr>`;
             html += depositRows(data.longTermDepositDetails);
             html += `<tr class="bs-subtotal"><td>Total Other Assets</td><td class="bs-value" data-bs-key="totalOtherAssets">${fmtAmt(data.totalOtherAssets)}</td></tr>`;
         }
