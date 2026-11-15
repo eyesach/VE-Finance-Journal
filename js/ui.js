@@ -1896,11 +1896,6 @@ const UI = {
     },
 
     /**
-     * Render the Fixed Assets tab with list/detail layout
-     * @param {Array} assets - Array of asset objects
-     * @param {number|null} selectedAssetId - Currently selected asset ID
-     */
-    /**
      * Render the Deposits & Other Assets panel on the Fixed Assets tab
      * @param {Array} deposits - Deposit rows from Database.getDeposits()
      * @param {string} todayMonth - YYYY-MM used for status pills and summary
@@ -1970,6 +1965,11 @@ const UI = {
         </table></div>`;
     },
 
+    /**
+     * Render the Fixed Assets tab with list/detail layout
+     * @param {Array} assets - Array of asset objects
+     * @param {number|null} selectedAssetId - Currently selected asset ID
+     */
     renderFixedAssetsTab(assets, selectedAssetId) {
         const fmtAmt = (amt) => Utils.formatCurrency(amt);
 

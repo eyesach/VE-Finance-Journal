@@ -8130,9 +8130,7 @@ const App = {
 
         // Withheld category options: P&L-visible payable categories; default Deposit Forfeitures
         // Empty value = "Deposit Forfeitures", created on save only if needed
-        const cats = Database.getCategories().filter(c =>
-            c.show_on_pl != 1 && !c.is_sales_tax && !c.is_sales && !c.is_b2b && c.default_type !== 'receivable'
-            && c.name !== 'Deposit Forfeitures');
+        const cats = Database.getWithheldCategoryOptions();
         const sel = document.getElementById('refundWithheldCategory');
         sel.innerHTML = '<option value="" selected>Deposit Forfeitures</option>' + cats.map(c =>
             `<option value="${c.id}">${Utils.escapeHtml(c.name)}</option>`).join('');

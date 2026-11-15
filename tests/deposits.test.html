@@ -393,6 +393,41 @@ const LEASE = { name: 'Lease', amount: 2000, paid_date: '2026-03-01', expected_r
     assertEqual(Utils.depositStatus(d, '2027-10'), 'overdue');
   });
 
+  // ===================== Minor fixes =====================
+  const sm = suite('Minor fixes');
+  test(sm, 'renaming a refunded deposit renames refund and withheld journal entries', () => {
+    reset();
+    const id = Database.addDeposit({ ...LEASE });
+    Database.markDepositRefunded(id, { refund_date: '2027-06-15', refunded_amount: 1700 });
+    Database.updateDeposit(id, { ...LEASE, name: 'HQ lease' });
+    assertEqual(txOf('deposit_payment', id)[0].item_description, 'Deposit: HQ lease');
+    assertEqual(txOf('deposit_refund', id)[0].item_description, 'Deposit refund: HQ lease');
+    assertEqual(txOf('deposit_withheld', id)[0].item_description, 'Deposit withheld: HQ lease');
+  });
+
+  test(sm, 'withheld category options: only plain P&L expense categories', () => {
+    reset();
+    const A = (name, ...flags) => Database.addCategory(name, ...flags);
+    // addCategory(name, isMonthly, defaultAmount, defaultType, folderId, showOnPl(hide), isCogs, isDepreciation, isSalesTax, isB2b, defaultStatus, isSales, isInventoryCost, isShipping)
+    A('Repairs', false, null, 'payable');
+    A('Rent', false, null, null);
+    A('Hidden', false, null, 'payable', null, true);
+    A('Deprec', false, null, 'payable', null, false, false, true);
+    A('COGS', false, null, 'payable', null, false, true);
+    A('SalesTax', false, null, 'payable', null, false, false, false, true);
+    A('B2B', false, null, 'receivable', null, false, false, false, false, true);
+    A('Sales', false, null, 'receivable', null, false, false, false, false, false, null, true);
+    A('InvCost', false, null, 'payable', null, false, false, false, false, false, null, false, true);
+    A('Ship', false, null, 'payable', null, false, false, false, false, false, null, false, false, true);
+    A('Income', false, null, 'receivable');
+    A('Deposit Forfeitures', false, null, 'payable');
+    // A fresh DB also has seeded defaults (General Expense, Utilities, ...), so check membership
+    const names = Database.getWithheldCategoryOptions().map(c => c.name);
+    ['Repairs', 'Rent'].forEach(n => assert(names.includes(n), `${n} should be offered`));
+    ['Hidden', 'Deprec', 'COGS', 'SalesTax', 'B2B', 'Sales', 'InvCost', 'Ship', 'Income', 'Deposit Forfeitures']
+      .forEach(n => assert(!names.includes(n), `${n} should not be offered`));
+  });
+
   // @@NEXT_SUITE@@
 
   document.getElementById('summary').textContent = `${passed}/${passed + failed} tests passed, ${failed} failed`;

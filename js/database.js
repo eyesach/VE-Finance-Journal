@@ -2543,7 +2543,26 @@ const Database = {
                 [amount, paid_date, paid_date, month, month, `Deposit: ${name.trim()}`, pay.id]
             );
         }
+        // Keep refund / withheld entry descriptions in sync with the deposit name
+        this.db.run("UPDATE transactions SET item_description = ? WHERE source_id = ? AND source_type = 'deposit_refund'",
+            [`Deposit refund: ${name.trim()}`, id]);
+        this.db.run("UPDATE transactions SET item_description = ? WHERE source_id = ? AND source_type = 'deposit_withheld'",
+            [`Deposit withheld: ${name.trim()}`, id]);
         this.autoSave();
+    },
+
+    /**
+     * Categories a withheld deposit amount may be booked to: plain, P&L-visible expense
+     * categories (no revenue, COGS, depreciation, tax, inventory or shipping categories).
+     * "Deposit Forfeitures" is excluded because the refund modal offers it as the default.
+     * @returns {Array} Category rows
+     */
+    getWithheldCategoryOptions() {
+        return this.getCategories().filter(c =>
+            c.show_on_pl != 1 && c.default_type !== 'receivable'
+            && !c.is_cogs && !c.is_depreciation && !c.is_sales_tax && !c.is_b2b
+            && !c.is_sales && !c.is_inventory_cost && !c.is_shipping
+            && c.name !== 'Deposit Forfeitures');
     },
 
     /**
