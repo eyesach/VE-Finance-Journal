@@ -902,6 +902,37 @@ const Utils = {
     },
 
     /**
+     * Build the projector used for future P&L months.
+     * A future month with no recorded amount is projected from the Monthly Budget
+     * when the category has linked budget lines (0 if none active that month);
+     * otherwise it falls back to the average of non-zero past months.
+     * @param {string[]} months - all P&L months
+     * @param {Function} isFuture - (month) => boolean
+     * @param {Object} budgetByCat - Database.getBudgetPLProjection(...).byCat
+     * @returns {Function} (catId, catMonths, useBudget=true) => { valueFor(m), source(m) }
+     */
+    makePLProjector(months, isFuture, budgetByCat) {
+        const budget = budgetByCat || {};
+        return (catId, catMonths, useBudget = true) => {
+            catMonths = catMonths || {};
+            const catBudget = useBudget ? budget[String(catId)] : null;
+            const past = months.filter(m => !isFuture(m)).map(m => catMonths[m] || 0).filter(v => v > 0);
+            const avg = past.length > 0 ? past.reduce((a, b) => a + b, 0) / past.length : 0;
+            const source = (m) => {
+                if (!isFuture(m) || (catMonths[m] || 0) !== 0) return 'actual';
+                return catBudget ? 'budget' : 'average';
+            };
+            const valueFor = (m) => {
+                const s = source(m);
+                if (s === 'actual') return catMonths[m] || 0;
+                if (s === 'budget') return catBudget[m] || 0;
+                return avg;
+            };
+            return { valueFor, source };
+        };
+    },
+
+    /**
      * Date range covering the previous n full calendar months.
      * @param {number} n - number of months
      * @param {Date} today - reference date

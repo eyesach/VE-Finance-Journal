@@ -3154,6 +3154,55 @@ const Database = {
         return this.rowsToObjects(results[0]);
     },
 
+    /**
+     * Monthly budget amounts per P&L category, used to project future P&L months.
+     * Only budget lines linked to a category count. Per-month overrides apply.
+     * @param {string[]} months - YYYY-MM months to compute
+     * @param {Object} [opts]
+     * @param {boolean} [opts.cashBasis=false] - Cash Flow mode: include every budget line
+     *   (loan-linked lines and categories hidden from the P&L are real cash outflows)
+     * @returns {{ byCat: Object<string, Object<string, number>>, categories: Array }}
+     *   byCat[catId][month] = budgeted amount (0 when no line is active that month);
+     *   categories = budgeted categories ({category_id, category_name, is_cogs, is_b2b})
+     */
+    getBudgetPLProjection(months, opts = {}) {
+        const byCat = {};
+        const filter = opts.cashBasis ? '' : `
+            WHERE c.show_on_pl != 1 AND c.is_depreciation = 0 AND c.is_sales_tax = 0
+              AND COALESCE(be.notes, '') NOT LIKE 'Auto-created from loan #%'`;
+        const order = opts.cashBasis ? 'c.cashflow_sort_order' : 'c.pl_sort_order';
+        const res = this.db.exec(`
+            SELECT be.id, be.category_id, be.monthly_amount, be.start_month, be.end_month,
+                   c.name AS category_name, c.is_cogs, c.is_b2b
+            FROM budget_expenses be
+            JOIN categories c ON be.category_id = c.id
+            ${filter}
+            ORDER BY ${order} ASC, c.name ASC
+        `);
+        const lines = res.length > 0 ? this.rowsToObjects(res[0]) : [];
+        if (lines.length === 0) return { byCat, categories: [] };
+
+        const overrides = this.getAllBudgetExpenseOverrides();
+        const categories = [];
+        const seen = new Set();
+        lines.forEach(line => {
+            const catId = String(line.category_id);
+            if (!seen.has(catId)) {
+                seen.add(catId);
+                byCat[catId] = {};
+                categories.push({ category_id: line.category_id, category_name: line.category_name, is_cogs: line.is_cogs, is_b2b: line.is_b2b });
+            }
+            (months || []).forEach(m => {
+                if (!(m in byCat[catId])) byCat[catId][m] = 0;
+                const active = line.start_month <= m && (!line.end_month || line.end_month >= m);
+                if (!active) return;
+                const key = `${line.id}:${m}`;
+                byCat[catId][m] += (key in overrides) ? (overrides[key] || 0) : (line.monthly_amount || 0);
+            });
+        });
+        return { byCat, categories };
+    },
+
     // ==================== BUDGET GROUPS ====================
 
     getBudgetGroups() {

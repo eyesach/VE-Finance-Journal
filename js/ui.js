@@ -797,18 +797,23 @@ const UI = {
         };
         const isCFOverridden = (catId, month) => `${catId}-${month}` in cfOverrides;
 
-        const computeCFProjectedAvg = (catMonths) => {
-            if (!effectiveCurrentMonth) return 0;
-            const pastValues = months.filter(m => !isFuture(m)).map(m => catMonths[m] || 0).filter(v => v > 0);
-            return pastValues.length > 0 ? pastValues.reduce((a, b) => a + b, 0) / pastValues.length : 0;
-        };
+        // Future payments: project from Monthly Budget where the category is budgeted,
+        // otherwise fall back to the average of past months. Receipts always use the average.
+        const budgetProj = Database.getBudgetPLProjection(months, { cashBasis: true });
+        const projector = Utils.makePLProjector(months, isFuture, budgetProj.byCat);
+        const projTitle = (src) => src === 'budget' ? ' title="Projected from Monthly Budget"'
+            : src === 'average' ? ' title="Projected from average of past months"' : '';
+
+        // Budgeted categories with no completed payments yet still get a Cash Payments row
+        budgetProj.categories.forEach(c => {
+            if (payableCatMap.has(c.category_id)) return;
+            payableEntries.push([c.category_id, { name: c.category_name, is_b2b: c.is_b2b, is_cogs: c.is_cogs, months: {} }]);
+        });
+        receivableEntries.forEach(([catId, catData]) => { catData.proj = projector(catId, catData.months, false); });
+        payableEntries.forEach(([catId, catData]) => { catData.proj = projector(catId, catData.months, true); });
 
         // Effective value for a category in a month (with projection + override)
-        const getEffectiveVal = (catId, catData, m) => {
-            const raw = catData.months[m] || 0;
-            const fallback = isFuture(m) && raw === 0 ? computeCFProjectedAvg(catData.months) : raw;
-            return getCFVal(catId, m, fallback);
-        };
+        const getEffectiveVal = (catId, catData, m) => getCFVal(catId, m, catData.proj.valueFor(m));
 
         // Projected sales integration for cashflow
         const psActive = projectedSales && projectedSales.enabled && projectedSales.projectionStartMonth;
@@ -998,7 +1003,8 @@ const UI = {
                 const projClass = isFuture(m) && !isCFOverridden(catId, m) ? ' cashflow-projected' : '';
                 const editClass = isFuture(m) ? ' cf-editable' : '';
                 const { extraClass, extraAttrs } = buildCFFlag(catId, monthlyValues, i, m);
-                html += `<td class="amount-payable cf-calc-cell${overClass}${projClass}${editClass}${extraClass}" data-cat-id="${catId}" data-month="${m}"${extraAttrs}>${amt ? fmtAmt(amt) : ''}</td>`;
+                const srcTitle = (!extraAttrs && !isCFOverridden(catId, m)) ? projTitle(catData.proj.source(m)) : '';
+                html += `<td class="amount-payable cf-calc-cell${overClass}${projClass}${editClass}${extraClass}" data-cat-id="${catId}" data-month="${m}"${extraAttrs}${srcTitle}>${amt ? fmtAmt(amt) : ''}</td>`;
             });
             html += `<td class="amount-payable cf-calc-cell" data-cat-id="${catId}" data-month="total">${fmtAmt(rowTotal)}</td></tr>`;
         });
@@ -1204,12 +1210,19 @@ const UI = {
             return projectedSales.viewMode === 'projected';
         };
 
-        // Compute projected averages per category from past months
-        const computeProjectedAvg = (catMonths) => {
-            if (!effectiveCurrentMonth) return 0;
-            const pastValues = months.filter(m => !isFuture(m)).map(m => catMonths[m] || 0).filter(v => v > 0);
-            return pastValues.length > 0 ? pastValues.reduce((a, b) => a + b, 0) / pastValues.length : 0;
-        };
+        // Future months: project from Monthly Budget where the category is budgeted,
+        // otherwise fall back to the average of past months.
+        const budgetProj = Database.getBudgetPLProjection(months);
+        const projector = Utils.makePLProjector(months, isFuture, budgetProj.byCat);
+        const projTitle = (src) => src === 'budget' ? ' title="Projected from Monthly Budget"'
+            : src === 'average' ? ' title="Projected from average of past months"' : '';
+
+        // Budgeted categories with no journal entries yet still get a P&L row
+        const existingCatIds = new Set([...revenueEntries, ...cogsEntries, ...opexEntries].map(([id]) => String(id)));
+        budgetProj.categories.forEach(c => {
+            if (existingCatIds.has(String(c.category_id))) return;
+            (c.is_cogs ? cogsEntries : opexEntries).push([c.category_id, { name: c.category_name, is_b2b: 0, months: {} }]);
+        });
 
         // ===== Variance flag setup (read once per render) =====
         const varThreshold = parseInt(Database.getMetaValue('variance_threshold_pct'), 10) || 20;
@@ -1268,13 +1281,9 @@ const UI = {
         // Non-B2B actual revenue rows (blanked out for projected-view months)
         nonB2bRevenueEntries.forEach(([catId, catData]) => {
             let rowTotal = 0;
-            const projAvg = computeProjectedAvg(catData.months);
+            const proj = projector(catId, catData.months, false);
             // Pre-compute monthly values for variance check (effective values as displayed)
-            const monthlyValues = months.map(mo => {
-                const computed = catData.months[mo] || 0;
-                const fallback = isFuture(mo) && computed === 0 ? projAvg : computed;
-                return getVal(catId, mo, fallback);
-            });
+            const monthlyValues = months.map(mo => getVal(catId, mo, proj.valueFor(mo)));
             html += `<tr class="pnl-indent" draggable="true" data-category-id="${catId}" data-section="revenue"${buildVarianceRowAttr(monthlyValues)}><td class="pnl-drag-handle">${Utils.escapeHtml(catData.name)}</td>`;
             months.forEach((m, i) => {
                 if (psActive && useProjectedView(m)) {
@@ -1296,13 +1305,9 @@ const UI = {
         // B2B revenue rows — always render normally (unaffected by projected sales)
         b2bRevenueEntries.forEach(([catId, catData]) => {
             let rowTotal = 0;
-            const projAvg = computeProjectedAvg(catData.months);
+            const proj = projector(catId, catData.months, false);
             // Pre-compute monthly values for variance check
-            const monthlyValues = months.map(mo => {
-                const computed = catData.months[mo] || 0;
-                const fallback = isFuture(mo) && computed === 0 ? projAvg : computed;
-                return getVal(catId, mo, fallback);
-            });
+            const monthlyValues = months.map(mo => getVal(catId, mo, proj.valueFor(mo)));
             html += `<tr class="pnl-indent" draggable="true" data-category-id="${catId}" data-section="revenue"${buildVarianceRowAttr(monthlyValues)}><td class="pnl-drag-handle">${Utils.escapeHtml(catData.name)}</td>`;
             months.forEach((m, i) => {
                 const val = monthlyValues[i];
@@ -1356,13 +1361,9 @@ const UI = {
         // ALL existing COGS rows — always visible and editable (not replaced by projections)
         cogsEntries.forEach(([catId, catData]) => {
             let rowTotal = 0;
-            const projAvg = computeProjectedAvg(catData.months);
+            const proj = projector(catId, catData.months);
             // Pre-compute monthly values for variance check
-            const monthlyValues = months.map(mo => {
-                const computed = catData.months[mo] || 0;
-                const fallback = isFuture(mo) && computed === 0 ? projAvg : computed;
-                return getVal(catId, mo, fallback);
-            });
+            const monthlyValues = months.map(mo => getVal(catId, mo, proj.valueFor(mo)));
             html += `<tr class="pnl-indent" draggable="true" data-category-id="${catId}" data-section="cogs"${buildVarianceRowAttr(monthlyValues)}><td class="pnl-drag-handle">${Utils.escapeHtml(catData.name)}</td>`;
             months.forEach((m, i) => {
                 const val = monthlyValues[i];
@@ -1371,7 +1372,8 @@ const UI = {
                 const overriddenClass = isOverridden(catId, m) ? ' pnl-overridden' : '';
                 const projClass = isFuture(m) && !isOverridden(catId, m) ? ' pnl-projected' : '';
                 const { extraClass, extraAttrs } = buildPnLFlag(catId, monthlyValues, i, m);
-                html += `<td class="pnl-editable pnl-calc-cell${overriddenClass}${projClass}${extraClass}" data-cat-id="${catId}" data-month="${m}"${extraAttrs}>${fmtAmt(val)}</td>`;
+                const srcTitle = (!extraAttrs && !isOverridden(catId, m)) ? projTitle(proj.source(m)) : '';
+                html += `<td class="pnl-editable pnl-calc-cell${overriddenClass}${projClass}${extraClass}" data-cat-id="${catId}" data-month="${m}"${extraAttrs}${srcTitle}>${fmtAmt(val)}</td>`;
             });
             html += `<td>${fmtAmt(rowTotal)}</td></tr>`;
         });
@@ -1413,13 +1415,9 @@ const UI = {
 
         opexEntries.forEach(([catId, catData]) => {
             let rowTotal = 0;
-            const projAvg = computeProjectedAvg(catData.months);
+            const proj = projector(catId, catData.months);
             // Pre-compute monthly values for variance check
-            const monthlyValues = months.map(mo => {
-                const computed = catData.months[mo] || 0;
-                const fallback = isFuture(mo) && computed === 0 ? projAvg : computed;
-                return getVal(catId, mo, fallback);
-            });
+            const monthlyValues = months.map(mo => getVal(catId, mo, proj.valueFor(mo)));
             html += `<tr class="pnl-indent" draggable="true" data-category-id="${catId}" data-section="opex"${buildVarianceRowAttr(monthlyValues)}><td class="pnl-drag-handle">${Utils.escapeHtml(catData.name)}</td>`;
             months.forEach((m, i) => {
                 const val = monthlyValues[i];
@@ -1428,7 +1426,8 @@ const UI = {
                 const overriddenClass = isOverridden(catId, m) ? ' pnl-overridden' : '';
                 const projClass = isFuture(m) && !isOverridden(catId, m) ? ' pnl-projected' : '';
                 const { extraClass, extraAttrs } = buildPnLFlag(catId, monthlyValues, i, m);
-                html += `<td class="pnl-editable pnl-calc-cell${overriddenClass}${projClass}${extraClass}" data-cat-id="${catId}" data-month="${m}"${extraAttrs}>${fmtAmt(val)}</td>`;
+                const srcTitle = (!extraAttrs && !isOverridden(catId, m)) ? projTitle(proj.source(m)) : '';
+                html += `<td class="pnl-editable pnl-calc-cell${overriddenClass}${projClass}${extraClass}" data-cat-id="${catId}" data-month="${m}"${extraAttrs}${srcTitle}>${fmtAmt(val)}</td>`;
             });
             html += `<td>${fmtAmt(rowTotal)}</td></tr>`;
         });

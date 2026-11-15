@@ -2996,21 +2996,18 @@ const App = {
             return map;
         };
 
-        const computeProjectedAvg = (catMonths) => {
-            const pastValues = months.filter(m => !isFuture(m)).map(m => catMonths[m] || 0).filter(v => v > 0);
-            return pastValues.length > 0 ? pastValues.reduce((a, b) => a + b, 0) / pastValues.length : 0;
-        };
+        // Future months: Monthly Budget where budgeted, else past average (matches P&L table)
+        const budgetProj = Database.getBudgetPLProjection(months);
+        const projector = Utils.makePLProjector(months, isFuture, budgetProj.byCat);
 
         // Revenue (matches P&L table Total Revenue)
         const revByCat = groupByCategory(plData.revenue);
         const revenueByMonth = {};
         months.forEach(m => { revenueByMonth[m] = 0; });
         Object.entries(revByCat).forEach(([catId, catMonths]) => {
-            const projAvg = computeProjectedAvg(catMonths);
+            const proj = projector(catId, catMonths, false);
             months.forEach(m => {
-                const computed = catMonths[m] || 0;
-                const fallback = isFuture(m) && computed === 0 ? projAvg : computed;
-                revenueByMonth[m] += getVal(catId, m, fallback);
+                revenueByMonth[m] += getVal(catId, m, proj.valueFor(m));
             });
         });
 
@@ -3020,21 +3017,22 @@ const App = {
         // COGS
         const cogsByCat = groupByCategory(plData.cogs);
         Object.entries(cogsByCat).forEach(([catId, catMonths]) => {
-            const projAvg = computeProjectedAvg(catMonths);
+            const proj = projector(catId, catMonths);
             months.forEach(m => {
-                const computed = catMonths[m] || 0;
-                const fallback = isFuture(m) && computed === 0 ? projAvg : computed;
-                expensesByMonth[m] += getVal(catId, m, fallback);
+                expensesByMonth[m] += getVal(catId, m, proj.valueFor(m));
             });
         });
         // OpEx
         const opexByCat = groupByCategory(plData.opex);
+        // Budgeted categories with no journal entries yet (same as P&L table)
+        budgetProj.categories.forEach(c => {
+            const id = String(c.category_id);
+            if (!(id in revByCat) && !(id in cogsByCat) && !(id in opexByCat)) opexByCat[id] = {};
+        });
         Object.entries(opexByCat).forEach(([catId, catMonths]) => {
-            const projAvg = computeProjectedAvg(catMonths);
+            const proj = projector(catId, catMonths);
             months.forEach(m => {
-                const computed = catMonths[m] || 0;
-                const fallback = isFuture(m) && computed === 0 ? projAvg : computed;
-                expensesByMonth[m] += getVal(catId, m, fallback);
+                expensesByMonth[m] += getVal(catId, m, proj.valueFor(m));
             });
         });
         // Depreciation categories (from overrides only)
@@ -3209,21 +3207,18 @@ const App = {
             return map;
         };
 
-        const computeProjectedAvg = (catMonths) => {
-            const pastValues = months.filter(m => !isFuture(m)).map(m => catMonths[m] || 0).filter(v => v > 0);
-            return pastValues.length > 0 ? pastValues.reduce((a, b) => a + b, 0) / pastValues.length : 0;
-        };
+        // Future months: Monthly Budget where budgeted, else past average (matches P&L table)
+        const budgetProj = Database.getBudgetPLProjection(months);
+        const projector = Utils.makePLProjector(months, isFuture, budgetProj.byCat);
 
         // Revenue (matches P&L table Total Revenue)
         const revByCat = groupByCategory(plData.revenue);
         const revenueByMonth = {};
         months.forEach(m => { revenueByMonth[m] = 0; });
         Object.entries(revByCat).forEach(([catId, catMonths]) => {
-            const projAvg = computeProjectedAvg(catMonths);
+            const proj = projector(catId, catMonths, false);
             months.forEach(m => {
-                const computed = catMonths[m] || 0;
-                const fallback = isFuture(m) && computed === 0 ? projAvg : computed;
-                revenueByMonth[m] += getVal(catId, m, fallback);
+                revenueByMonth[m] += getVal(catId, m, proj.valueFor(m));
             });
         });
 
@@ -3233,21 +3228,22 @@ const App = {
         // COGS
         const cogsByCat = groupByCategory(plData.cogs);
         Object.entries(cogsByCat).forEach(([catId, catMonths]) => {
-            const projAvg = computeProjectedAvg(catMonths);
+            const proj = projector(catId, catMonths);
             months.forEach(m => {
-                const computed = catMonths[m] || 0;
-                const fallback = isFuture(m) && computed === 0 ? projAvg : computed;
-                expensesByMonth[m] += getVal(catId, m, fallback);
+                expensesByMonth[m] += getVal(catId, m, proj.valueFor(m));
             });
         });
         // OpEx
         const opexByCat = groupByCategory(plData.opex);
+        // Budgeted categories with no journal entries yet (same as P&L table)
+        budgetProj.categories.forEach(c => {
+            const id = String(c.category_id);
+            if (!(id in revByCat) && !(id in cogsByCat) && !(id in opexByCat)) opexByCat[id] = {};
+        });
         Object.entries(opexByCat).forEach(([catId, catMonths]) => {
-            const projAvg = computeProjectedAvg(catMonths);
+            const proj = projector(catId, catMonths);
             months.forEach(m => {
-                const computed = catMonths[m] || 0;
-                const fallback = isFuture(m) && computed === 0 ? projAvg : computed;
-                expensesByMonth[m] += getVal(catId, m, fallback);
+                expensesByMonth[m] += getVal(catId, m, proj.valueFor(m));
             });
         });
         (plData.depreciation || []).forEach(cat => {

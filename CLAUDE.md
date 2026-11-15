@@ -50,6 +50,7 @@ Vanilla HTML/CSS/JS accounting app with SQLite (sql.js) in-browser database, mul
 - **DB**: `database.js:1447-1493` getCashFlowSummary, getCashFlowSpreadsheet
 - **DB overrides**: `database.js:2946-2972` getAllCashFlowOverrides, setCashFlowOverride
 - **UI render**: `ui.js:674-1053` renderCashFlowSpreadsheet
+- **Future-month projection**: payable rows use `Utils.makePLProjector` with `Database.getBudgetPLProjection(months, { cashBasis: true })` (all budget lines incl. loan-linked and P&L-hidden categories); receipts fall back to past-month average.
 
 ### Profit & Loss (P&L)
 - **HTML**: `index.html:624-659` pnlTab, pnlSpreadsheet
@@ -58,6 +59,7 @@ Vanilla HTML/CSS/JS accounting app with SQLite (sql.js) in-browser database, mul
 - **DB overrides**: `database.js:3409-3445` getAllPLOverrides, setPLOverride
 - **DB tax mode**: `database.js:1798-1816` getPLTaxMode, setPLTaxMode
 - **UI render**: `ui.js:1055-1441` renderProfitLossSpreadsheet
+- **Future-month projection**: `Utils.makePLProjector` + `Database.getBudgetPLProjection(months)` — COGS/OpEx categories with linked Monthly Budget lines project from the budget (overrides applied, loan-linked lines excluded); others and revenue fall back to past-month average. Used by the P&L table and the dashboard/Analyze P&L charts; budget-only categories get their own rows.
 
 ### Balance Sheet
 - **HTML**: `index.html:662-705` balancesheetTab, balanceSheetContent, bsRatiosSection
