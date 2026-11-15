@@ -1,5 +1,5 @@
 (function() {
-  const WS_URL = 'ws://' + window.location.host;
+  const WS_URL = 'ws://' + window.location.host + '/?token=' + encodeURIComponent(window.__BRAINSTORM_TOKEN || '');
   let ws = null;
   let eventQueue = [];
 

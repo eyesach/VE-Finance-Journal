@@ -79,6 +79,28 @@ const URL_HOST = process.env.BRAINSTORM_URL_HOST || (HOST === '127.0.0.1' ? 'loc
 const SCREEN_DIR = process.env.BRAINSTORM_DIR || '/tmp/brainstorm';
 const OWNER_PID = process.env.BRAINSTORM_OWNER_PID ? Number(process.env.BRAINSTORM_OWNER_PID) : null;
 
+// ========== Request Validation (local patch) ==========
+// Blocks DNS rebinding (Host check) and cross-site WebSocket hijacking (Origin + per-session token),
+// so a web page open in the browser cannot read screens or inject fake "user choice" events.
+
+const SESSION_TOKEN = crypto.randomBytes(16).toString('hex');
+const ALLOWED_HOSTS = new Set([URL_HOST, HOST, 'localhost', '127.0.0.1'].map(h => `${h}:${PORT}`.toLowerCase()));
+
+function isAllowedHost(req) {
+  return ALLOWED_HOSTS.has(String(req.headers.host || '').toLowerCase());
+}
+
+function isAllowedOrigin(req) {
+  const origin = String(req.headers.origin || '').toLowerCase();
+  return [...ALLOWED_HOSTS].some(h => origin === 'http://' + h);
+}
+
+function hasValidToken(req) {
+  const token = new URL(req.url, 'http://localhost').searchParams.get('token') || '';
+  const a = Buffer.from(token), b = Buffer.from(SESSION_TOKEN);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
 const MIME_TYPES = {
   '.html': 'text/html', '.css': 'text/css', '.js': 'application/javascript',
   '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg',
@@ -98,7 +120,7 @@ h1 { color: #333; } p { color: #666; }</style>
 
 const frameTemplate = fs.readFileSync(path.join(__dirname, 'frame-template.html'), 'utf-8');
 const helperScript = fs.readFileSync(path.join(__dirname, 'helper.js'), 'utf-8');
-const helperInjection = '<script>\n' + helperScript + '\n</script>';
+const helperInjection = '<script>\nwindow.__BRAINSTORM_TOKEN = "' + SESSION_TOKEN + '";\n' + helperScript + '\n</script>';
 
 // ========== Helper Functions ==========
 
@@ -125,6 +147,11 @@ function getNewestScreen() {
 // ========== HTTP Request Handler ==========
 
 function handleRequest(req, res) {
+  if (!isAllowedHost(req)) {
+    res.writeHead(403);
+    res.end('Forbidden');
+    return;
+  }
   touchActivity();
   if (req.method === 'GET' && req.url === '/') {
     const screenFile = getNewestScreen();
@@ -165,6 +192,10 @@ const clients = new Set();
 function handleUpgrade(req, socket) {
   const key = req.headers['sec-websocket-key'];
   if (!key) { socket.destroy(); return; }
+  if (!isAllowedHost(req) || !isAllowedOrigin(req) || !hasValidToken(req)) {
+    socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
+    return;
+  }
 
   const accept = computeAcceptKey(key);
   socket.write(
