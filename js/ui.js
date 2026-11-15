@@ -7,7 +7,13 @@ const UI = {
      * Update summary cards with calculated values and late payment shading
      * @param {Object} summary - Summary object with cashBalance, receivables, payables
      */
-    updateSummary(summary) {
+    updateSummary(summary, asOfMonth = null) {
+        document.querySelectorAll('.summary-asof').forEach(el => {
+            el.textContent = asOfMonth ? `as of end of ${Utils.formatMonthDisplay(asOfMonth)}` : '';
+            el.style.display = asOfMonth ? 'block' : 'none';
+        });
+        document.querySelector('.summary-section')?.classList.toggle('is-historical', !!asOfMonth);
+
         document.getElementById('cashBalance').textContent =
             Utils.formatCurrency(summary.cashBalance);
         document.getElementById('accountsReceivable').textContent =

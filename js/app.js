@@ -408,8 +408,22 @@ const App = {
      * Refresh summary calculations
      */
     refreshSummary() {
-        const summary = Database.calculateSummary(this._reportMonth || null);
-        UI.updateSummary(summary);
+        const asOf = this._getSummaryAsOfMonth();
+        const summary = Database.calculateSummary(asOf);
+        UI.updateSummary(summary, asOf);
+    },
+
+    /**
+     * Month the summary cards are computed "as of": the journal Month filter
+     * (point-in-time view) and/or the view-only report month — whichever is earlier.
+     * @returns {string|null} 'YYYY-MM' or null for current state
+     */
+    _getSummaryAsOfMonth() {
+        const filterEl = document.getElementById('filterMonth');
+        const filterMonth = (filterEl && filterEl.value) || null;
+        const report = this._reportMonth || null;
+        if (filterMonth && report) return filterMonth < report ? filterMonth : report;
+        return filterMonth || report;
     },
 
     /**
@@ -4548,6 +4562,7 @@ const App = {
             document.getElementById(id).addEventListener('change', () => {
                 this.clearBulkSelection();
                 this.refreshTransactions();
+                if (id === 'filterMonth') this.refreshSummary();
             });
         });
 

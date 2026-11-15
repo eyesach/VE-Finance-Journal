@@ -1069,6 +1069,17 @@ body {
 .receivables.has-late .summary-value { color: var(--color-receivable-light); }
 .payables.has-late .summary-value { color: var(--color-payable-light); }
 
+.summary-asof {
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+    margin-top: 4px;
+    letter-spacing: 0.02em;
+}
+
+.summary-section.is-historical .summary-card {
+    border-style: dashed;
+}
+
 .late-indicator {
     font-size: var(--font-xs);
     color: var(--text-muted);
