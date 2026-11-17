@@ -2678,6 +2678,7 @@ const UI = {
         document.getElementById('entryDate').value = Utils.getTodayDate();
         document.getElementById('formTitle').textContent = 'Add New Entry';
         document.getElementById('submitBtn').textContent = 'Add Entry';
+        document.getElementById('deleteFromEditBtn').style.display = 'none';
 
         // Reset radio buttons
         document.querySelector('input[name="transactionType"][value="receivable"]').checked = true;
@@ -2775,6 +2776,7 @@ const UI = {
         // Update form title and button
         document.getElementById('formTitle').textContent = 'Edit Entry';
         document.getElementById('submitBtn').textContent = 'Update Entry';
+        document.getElementById('deleteFromEditBtn').style.display = '';
 
         // Open entry modal
         this.showModal('entryModal');

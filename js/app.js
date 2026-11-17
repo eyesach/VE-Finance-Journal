@@ -4526,6 +4526,14 @@ const App = {
             this.confirmDelete();
         });
 
+        // Delete from inside the Edit Entry modal
+        document.getElementById('deleteFromEditBtn').addEventListener('click', () => {
+            const id = parseInt(document.getElementById('editingId').value);
+            if (!id) return;
+            UI.resetForm(); // closes the entry modal
+            this.handleDeleteTransaction(id);
+        });
+
         document.getElementById('cancelDeleteBtn').addEventListener('click', () => {
             UI.hideModal('deleteModal');
             this.deleteTargetId = null;

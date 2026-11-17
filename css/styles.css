@@ -1410,7 +1410,7 @@ body {
     border-radius: var(--radius);
     box-shadow: var(--shadow-sm);
     border: 1px solid var(--c5, var(--border));
-    overflow: hidden;
+    overflow-x: auto; /* was hidden — clipped the row Delete icon when the table ran wide */
     margin: 0 22px 18px;
 }
 
@@ -1688,7 +1688,13 @@ body {
 
 .actions-cell .btn-icon {
     display: inline-flex;
+    opacity: 0.45; /* always discoverable; full opacity on row hover/focus */
 }
+
+.actions-cell .btn-icon:focus-visible { opacity: 1; }
+.actions-cell .delete-btn:hover { color: var(--red, #dc2626); }
+
+.form-actions .entry-delete-btn { margin-right: auto; }
 
 .action-btns { display: flex; gap: 2px; }
 .action-btn {
