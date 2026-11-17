@@ -526,7 +526,7 @@ const UI = {
             <tr data-id="${t.id}" class="${rowClass}">
                 ${bulkCheckboxCell}
                 <td>${Utils.formatDateShort(t.entry_date)}</td>
-                <td>${categoryDisplay} ${notesIcon}</td>
+                <td class="txn-category-cell">${categoryDisplay} ${notesIcon}</td>
                 <td>
                     <span class="type-badge ${typeClass}">
                         ${this.capitalizeFirst(t.transaction_type)}

@@ -1692,6 +1692,20 @@ body {
 }
 
 .actions-cell .btn-icon:focus-visible { opacity: 1; }
+
+/* Keep row actions on-screen: long category text wraps instead of widening
+   the table, and the actions column sticks to the right edge if it still overflows. */
+.transaction-table td.txn-category-cell {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    min-width: 160px;
+}
+.transaction-table td.actions-cell {
+    position: sticky;
+    right: 0;
+    background: var(--c4, var(--surface));
+}
+.transaction-table tbody tr:hover td.actions-cell { background: var(--surface-hover); }
 .actions-cell .delete-btn:hover { color: var(--red, #dc2626); }
 
 .form-actions .entry-delete-btn { margin-right: auto; }
